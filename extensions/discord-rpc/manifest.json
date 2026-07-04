@@ -1,0 +1,8 @@
+{
+  "id": "discord-rpc",
+  "name": "Discord Presence",
+  "description": "Shows the track you're playing in Qobuz as Discord Rich Presence - album art, artist, and a live progress bar. Always on, and reconnects automatically (survives Discord restarts and account switches).",
+  "icon": "icon-share",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

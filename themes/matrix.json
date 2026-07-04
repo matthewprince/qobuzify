@@ -1,0 +1,32 @@
+{
+  "name": "Matrix",
+  "author": "matthewprince",
+  "description": "The green-on-black hacker classic.",
+  "preview": {
+    "bg": "#0A0D14",
+    "surface": "#11141D",
+    "accent": "#26A17B",
+    "text": "#E6E9EF"
+  },
+  "tokens": {
+    "--color-grey-120": "#0A0D14",
+    "--color-grey-110": "#0A0D14",
+    "--color-grey-100": "#11141D",
+    "--color-grey-90": "#181C28",
+    "--color-grey-80": "#383D4D",
+    "--color-brand-100": "#26A17B",
+    "--color-brand-80": "#1F8666",
+    "--color-opacity-accent-soft-10": "#26A17B1a",
+    "--color-opacity-accent-soft-20": "#26A17B26",
+    "--color-opacity-accent-soft-30": "#26A17B33",
+    "--color-opacity-accent-strong-25": "#26A17B40",
+    "--color-opacity-accent-strong-30": "#26A17B4d",
+    "--color-opacity-accent-strong-40": "#26A17B66"
+  },
+  "legacyReplace": {
+    "#dea442": "#26A17B",
+    "#ffcb74": "#1F8666",
+    "#ffb12f": "#26A17B"
+  },
+  "cssFile": "matrix.css"
+}

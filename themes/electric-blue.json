@@ -1,0 +1,21 @@
+{
+  "name": "Electric Blue",
+  "author": "matthewprince",
+  "description": "Qobuz gold swapped for Electric Blue (#3DA8FE).",
+  "preview": { "bg": "#121212", "surface": "#181818", "accent": "#3DA8FE", "text": "#f3f3f3" },
+  "tokens": {
+    "--color-brand-100": "#3DA8FE",
+    "--color-brand-80": "#62B8FF",
+    "--color-opacity-accent-soft-10": "#3DA8FE1a",
+    "--color-opacity-accent-soft-20": "#3DA8FE26",
+    "--color-opacity-accent-soft-30": "#3DA8FE33",
+    "--color-opacity-accent-strong-25": "#3DA8FE40",
+    "--color-opacity-accent-strong-30": "#3DA8FE4d",
+    "--color-opacity-accent-strong-40": "#3DA8FE66"
+  },
+  "legacyReplace": {
+    "#dea442": "#3DA8FE",
+    "#ffcb74": "#62B8FF",
+    "#ffb12f": "#3DA8FE"
+  }
+}

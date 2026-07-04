@@ -1,0 +1,24 @@
+/* My Theme - the structural layer.
+   Tokens (in my-theme.json) recolor the brand accent and the surface ramp. This file
+   goes after them and restyles real controls that Qobuz hardcodes, so the theme reads
+   as a whole look and not just a recolored accent. Keep it small; a few real surfaces
+   go a long way. Everything is !important because you're overriding shipped rules. */
+
+/* accent-tint the track rows so lists feel themed, not white-on-grey */
+.ListItem {
+  background: rgba(124, 92, 255, 0.04) !important;
+  border: 1px solid rgba(124, 92, 255, 0.08) !important;
+  border-radius: 8px !important;
+}
+.ListItem:hover {
+  background: rgba(124, 92, 255, 0.10) !important;
+}
+
+/* let the player bar sit transparent over the app background instead of its own grey slab */
+.player,
+.player__content,
+.player__track,
+.player__settings,
+.player__controls {
+  background: transparent !important;
+}

@@ -1,0 +1,8 @@
+{
+  "id": "better-search",
+  "name": "Better Search",
+  "description": "A real search: instant as-you-type results blended across albums, tracks, artists and playlists, with relevance + fuzzy/diacritic ranking, Hi-Res/Lossless/year filters, and sort. Hooks the existing search box.",
+  "icon": "icon-search",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

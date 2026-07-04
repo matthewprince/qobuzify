@@ -1,0 +1,8 @@
+{
+  "id": "qobuzify-lyrics",
+  "name": "Qobuzify Lyrics",
+  "description": "Synced, word-by-word lyrics with a karaoke fill and an album-cover background. Opens from a button on the player bar.",
+  "icon": "icon-booklet",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Dracula",
+  "author": "matthewprince",
+  "description": "The classic Dracula theme: dark slate background with a purple accent.",
+  "preview": { "bg": "#282a36", "surface": "#343746", "accent": "#bd93f9", "text": "#f8f8f2" },
+  "tokens": {
+    "--color-grey-120": "#282a36",
+    "--color-grey-110": "#21222c",
+    "--color-grey-100": "#343746",
+    "--color-grey-90": "#44475a",
+    "--color-grey-80": "#565973",
+    "--color-brand-100": "#bd93f9",
+    "--color-brand-80": "#d6acff",
+    "--color-opacity-accent-soft-10": "#bd93f91a",
+    "--color-opacity-accent-soft-20": "#bd93f926",
+    "--color-opacity-accent-soft-30": "#bd93f933",
+    "--color-opacity-accent-strong-25": "#bd93f940",
+    "--color-opacity-accent-strong-30": "#bd93f94d",
+    "--color-opacity-accent-strong-40": "#bd93f966"
+  },
+  "legacyReplace": {
+    "#dea442": "#bd93f9",
+    "#ffcb74": "#d6acff",
+    "#ffb12f": "#bd93f9"
+  }
+}

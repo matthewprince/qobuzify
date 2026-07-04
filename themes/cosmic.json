@@ -1,0 +1,32 @@
+{
+  "name": "Cosmic",
+  "author": "matthewprince",
+  "description": "Deep space navy with a golden-star accent and frosted glass.",
+  "preview": {
+    "bg": "#040B17",
+    "surface": "#071420",
+    "accent": "#FACC15",
+    "text": "#E2E8F0"
+  },
+  "tokens": {
+    "--color-grey-120": "#040B17",
+    "--color-grey-110": "#040B17",
+    "--color-grey-100": "#071420",
+    "--color-grey-90": "#0C2236",
+    "--color-grey-80": "#123650",
+    "--color-brand-100": "#FACC15",
+    "--color-brand-80": "#FACC15",
+    "--color-opacity-accent-soft-10": "#FACC151a",
+    "--color-opacity-accent-soft-20": "#FACC1526",
+    "--color-opacity-accent-soft-30": "#FACC1533",
+    "--color-opacity-accent-strong-25": "#FACC1540",
+    "--color-opacity-accent-strong-30": "#FACC154d",
+    "--color-opacity-accent-strong-40": "#FACC1566"
+  },
+  "legacyReplace": {
+    "#dea442": "#FACC15",
+    "#ffcb74": "#FACC15",
+    "#ffb12f": "#FACC15"
+  },
+  "cssFile": "cosmic.css"
+}

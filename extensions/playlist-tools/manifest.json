@@ -1,0 +1,8 @@
+{
+  "id": "playlist-tools",
+  "name": "Playlist Tools",
+  "description": "Adds a Tools button to your own playlists: Stats (duration, top artists, hi-res, decades), Export (copy or download as text / M3U / CSV / JSON), Remove duplicates, and Sort into a new playlist (title, artist, album, duration, year, date added, or shuffle).",
+  "icon": "icon-view-grid-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

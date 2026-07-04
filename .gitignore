@@ -1,0 +1,33 @@
+# dependencies (Qobuzify is zero-dep, but just in case)
+node_modules/
+
+# build output / generated
+dist/
+docs/site.html
+site/public/qobuzify.zip
+
+# local Cloudflare state
+.wrangler/
+
+# lyric-source credentials (local only, never commit)
+.spotify-creds.json
+.spotify-user-token.json
+.spotify-user-token.json.bak
+.apple-creds.json
+.musixmatch-creds.json
+
+# dev backups + scratch snapshots
+*.bak
+*.pre-*
+*.qobuzify-bak
+.archive/
+nul
+
+# private lyrics backend (kept private, permanently) and local dev scaffolding
+server/
+tools/
+
+# logs / os cruft
+*.log
+.DS_Store
+Thumbs.db

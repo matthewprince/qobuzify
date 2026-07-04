@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<title>Unblock your IP - Qobuzify</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+    background:
+      radial-gradient(620px 420px at 88% -8%, rgba(61,168,254,.16), transparent 60%),
+      radial-gradient(520px 420px at -6% 108%, rgba(129,140,248,.12), transparent 60%),
+      #060a12;
+    color: #f0f6fc; font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%; max-width: 460px; padding: 34px 32px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.5); backdrop-filter: blur(12px);
+  }
+  .brand { height: 30px; width: auto; display: block; }
+  h1 { font-size: 25px; font-weight: 800; letter-spacing: -.5px; margin: 20px 0 10px; }
+  p { color: #9fb0c6; font-size: 14.5px; line-height: 1.55; }
+  .ip { margin: 18px 0; font-size: 14px; color: #8b98ad; }
+  .ip b { color: #f0f6fc; font-family: ui-monospace, Consolas, monospace; }
+  .cf-turnstile { margin: 4px 0 18px; }
+  #btn {
+    width: 100%; appearance: none; border: 0; border-radius: 11px; padding: 13px;
+    font: inherit; font-size: 15px; font-weight: 750; cursor: pointer; color: #06090a; background: #3da8fe;
+    transition: filter .12s, opacity .12s;
+  }
+  #btn:hover:not(:disabled) { filter: brightness(1.07); }
+  #btn:disabled { opacity: .45; cursor: not-allowed; }
+  .msg { margin-top: 14px; font-size: 13.5px; line-height: 1.5; min-height: 18px; }
+  .msg.ok { color: #4ade80; }
+  .msg.err { color: #f87171; }
+  a { color: #3da8fe; text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
+    <h1>Unblock your IP</h1>
+    <p>If the Qobuzify lyrics API has rate-limited you, verify you're human below and your IP will be cleared for 24 hours.</p>
+    <div class="ip">Your IP: <b id="ip">checking...</b></div>
+    <div class="cf-turnstile" data-sitekey="0x4AAAAAADvjsQ0A87l19nvH" data-callback="onSolved" data-theme="dark"></div>
+    <button id="btn" disabled>Unblock my IP</button>
+    <div id="msg" class="msg"></div>
+    <p style="margin-top:20px;font-size:12.5px;color:#5f6b7e">Back to <a href="/">qobuzify.app</a></p>
+  </div>
+  <script>
+    var API = "https://api.qobuzify.app";
+    var token = null;
+    var btn = document.getElementById("btn");
+    function msg(t, c) { var m = document.getElementById("msg"); m.textContent = t; m.className = "msg " + (c || ""); }
+    fetch(API + "/whoami").then(function (r) { return r.json(); }).then(function (j) {
+      document.getElementById("ip").textContent = j && j.ip ? j.ip : "unknown";
+    }).catch(function () { document.getElementById("ip").textContent = "unknown"; });
+    window.onSolved = function (t) { token = t; btn.disabled = false; };
+    btn.addEventListener("click", function () {
+      if (!token) return;
+      btn.disabled = true; msg("Verifying...", "");
+      fetch(API + "/unban", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.ok) { msg("Done. Your IP (" + j.ip + ") is cleared for 24 hours.", "ok"); }
+          else { msg("Could not unblock: " + ((j && j.error) || "unknown") + ".", "err"); btn.disabled = false; try { turnstile.reset(); } catch (e) {} token = null; }
+        })
+        .catch(function () { msg("Network error, please try again.", "err"); btn.disabled = false; });
+    });
+  </script>
+</body>
+</html>

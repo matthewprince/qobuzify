@@ -1,0 +1,19 @@
+{
+  "name": "My Theme",
+  "author": "you",
+  "description": "A template theme: an accent swap plus a little structural CSS.",
+  "preview": { "bg": "#0c0d12", "surface": "#15171f", "accent": "#7C5CFF", "text": "#f0f2f8" },
+  "tokens": {
+    "--color-brand-100": "#7C5CFF",
+    "--color-brand-80": "#9A80FF",
+    "--color-grey-120": "#0c0d12",
+    "--color-grey-110": "#15171f",
+    "--color-opacity-accent-soft-10": "#7C5CFF1a",
+    "--color-opacity-accent-soft-20": "#7C5CFF26",
+    "--color-opacity-accent-soft-30": "#7C5CFF33",
+    "--color-opacity-accent-strong-25": "#7C5CFF40",
+    "--color-opacity-accent-strong-30": "#7C5CFF4d",
+    "--color-opacity-accent-strong-40": "#7C5CFF66"
+  },
+  "cssFile": "my-theme.css"
+}

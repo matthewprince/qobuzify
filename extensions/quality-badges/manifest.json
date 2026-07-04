@@ -1,0 +1,8 @@
+{
+  "id": "quality-badges",
+  "name": "Quality Badges",
+  "description": "Shows Qobuz's Hi-Res AUDIO badge on hi-res tracks across album pages, playlists, favorites and search - so hi-res quality is obvious at a glance. No badge means it's not hi-res.",
+  "icon": "icon-star",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

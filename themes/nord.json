@@ -1,0 +1,26 @@
+{
+  "name": "Nord",
+  "author": "matthewprince",
+  "description": "The Nord palette: polar-night background with a frost accent.",
+  "preview": { "bg": "#2e3440", "surface": "#3b4252", "accent": "#88c0d0", "text": "#eceff4" },
+  "tokens": {
+    "--color-grey-120": "#2e3440",
+    "--color-grey-110": "#2b303b",
+    "--color-grey-100": "#3b4252",
+    "--color-grey-90": "#434c5e",
+    "--color-grey-80": "#4c566a",
+    "--color-brand-100": "#88c0d0",
+    "--color-brand-80": "#8fbcbb",
+    "--color-opacity-accent-soft-10": "#88c0d01a",
+    "--color-opacity-accent-soft-20": "#88c0d026",
+    "--color-opacity-accent-soft-30": "#88c0d033",
+    "--color-opacity-accent-strong-25": "#88c0d040",
+    "--color-opacity-accent-strong-30": "#88c0d04d",
+    "--color-opacity-accent-strong-40": "#88c0d066"
+  },
+  "legacyReplace": {
+    "#dea442": "#88c0d0",
+    "#ffcb74": "#8fbcbb",
+    "#ffb12f": "#88c0d0"
+  }
+}

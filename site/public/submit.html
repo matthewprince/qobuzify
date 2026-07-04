@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<title>Submit a theme or extension - Qobuzify</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+    background:
+      radial-gradient(620px 420px at 88% -8%, rgba(61,168,254,.16), transparent 60%),
+      radial-gradient(520px 420px at -6% 108%, rgba(129,140,248,.12), transparent 60%),
+      #060a12;
+    color: #f0f6fc; font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%; max-width: 520px; padding: 32px 30px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.5); backdrop-filter: blur(12px);
+  }
+  .brand { height: 30px; width: auto; display: block; }
+  h1 { font-size: 24px; font-weight: 800; letter-spacing: -.5px; margin: 18px 0 8px; }
+  p.lead { color: #9fb0c6; font-size: 14.5px; line-height: 1.55; margin-bottom: 6px; }
+  .note {
+    margin-top: 12px; font-size: 12.5px; color: #9fb0c6; line-height: 1.5;
+    background: rgba(61,168,254,.08); border: 1px solid rgba(61,168,254,.22); border-radius: 10px; padding: 10px 12px;
+  }
+  label { display: block; font-size: 12.5px; font-weight: 650; color: #c6cfda; margin: 15px 0 6px; }
+  input, textarea, select {
+    width: 100%; font: inherit; font-size: 14px; color: #f0f6fc; background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 10px 12px; outline: none; transition: border-color .15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: rgba(61,168,254,.6); }
+  textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+  select { appearance: none; cursor: pointer; }
+  .hint { font-size: 11.5px; color: #6f7b8d; margin-top: 5px; }
+  .cf-turnstile { margin: 18px 0 2px; }
+  #btn {
+    width: 100%; margin-top: 16px; appearance: none; border: 0; border-radius: 11px; padding: 13px;
+    font: inherit; font-size: 15px; font-weight: 750; cursor: pointer; color: #06090a; background: #3da8fe;
+    transition: filter .12s, opacity .12s;
+  }
+  #btn:hover:not(:disabled) { filter: brightness(1.07); }
+  #btn:disabled { opacity: .45; cursor: not-allowed; }
+  .msg { margin-top: 14px; font-size: 13.5px; line-height: 1.5; min-height: 18px; }
+  .msg.ok { color: #4ade80; }
+  .msg.err { color: #f87171; }
+  a { color: #3da8fe; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .foot { margin-top: 20px; font-size: 12.5px; color: #5f6b7e; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
+    <h1>Submit a theme or extension</h1>
+    <p class="lead">Built something for Qobuzify? Share it. Approved submissions ship in the bundled catalog so everyone gets them in the Marketplace.</p>
+    <div class="note">Every submission is reviewed by hand before it ships, because extensions run with full access inside Qobuz. New to it? See <a href="/docs/#writing-extensions" target="_blank" rel="noopener">writing an extension</a>, <a href="/docs/#themes" target="_blank" rel="noopener">writing a theme</a>, and the starter templates in the docs.</div>
+
+    <form id="form" autocomplete="off">
+      <label for="type">What is it?</label>
+      <select id="type">
+        <option value="extension">Extension</option>
+        <option value="theme">Theme</option>
+      </select>
+
+      <label for="name">Name</label>
+      <input id="name" maxlength="80" placeholder="e.g. Mini Player, Sunset" />
+
+      <label for="author">Your name or handle</label>
+      <input id="author" maxlength="80" placeholder="Credited on the card" />
+
+      <label for="link">Link to the code</label>
+      <input id="link" maxlength="400" placeholder="GitHub repo, gist, or a zip URL" />
+      <div class="hint">So it can be reviewed. Keep the source public until it's merged.</div>
+
+      <label for="body">What does it do?</label>
+      <textarea id="body" maxlength="8000" placeholder="A short description, plus anything a reviewer should know."></textarea>
+
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAADvjsQ0A87l19nvH" data-callback="onSolved" data-expired-callback="onExpired" data-theme="dark"></div>
+      <button id="btn" type="submit" disabled>Submit for review</button>
+      <div id="msg" class="msg"></div>
+    </form>
+
+    <p class="foot">Back to <a href="/">qobuzify.app</a> &middot; Something broken instead? <a href="/issues">Report a bug</a>.</p>
+  </div>
+
+  <script>
+    var API = "https://api.qobuzify.app";
+    var token = null;
+    var btn = document.getElementById("btn");
+    function msg(t, c) { var m = document.getElementById("msg"); m.textContent = t; m.className = "msg " + (c || ""); }
+    window.onSolved = function (t) { token = t; btn.disabled = false; };
+    window.onExpired = function () { token = null; btn.disabled = true; };
+
+    document.getElementById("form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!token) { msg("Please complete the human check.", "err"); return; }
+      var name = document.getElementById("name").value.trim();
+      var link = document.getElementById("link").value.trim();
+      var body = document.getElementById("body").value.trim();
+      if (!name) { msg("Please give it a name.", "err"); return; }
+      if (!link && !body) { msg("Please add a link to the code or a description.", "err"); return; }
+      btn.disabled = true; msg("Sending...", "");
+      fetch(API + "/v1/submit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token, title: name, body: body, meta: { type: document.getElementById("type").value, author: document.getElementById("author").value.trim(), link: link } })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.ok) {
+            msg("Thanks. Your submission was received (#" + j.id + ") and will be reviewed.", "ok");
+            document.getElementById("form").reset();
+          } else {
+            msg("Could not send: " + ((j && j.error) || "unknown") + ".", "err");
+            btn.disabled = false; try { turnstile.reset(); } catch (e) {} token = null;
+          }
+        })
+        .catch(function () { msg("Network error, please try again.", "err"); btn.disabled = false; });
+    });
+  </script>
+</body>
+</html>

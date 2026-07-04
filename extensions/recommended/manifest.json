@@ -1,0 +1,8 @@
+{
+  "id": "recommended",
+  "name": "For You",
+  "description": "A personalized recommendations page built from your own favorites and listening - similar artists, new releases from artists you love, and fresh picks. Adds a 'For You' item to the sidebar. No external services.",
+  "icon": "icon-magic-stars",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

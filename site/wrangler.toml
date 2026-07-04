@@ -1,0 +1,18 @@
+name = "qobuzify-site"
+compatibility_date = "2025-06-01"
+account_id = "ce2447efe4d68e7c523c11b1ef353be3"
+
+# Static Vite build served as a Workers assets-only deployment (no worker script).
+[assets]
+directory = "./dist"
+
+# Custom domain on the apex: wrangler provisions the DNS record + edge cert on the
+# qobuzify.app zone (same zone as api.qobuzify.app).
+[[routes]]
+pattern = "qobuzify.app"
+custom_domain = true
+
+# www too (subdomains activate on the edge faster/more reliably than the apex).
+[[routes]]
+pattern = "www.qobuzify.app"
+custom_domain = true

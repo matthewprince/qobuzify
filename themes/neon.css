@@ -1,0 +1,83 @@
+/* Qobuzify "Neon" - bold hand-crafted pass. The point: Qobuz's controls are
+   WHITE, not accent, so a real theme has to recolor every control (play button,
+   icons, hearts, active nav, links), not just the slider. Lime on everything,
+   glows + lime outlines, true black. Selectors verified via CDP. */
+
+:root { --nz: #bbf351; }
+
+/* true black + lime glow */
+body,
+.grid-layout--root {
+  background-color: #000000 !important;
+  background-image:
+    radial-gradient(900px 560px at 88% -12%, rgba(187, 243, 81, 0.1), transparent 60%),
+    radial-gradient(720px 620px at -8% 4%, rgba(187, 243, 81, 0.06), transparent 60%) !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+
+/* strip opaque page backgrounds */
+.PlaylistPage, .grid-layout--content, .grid-layout--main, .grid-layout--inner,
+.grid-layout--container, .ui-layout-001--content, [class*="ui-template-"] {
+  background: transparent !important;
+}
+
+/* header */
+.PageHeader, .StickyHeader, .PageHeader__background, .StickyHeader__background {
+  background: linear-gradient(180deg, rgba(187, 243, 81, 0.14), rgba(0, 0, 0, 0) 92%) !important;
+}
+
+/* chrome: near-black with a lime hairline + glow */
+.ui-layout-001--topbar,
+.grid-layout--panel-outer-right, .ui-layout-001--panel-outer-right,
+.grid-layout--panel-outer-bottom, .ui-layout-001--panel-outer-bottom {
+  background: rgba(187, 243, 81, 0.03) !important;
+  border: 1px solid rgba(187, 243, 81, 0.18) !important;
+  box-shadow: 0 0 26px rgba(187, 243, 81, 0.1) !important;
+}
+.player, .player__content, .player__track, .player__settings, .player__controls { background: transparent !important; }
+
+/* === ACCENT ON EVERY CONTROL === */
+/* big primary (play) button: lime fill + glow */
+.ButtonRoundPrimary, [class*="ButtonRoundPrimary"] {
+  background: var(--nz) !important;
+  color: #06090a !important;
+  border-color: var(--nz) !important;
+  box-shadow: 0 0 22px rgba(187, 243, 81, 0.5) !important;
+}
+/* all icons + icon buttons -> lime */
+.ButtonIconPrimary, [class*="ButtonIcon"], [class^="icon-"], [class*=" icon-"] {
+  color: var(--nz) !important;
+  fill: var(--nz) !important;
+}
+/* hearts / favorites -> lime */
+[class*="ButtonFavorite"] { color: var(--nz) !important; fill: var(--nz) !important; }
+/* active nav -> lime pill */
+.NavItem--isActive, [class*="NavItem--isActive"] {
+  background: rgba(187, 243, 81, 0.1) !important;
+  border: 1px solid rgba(187, 243, 81, 0.3) !important;
+}
+.NavItem--isActive *, [class*="NavItem--isActive"] * { color: var(--nz) !important; fill: var(--nz) !important; }
+/* clickable links light up on hover */
+[class*="--isClickable"]:hover { color: var(--nz) !important; }
+
+/* track rows: lime-outlined, glow on hover */
+.ListItem {
+  background: rgba(187, 243, 81, 0.02) !important;
+  border: 1px solid rgba(187, 243, 81, 0.08) !important;
+  border-radius: 8px !important;
+}
+.ListItem:hover {
+  background: rgba(187, 243, 81, 0.07) !important;
+  border-color: rgba(187, 243, 81, 0.5) !important;
+  box-shadow: 0 0 16px rgba(187, 243, 81, 0.18) !important;
+}
+
+/* popups: black with a lime edge + glow */
+[class*="ui-base-menu-"]:not([class*="trigger"]),
+[class*="ui-base-panel-"]:not([class*="trigger"]),
+[class*="ui-base-tooltip-"]:not([class*="trigger"]) {
+  background: rgba(4, 6, 2, 0.92) !important;
+  border: 1px solid rgba(187, 243, 81, 0.3) !important;
+  box-shadow: 0 0 26px rgba(187, 243, 81, 0.15) !important;
+}

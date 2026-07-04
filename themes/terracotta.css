@@ -1,0 +1,94 @@
+/* Qobuzify "Terracotta" - generated from the TypeUI "terracotta" design system.
+   Structural skeleton verified against the live Qobuz DOM (same coverage as Glass). */
+
+body,
+.grid-layout--root {
+  background-color: #18110B !important;
+  background-image:
+    radial-gradient(820px 520px at 88% -10%, rgba(216, 130, 90, 0.18), transparent 60%),
+    radial-gradient(640px 560px at -8% 2%, rgba(197, 106, 60, 0.12), transparent 60%) !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+
+/* strip Qobuz's opaque page backgrounds so the themed base + glow show through */
+.PlaylistPage,
+.grid-layout--content,
+.grid-layout--main,
+.grid-layout--inner,
+.grid-layout--container,
+.ui-layout-001--content,
+[class*="ui-template-"] {
+  background: transparent !important;
+}
+
+/* theme the album-color-extracted page header */
+.PageHeader,
+.StickyHeader,
+.PageHeader__background,
+.StickyHeader__background {
+  background: linear-gradient(180deg, rgba(216, 130, 90, 0.22), rgba(24, 17, 11, 0) 92%) !important;
+}
+
+/* accent on every control - Qobuz's controls are white by default, so recolor the
+   play button, all icons, hearts, active nav, and links to the theme accent */
+.ButtonRoundPrimary,
+[class*="ButtonRoundPrimary"] {
+  background: #D8825A !important;
+  color: #06090a !important;
+  border-color: #D8825A !important;
+  box-shadow: 0 0 22px rgba(216, 130, 90, 0.45) !important;
+}
+.ButtonIconPrimary,
+[class*="ButtonIcon"],
+[class^="icon-"],
+[class*=" icon-"] {
+  color: #D8825A !important;
+  fill: #D8825A !important;
+}
+[class*="ButtonFavorite"] {
+  color: #D8825A !important;
+  fill: #D8825A !important;
+}
+.NavItem--isActive,
+[class*="NavItem--isActive"] {
+  background: rgba(216, 130, 90, 0.1) !important;
+  border: 1px solid rgba(216, 130, 90, 0.3) !important;
+}
+.NavItem--isActive *,
+[class*="NavItem--isActive"] * {
+  color: #D8825A !important;
+  fill: #D8825A !important;
+}
+[class*="--isClickable"]:hover { color: #D8825A !important; }
+
+.ui-layout-001--topbar,
+.grid-layout--panel-outer-right,
+.ui-layout-001--panel-outer-right,
+.grid-layout--panel-outer-bottom,
+.ui-layout-001--panel-outer-bottom {
+  background: rgba(31, 22, 16, 0.88) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(58, 40, 24, 0.6) !important;
+}
+.player,
+.player__content,
+.player__track,
+.player__settings,
+.player__controls {
+  background: transparent !important;
+}
+.ListItem {
+  background: rgba(43, 29, 20, 0.45) !important;
+  border-radius: 10px !important;
+}
+.ListItem:hover {
+  background: rgba(58, 40, 24, 0.6) !important;
+}
+[class*="ui-base-menu-"]:not([class*="trigger"]),
+[class*="ui-base-panel-"]:not([class*="trigger"]),
+[class*="ui-base-tooltip-"]:not([class*="trigger"]) {
+  background: #2B1D14 !important;
+  border: 1px solid rgba(58, 40, 24, 0.6) !important;
+}

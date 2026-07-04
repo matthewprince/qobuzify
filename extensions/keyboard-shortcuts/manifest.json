@@ -1,0 +1,8 @@
+{
+  "id": "keyboard-shortcuts",
+  "name": "Keyboard Shortcuts",
+  "description": "Control Qobuz from the keyboard: space play/pause, J/L and arrows to seek, N/P next/previous, M mute, S shuffle, R repeat, F fullscreen, / search. Press ? for the full list.",
+  "icon": "icon-keyboard",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

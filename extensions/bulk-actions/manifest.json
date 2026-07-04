@@ -1,0 +1,8 @@
+{
+  "id": "bulk-actions",
+  "name": "Bulk Actions",
+  "description": "One-click bulk track actions on any album or playlist header: Favourite every track at once (Qobuz only lets you heart them one by one), and add a whole album/playlist into another playlist.",
+  "icon": "icon-heart-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

@@ -1,0 +1,8 @@
+{
+  "id": "content-filters",
+  "name": "Content Filters",
+  "description": "Hide the top-nav items you never use (For You, Discover, Magazine, Library, Imports) for a cleaner, leaner Qobuz. A funnel button in the nav bar lets you pick what shows. Pairs with Simple Client's Discover-row control.",
+  "icon": "icon-bars",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

@@ -1,0 +1,706 @@
+<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta name="theme-color" content="#3DA8FE">
+<title>Qobuzify docs</title><style>:root{--acc:#3DA8FE;--bg:#0a0e17;--bg2:#0d1220;--panel:#111726;--line:rgba(255,255,255,.08);--tx:#e7ecf3;--dim:#9aa3b2;}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;scroll-padding-top:20px;}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;}
+.wrap{display:flex;max-width:1180px;margin:0 auto;}
+aside{position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;width:236px;flex:0 0 236px;padding:26px 16px 40px;border-right:1px solid var(--line);}
+.brand{display:block;margin:0 8px 22px;}
+.brand:hover{background:none;}
+.brand svg{height:22px;width:auto;display:block;}
+.nav-group{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin:18px 8px 7px;}
+aside a{display:block;padding:6px 9px;border-radius:8px;color:#c6cdd9;text-decoration:none;font-size:13.5px;font-weight:550;}
+aside a:hover{background:rgba(255,255,255,.05);color:#fff;}
+main{flex:1;min-width:0;padding:34px 44px 120px;}
+section{border-bottom:1px solid var(--line);padding-bottom:34px;margin-bottom:34px;}
+section:last-child{border-bottom:0;}
+h1{font-size:30px;font-weight:850;letter-spacing:-.5px;margin:14px 0 14px;padding-top:6px;}
+h2{font-size:21px;font-weight:800;letter-spacing:-.2px;margin:30px 0 10px;}
+h3{font-size:16.5px;font-weight:750;margin:22px 0 8px;}
+h4{font-size:14.5px;font-weight:700;color:var(--dim);margin:18px 0 6px;}
+p{margin:11px 0;}
+a{color:var(--acc);text-decoration:none;}a:hover{text-decoration:underline;}
+strong{color:#fff;font-weight:700;}
+code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:.88em;background:rgba(124,160,255,.12);color:#cdd9ff;padding:1.5px 6px;border-radius:5px;}
+pre{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:15px 17px;overflow-x:auto;margin:14px 0;}
+pre code{background:none;color:#d5deea;padding:0;font-size:12.8px;line-height:1.6;}
+ul,ol{margin:11px 0;padding-left:22px;}li{margin:5px 0;}
+blockquote{margin:14px 0;padding:2px 16px;border-left:3px solid var(--acc);color:var(--dim);background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;}
+table{border-collapse:collapse;margin:16px 0;width:100%;font-size:13.5px;}
+th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;}
+th{background:var(--panel);font-weight:700;}
+td code{font-size:.86em;}
+@media(max-width:820px){.wrap{flex-direction:column;}aside{position:static;height:auto;width:auto;flex:none;border-right:0;border-bottom:1px solid var(--line);}main{padding:24px 20px 80px;}}</style></head><body>
+<div class="wrap">
+<aside><a class="brand" href="/" aria-label="Qobuzify"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 934 273" fill="none"><path d="M114.20 256.35L114.20 182.64Q106.70 191.43 96.10 196.12Q85.49 200.80 72.48 200.80Q57.72 200.80 44.59 192.84Q31.47 184.87 23.73 171.39Q16 157.91 16 142.33Q16 126.39 23.85 112.91Q31.59 99.44 44.65 91.59Q57.72 83.73 72.48 83.73Q85.49 83.73 96.10 88.42Q106.70 93.11 114.20 101.90L114.20 85.84L133.89 85.84L133.89 256.35L114.20 256.35M75.06 181.70Q85.96 181.70 94.87 176.43Q103.89 171.16 109.05 162.13Q114.20 153.11 114.20 142.33Q114.20 131.55 109.05 122.52Q103.77 113.38 94.81 108.17Q85.84 102.95 75.06 102.95Q64.28 102.95 55.26 108.23Q46.12 113.50 40.90 122.52Q35.69 131.55 35.69 142.33Q35.69 153.11 40.96 162.13Q46.23 171.27 55.26 176.49Q64.28 181.70 75.06 181.70M222.02 200.80Q205.84 200.80 192.37 192.95Q178.77 185.10 170.86 171.63Q162.95 158.15 162.95 142.33Q162.95 126.51 170.92 112.91Q178.89 99.32 192.43 91.53Q205.96 83.73 222.02 83.73Q238.07 83.73 251.55 91.59Q265.02 99.44 272.88 112.97Q280.73 126.51 280.73 142.33Q280.73 158.38 272.88 171.63Q265.02 185.22 251.49 193.01Q237.95 200.80 222.02 200.80M222.02 181.70Q232.68 181.70 241.59 176.43Q250.49 171.16 255.77 162.02Q261.04 152.88 261.04 142.33Q261.04 131.55 255.88 122.52Q250.61 113.38 241.59 108.17Q232.56 102.95 222.02 102.95Q211.12 102.95 202.09 108.23Q192.95 113.50 187.80 122.52Q182.64 131.55 182.64 142.33Q182.64 153.11 187.91 162.13Q193.19 171.27 202.21 176.49Q211.23 181.70 222.02 181.70M371.43 200.80Q358.42 200.80 347.82 196.12Q337.21 191.43 329.71 182.64L329.71 198.70L310.02 198.70L310.02 18.70L329.71 18.70L329.71 101.90Q337.21 93.11 347.82 88.42Q358.42 83.73 371.43 83.73Q386.43 83.73 399.32 91.59Q412.45 99.55 420.12 113.09Q427.80 126.63 427.80 142.33Q427.80 158.03 420.06 171.63Q412.33 185.10 399.26 192.95Q386.20 200.80 371.43 200.80M368.73 181.70Q379.63 181.70 388.54 176.43Q397.68 171.16 402.89 162.13Q408.11 153.11 408.11 142.33Q408.11 131.43 402.84 122.52Q397.56 113.38 388.54 108.17Q379.52 102.95 368.73 102.95Q358.07 102.95 349.05 108.23Q340.02 113.50 334.87 122.58Q329.71 131.66 329.71 142.33Q329.71 153.11 334.98 162.13Q340.14 171.27 349.16 176.49Q358.19 181.70 368.73 181.70M500.92 200.80Q488.03 200.80 478.13 195.47Q468.23 190.14 462.72 180.53Q457.21 170.92 457.21 158.27L457.21 85.84L476.66 85.84L476.66 156.63Q476.66 165.06 480.47 171.16Q484.28 177.25 489.67 179.95Q495.06 182.64 500.92 182.64Q506.78 182.64 512.52 179.95Q518.27 177.25 521.78 171.86Q525.30 166.47 525.30 156.63L525.30 85.84L544.63 85.84L544.63 158.27Q544.63 170.92 539.13 180.53Q533.62 190.14 523.71 195.47Q513.81 200.80 500.92 200.80M564.55 198.70L564.44 185.92L626.31 103.89L567.13 103.89L567.13 85.84L653.73 85.84L653.73 98.62L591.86 180.65L655.14 180.65L655.14 198.70L564.55 198.70M687.72 198.70L687.72 85.84L707.17 85.84L707.17 198.70L687.72 198.70M697.56 64.98Q692.17 64.98 688.25 61.18Q684.32 57.37 684.32 52.09Q684.32 46.59 688.25 42.84Q692.17 39.09 697.56 39.09Q702.95 39.09 706.76 42.84Q710.57 46.59 710.57 52.09Q710.57 57.37 706.70 61.18Q702.84 64.98 697.56 64.98M752.99 198.70L752.99 103.89L734.01 103.89L734.01 85.84L752.99 85.84L752.99 51.04Q752.99 40.38 757.15 32.46Q761.31 24.55 768.93 20.28Q776.55 16 786.63 16Q791.43 16 795.59 16.94Q799.75 17.88 801.98 19.40L801.98 38.85Q799.40 36.86 795.88 35.69Q792.37 34.52 788.97 34.52Q781.59 34.52 777.13 39.73Q772.68 44.95 772.68 53.50L772.68 85.84L802.45 85.84L802.45 103.89L772.68 103.89L772.68 198.70L752.99 198.70M822.13 256.35L822.13 237.13Q830.22 237.13 833.50 235.02Q836.31 233.15 839.24 226L850.61 198.70L804.79 85.84L826.70 85.84L861.86 174.09L895.02 85.84L917.17 85.84L856.82 235.61Q852.13 245.22 844.87 250.61Q836.66 256.35 822.13 256.35" fill="#FFFFFF"/></svg></a><div class="nav-group">Start here</div>
+<a href="#README">Overview</a>
+<a href="#getting-started">Getting started</a>
+<a href="#architecture">Architecture</a>
+<div class="nav-group">Reference</div>
+<a href="#api">The Qobuzify API</a>
+<a href="#extensions">Bundled extensions</a>
+<a href="#player-control">Controlling the player</a>
+<a href="#gotchas">Gotchas</a>
+<div class="nav-group">Building</div>
+<a href="#writing-extensions">Writing an extension</a>
+<a href="#themes">Writing a theme</a>
+<div class="nav-group">Subsystems</div>
+<a href="#lyrics-server">Lyrics cache-proxy</a>
+<a href="#dev-workflow">Dev workflow</a></aside>
+<main><section><h1 id="README">Overview</h1>
+<p>Qobuzify is Spicetify for the Qobuz desktop app. It themes the client and extends it with real features, all from inside the running app, without forking or rebuilding anything Qobuz ships.</p>
+<p>It works because the Qobuz desktop app is unpacked Electron (Electron 32 / Chromium 128) with a wide-open content security policy. Qobuzify injects one inline <code>&lt;script&gt;</code> into the app's <code>app.html</code>. That script is the runtime: it finds the app's Redux store through React's fiber tree, exposes a small <code>window.Qobuzify</code> API over it, loads the bundled extensions, and runs a live theme engine. From there, everything is a userscript against a music player you don't control the source of.</p>
+<p>The catch that shapes the whole project: <strong>the audio engine is sealed.</strong> Qobuz plays audio through a native JUCE module (<code>juce.node</code>), not an HTML <code>&lt;audio&gt;</code> element, and there is no reachable play / pause / seek / queue API in the renderer. So anything that touches playback has to drive the app's own DOM controls (click the real play button, fake a drag on the real progress bar) or go through the Redux store. That constraint is why several extensions look the way they do, and it comes up constantly below.</p>
+<h2 id="README--start-here">Start here</h2>
+<ul><li><strong><a href="#getting-started">getting-started</a></strong>: install, the CLI, requirements, how to undo it all</li><li><strong><a href="#architecture">architecture</a></strong>: how the injection, runtime, extension loader, and theme engine fit together</li></ul>
+<h2 id="README--reference">Reference</h2>
+<ul><li><strong><a href="#api">api</a></strong>: the <code>window.Qobuzify</code> API that extensions are written against</li><li><strong><a href="#extensions">extensions</a></strong>: what every bundled extension does and how</li><li><strong><a href="#player-control">player-control</a></strong>: how to drive a sealed player (seek, transport, volume) from injected JS</li><li><strong><a href="#gotchas">gotchas</a></strong>: the things that cost days, collected so they cost you minutes</li></ul>
+<h2 id="README--building-your-own">Building your own</h2>
+<ul><li><strong><a href="#writing-extensions">writing-extensions</a></strong>: the extension authoring guide, with a template you can copy</li><li><strong><a href="#themes">themes</a></strong>: the theme token system and how to write or generate a theme</li></ul>
+<h2 id="README--subsystems">Subsystems</h2>
+<ul><li><strong><a href="#lyrics-server">lyrics-server</a></strong>: the lyrics cache-proxy (a Cloudflare Worker + D1 + R2) behind the Qobuzify Lyrics extension</li><li><strong><a href="#dev-workflow">dev-workflow</a></strong>: the Chrome DevTools Protocol loop used to build and verify all of this against a live Qobuz</li></ul>
+<h2 id="README--what-ships">What ships</h2>
+<ul><li>A zero-dependency Node CLI (<code>bin/qobuzify.js</code>) that installs the runtime and swaps themes</li><li>The runtime (<code>runtime/qobuzify-runtime.js</code>), injected into <code>app.html</code></li><li>18 extensions under <code>extensions/</code></li><li>10 themes under <code>themes/</code></li><li>A lyrics cache-proxy Worker under <code>server/</code></li></ul>
+<p>Windows only for now. macOS is planned. Qobuz has no Linux desktop app, so there is nothing to patch there.</p></section>
+<section><h1 id="getting-started">Getting started</h1>
+<h2 id="getting-started--requirements">Requirements</h2>
+<ul><li>The Qobuz desktop app, installed and run at least once</li><li>Node 16 or newer</li><li>Windows (macOS is planned; there is no Linux Qobuz desktop app)</li></ul>
+<p>Qobuzify has zero runtime dependencies. It is a plain Node CLI plus the files it injects.</p>
+<h2 id="getting-started--install">Install</h2>
+<pre><code>git clone &lt;repo&gt; &amp;&amp; cd qobuzify
+npm link                 # puts `qobuzify` on your PATH
+# or skip the link and run: node bin/qobuzify.js &lt;command&gt;</code></pre>
+<p>Then install the runtime into Qobuz:</p>
+<pre><code>qobuzify install         # installs with the default theme (Glass)
+qobuzify install neon    # or pick a starting theme</code></pre>
+<p>That injects the runtime, relaunches Qobuz, and you're done. Open Qobuz, click your avatar (top right), and pick <strong>Marketplace</strong> to browse themes and extensions. Theme switching from there is live, no relaunch.</p>
+<h2 id="getting-started--commands">Commands</h2>
+<pre><code>qobuzify detect           show the Qobuz install Qobuzify will patch
+qobuzify list             list available themes
+qobuzify install [theme]  install the in-app runtime + Marketplace
+qobuzify update           re-apply the current files, keeping your theme and settings
+qobuzify apply &lt;theme&gt;    set a theme and relaunch
+qobuzify restore          revert to the stock Qobuz UI
+qobuzify spotify-login    connect Spotify once for synced lyrics (OAuth, auto-renewed)
+qobuzify spotify-token    refresh the lyrics Spotify token from a running Spotify</code></pre>
+<p><code>install</code> and <code>apply</code> do the same injection. The difference is intent: <code>install</code> sets up the Marketplace and you switch themes live afterward; <code>apply &lt;theme&gt;</code> asserts a specific theme as the active one on the next launch. Both relaunch Qobuz, because the renderer only reads its HTML at startup.</p>
+<p>Run <code>detect</code> first if you want to see exactly what will be patched:</p>
+<pre><code>$ qobuzify detect
+Qobuz found:
+  version   8.2.0
+  app dir   ...\Programs\Qobuz\app-8.2.0\resources\dist
+  app.html  ...\dist\www\app.html
+  legacy    ...\dist\www\...\legacy.css
+  launcher  ...\Programs\Qobuz\Qobuz.exe</code></pre>
+<h2 id="getting-started--optional-lyrics-sources">Optional: lyrics sources</h2>
+<p>The Qobuzify Lyrics extension works out of the box using open sources (NetEase and LRCLIB). Two optional setups improve it:</p>
+<ul><li><strong>Spotify login</strong> (<code>qobuzify spotify-login</code>) unlocks the Qz Lyrics backend for more word-by-word coverage. It is a one-time OAuth flow; the token then auto-renews. You need a Spotify app client ID in <code>.spotify-creds.json</code>.</li><li><strong>Apple Music credentials</strong> (a developer token and media-user token in <code>.apple-creds.json</code>) unlock Apple's syllable-timed TTML, the highest-quality source. When present, the installer also patches the main process to set the <code>Origin</code> header Apple's API requires.</li></ul>
+<p>Neither is required. All of this is local; credentials live in gitignored files next to the CLI and are passed into the runtime payload, never sent anywhere except the source they authenticate.</p>
+<h2 id="getting-started--undoing-it">Undoing it</h2>
+<pre><code>qobuzify restore</code></pre>
+<p>Restore copies the original <code>app.html</code>, <code>legacy.css</code>, and <code>main-win32.js</code> back from the <code>*.qobuzify-bak</code> backups taken on first install, then relaunches. Qobuzify is fully reversible.</p>
+<h2 id="getting-started--after-a-qobuz-update">After a Qobuz update</h2>
+<p>A Qobuz update installs a fresh <code>app-&lt;version&gt;</code> folder, which won't have the runtime. Re-run:</p>
+<pre><code>qobuzify install</code></pre>
+<p>It re-detects the current install and patches it.</p>
+<h2 id="getting-started--updating-qobuzify">Updating Qobuzify</h2>
+<p>Qobuzify checks for a newer release on launch and shows an in-app prompt when one is out. To update, re-run the one-line installer (it keeps your theme and local credentials):</p>
+<pre><code>irm https://qobuzify.app/install.ps1 | iex</code></pre>
+<p>or, from a cloned checkout, <code>qobuzify update</code>. Re-running is non-destructive: your live theme choice, enabled extensions, and lyric credentials are preserved.</p>
+<h2 id="getting-started--reporting-a-problem-or-contributing">Reporting a problem or contributing</h2>
+<ul><li><strong>Bug or feature request:</strong> <a href="https://qobuzify.app/issues">qobuzify.app/issues</a>, or the "Report a bug" link in the Qobuzify settings (it attaches your version and enabled extensions).</li><li><strong>A theme or extension to share:</strong> <a href="https://qobuzify.app/submit">qobuzify.app/submit</a>. Approved ones ship in the bundled catalog. See <a href="#writing-extensions">writing an extension</a> and <a href="#themes">writing a theme</a>.</li><li><strong>A security issue:</strong> report it privately at <a href="https://qobuzify.app/security">qobuzify.app/security</a>, not the public bug form. See the security policy for scope and disclosure.</li></ul></section>
+<section><h1 id="architecture">Architecture</h1>
+<p>Qobuzify has four moving parts: the CLI that installs it, the inline runtime it injects, the extension loader inside that runtime, and the theme engine. This doc walks through each and how they connect.</p>
+<h2 id="architecture--the-shape-of-the-target">The shape of the target</h2>
+<p>The Qobuz desktop app is an unpacked Electron app. On Windows it lives at roughly:</p>
+<pre><code>%LOCALAPPDATA%\Programs\Qobuz\app-&lt;version&gt;\resources\dist\</code></pre>
+<p>Two things about it make Qobuzify possible:</p>
+<ol><li><strong>Nothing is packed or signed.</strong> No <code>.asar</code>, no integrity check on the renderer, and the content security policy is wide open, so an inline <code>&lt;script&gt;</code> in <code>app.html</code> just runs.</li><li><strong>The UI is a normal React + Redux SPA.</strong> Once you can reach the Redux store, you can read player state, dispatch router navigations, and observe everything the app does.</li></ol>
+<p>The one thing that is *not* reachable is the audio. Qobuz decodes and plays through a native JUCE addon (<code>juce.node</code>). There is no <code>&lt;audio&gt;</code> element and no play / pause / seek / queue function exposed to the renderer. Every playback feature in Qobuzify works around that, and <a href="#player-control">player-control</a> is entirely about how.</p>
+<h2 id="architecture--1-install-what-the-cli-touches">1. Install: what the CLI touches</h2>
+<p>The CLI (<code>bin/qobuzify.js</code>) calls <code>install()</code> in <code>lib/apply.js</code>. Install is idempotent and only ever touches three files, always rebuilding from a pristine backup so re-running stays clean.</p>
+<p><strong><code>app.html</code></strong> gets one inline script injected right before <code>bundle.js</code>:</p>
+<pre><code class="lang-html">&lt;script id="qobuzify-runtime"&gt;
+  window.__QOBUZIFY__ = { catalog, extensions, def, version, seed, spotify, spotifyToken, apple };
+  /* ...the entire runtime source... */
+&lt;/script&gt;
+&lt;script src="/bundle.js"&gt;&lt;/script&gt;</code></pre>
+<p>The <code>window.__QOBUZIFY__</code> payload is the data the runtime reads at boot: the theme catalog, every extension's source, the default theme, and any local lyrics credentials. The runtime source is inlined right after it. The whole thing is escaped so a <code>&lt;/script&gt;</code> inside any theme CSS or extension body can't break out of the tag.</p>
+<p><strong><code>legacy.css</code></strong> is reset to stock. Older Qobuz rules hardcode the brand gold as literal hex, and the original Qobuzify swapped those in the file. The live theme engine overrides design tokens at runtime instead, so the install just keeps <code>legacy.css</code> pristine.</p>
+<p><strong><code>main-win32.js</code></strong> (the minified main-process bundle) gets patched for things the renderer can't do on its own. These run in Electron's main process, where <code>require()</code> is available:</p>
+<ul><li><strong>Background-throttle fix</strong> (always). Chromium pauses <code>requestAnimationFrame</code> in a backgrounded renderer, which is what made the lyrics view freeze and stutter on alt-tab. The fix forces <code>backgroundThrottling: false</code> on the main window, both by patching the <code>webPreferences</code> literal directly and by wrapping the <code>BrowserWindow</code> constructor as a fallback for future builds. See <a href="#gotchas">gotchas</a> for why it has to be done at window creation.</li><li><strong>Discord Rich Presence</strong> (always). The main-process half of the Discord RPC lives here (<code>runtime/rpc-main.js</code>, appended). It owns the Discord IPC pipe and a localhost bridge the renderer posts track changes to. The renderer is sandboxed and can't do Discord IPC itself.</li><li><strong>Apple Music header rewrite</strong> (only if you've added Apple credentials). Apple's <code>amp-api</code> validates the <code>Origin</code> header and a renderer fetch can't set it, so lyric requests would 401. A main-process <code>onBeforeSendHeaders</code> listener stamps <code>Origin</code>/<code>Referer</code> on <code>amp-api.music.apple.com</code> requests.</li></ul>
+<p>Big prebuilt bundles (the Qz Lyrics renderer) ship as a sibling <code>vendor.js</code> and get copied into the <code>dist</code> directory so the extension can load them with <code>&lt;script src="/qobuzify-ext-&lt;id&gt;.js"&gt;</code>. Inlining a 1.3 MB bundle into the payload would break it.</p>
+<p>Originals are backed up once as <code>*.qobuzify-bak</code>. <code>restore</code> copies them back and relaunches. A Qobuz update installs a new <code>app-&lt;version&gt;</code> folder, so you re-run <code>apply</code> after updating.</p>
+<p>Install and restore both relaunch Qobuz, because the renderer only reads its HTML at launch.</p>
+<h2 id="architecture--2-the-runtime">2. The runtime</h2>
+<p><code>runtime/qobuzify-runtime.js</code> is an IIFE that guards against double-injection and then does four things.</p>
+<p><strong>Finds the Redux store.</strong> Qobuz ships a legacy <code>ReactDOM.render</code> build, so the fiber root is at <code>#root._reactRootContainer._internalRoot.current</code> and the DOM key is <code>__reactContainere$&lt;id&gt;</code> (note the extra "e"). <code>findStore()</code> walks the fiber tree from a few candidate entry points looking for a <code>memoizedProps</code> value that has both <code>getState</code> and <code>subscribe</code>. That store is the spine of the whole API.</p>
+<p><strong>Builds the API.</strong> <code>buildApi()</code> returns the <code>Q</code> object that becomes <code>window.Qobuzify</code>. It wraps the store (<code>getState</code>, <code>subscribe</code>), the Qobuz HTTP API (<code>api()</code>, using the in-app auth token), player reads (<code>player.getTrack</code>, <code>getPositionMs</code>, <code>isPlaying</code>, <code>onChange</code>), and DOM helpers (<code>css</code>, <code>el</code>, <code>observe</code>, <code>onRoute</code>, <code>navigate</code>, <code>addNavItem</code>, <code>playerSlot</code>, <code>storage</code>). The full surface is in <a href="#api">api</a>.</p>
+<p><strong>Loads extensions.</strong> For each enabled extension it compiles the source with <code>new Function("Qobuzify", "vendor", source)</code> and calls it with <code>window.Qobuzify</code> and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions are on by default; <code>localStorage["qobuzify:ext:&lt;id&gt;"] === "0"</code> means off.</p>
+<p><strong>Runs the theme engine and the UI.</strong> It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme. A <code>MutationObserver</code> re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.</p>
+<p>Because the navbar and player mount asynchronously, boot polls briefly (and observes) until they exist, then stops.</p>
+<h2 id="architecture--3-the-extension-model">3. The extension model</h2>
+<p>An extension is a folder under <code>extensions/</code>:</p>
+<pre><code>extensions/my-extension/
+  manifest.json   { id, name, description, icon, version, author, defaultOff? }
+  index.js        the body of function(Qobuzify, vendor) { ... return cleanup }
+  vendor.js       (optional) a big prebuilt bundle, loaded via &lt;script src&gt;</code></pre>
+<p><code>index.js</code> is not a module. Its whole contents become the body of a function that receives <code>Qobuzify</code> (the API) and <code>vendor</code> (the vendor string, or <code>""</code>), and returns a cleanup function:</p>
+<pre><code class="lang-js">var Q = Qobuzify;
+Q.css("my-ext", ".foo{color:var(--qz-accent)}");
+var off = Q.onRoute(function (path) { /* ... */ });
+
+return function cleanup() {
+  off();
+  var st = document.getElementById("my-ext"); if (st) st.remove();
+};</code></pre>
+<p>The cleanup contract matters. An extension can be toggled off at runtime, so it has to undo everything it did: remove its styles, DOM nodes, and event listeners, and unsubscribe from the store. If it doesn't, turning it off leaves ghosts behind. <a href="#writing-extensions">writing-extensions</a> covers the patterns.</p>
+<h2 id="architecture--4-the-theme-model">4. The theme model</h2>
+<p>A theme is a JSON file in <code>themes/</code>, optionally with a companion CSS file:</p>
+<pre><code class="lang-json">{
+  "name": "Glass",
+  "author": "matthewprince",
+  "description": "Frosted chrome over deep navy.",
+  "preview": { "bg": "#060A12", "surface": "#0b0f19", "accent": "#3DA8FE", "text": "#F0F6FC" },
+  "tokens": { "--color-brand-100": "#3DA8FE", "--color-grey-120": "#060A12" },
+  "cssFile": "glass.css"
+}</code></pre>
+<p><code>buildCatalog()</code> reads <code>name</code>, <code>author</code>, <code>description</code>, <code>preview</code>, <code>tokens</code>, and <code>cssFile</code>. The runtime turns <code>tokens</code> into a <code>:root { ...; !important }</code> block and appends the CSS file, then swaps that into a single <code>&lt;style id="qobuzify-live"&gt;</code>. Switching themes rewrites that one element, so it is live with no relaunch.</p>
+<p><code>preview</code> is the little swatch the Marketplace draws for the theme. <code>--qz-accent</code> is set from <code>preview.accent</code> and is the variable every extension uses for its own accent color, so extensions automatically match the active theme.</p>
+<p>(Some older theme files also carry a <code>legacyReplace</code> map from the pre-runtime model. The live engine ignores it; tokens and CSS do the recoloring now.)</p>
+<p>See <a href="#themes">themes</a> for the token system and the generator.</p>
+<h2 id="architecture--the-layout-z-index-map">The layout z-index map</h2>
+<p>This is worth knowing before you build any full-page overlay, because getting it wrong makes the app's own menus unclickable. Qobuz's layout stacks like this:</p>
+<pre><code>base content        z: auto (~0)
+panel-left / right   z: 230
+panel-top (nav)      z: 250   &lt;- contains the NavBar
+panel-bottom (player) z: 250
+NavBar                z: 999   (nested inside panel-top)</code></pre>
+<p>A full-page overlay has to sit above the content but below the nav and player, or the account menu and track context menus open behind it and can't be clicked. The rule: host the overlay *inside the layout* (as a sibling of the panels, at <code>.ui-layout--root--panel-top</code>'s parent) at <code>z: 220</code>. Do not park it on <code>document.body</code> at a max z-index. The For You page, the search takeover, and the stats page all follow this. See <a href="#gotchas">gotchas</a>.</p></section>
+<section><h1 id="api">The <code>window.Qobuzify</code> API</h1>
+<p>Every extension is called with one argument, <code>Qobuzify</code>, the API object built by the runtime. By convention extensions alias it as <code>Q</code>:</p>
+<pre><code class="lang-js">var Q = Qobuzify;</code></pre>
+<p>This is the whole surface. It is deliberately small: enough to read player and app state, call the Qobuz API, and add UI, without wrapping things you can already do with the DOM.</p>
+<h2 id="api--state-and-the-store">State and the store</h2>
+<h3 id="api--q-store"><code>Q.store</code></h3>
+<p>The raw Redux store, if you need it directly. Most of the time the helpers below are enough.</p>
+<h3 id="api--q-getstate"><code>Q.getState()</code></h3>
+<p><code>store.getState()</code>. The useful slices:</p>
+<ul><li><code>state.player</code>: <code>{ playingState, position, currentTrack, quality, ... }</code></li><li><code>state.router.location.pathname</code>: the current route</li><li><code>state.user.token</code>: the in-app Qobuz auth token (used by <code>Q.api</code>)</li><li><code>state.playqueue.history</code>: recently played track ids</li></ul>
+<h3 id="api--q-subscribe-fn"><code>Q.subscribe(fn)</code></h3>
+<p><code>store.subscribe(fn)</code>. Fires on every state change. Returns an unsubscribe function. Debounce it yourself if you only care about specific slices; it fires a lot.</p>
+<pre><code class="lang-js">var off = Q.subscribe(function () { /* runs on every dispatch */ });
+// later: off();</code></pre>
+<h2 id="api--player">Player</h2>
+<p>Reads only. There is no play / pause / seek here, because the audio engine is sealed. To control playback you drive the app's own controls; see <a href="#player-control">player-control</a>.</p>
+<h3 id="api--q-player-gettrack"><code>Q.player.getTrack()</code></h3>
+<p>The current track as a flat object, read from the store and the player-bar DOM:</p>
+<pre><code class="lang-js">{
+  id: 12345,
+  title: "Song",
+  artist: "Main Artist",       // first artist, convenience
+  artists: ["Main Artist", "Feature"],
+  album: "Album",
+  albumId: "abc123",
+  durationMs: 210000,
+  cover: "https://.../cover_600.jpg",
+  quality: "Hi-Res 24-Bit / 96 kHz"  // or null
+}</code></pre>
+<p>Returns <code>null</code> if nothing is loaded.</p>
+<h3 id="api--q-player-getpositionms"><code>Q.player.getPositionMs()</code></h3>
+<p>Current playback position in milliseconds. Computed from the store's last known position plus the time elapsed since its timestamp (so it advances smoothly between store updates), clamped to the track duration.</p>
+<h3 id="api--q-player-isplaying"><code>Q.player.isPlaying()</code></h3>
+<p><code>true</code> when <code>playingState === "play"</code>.</p>
+<h3 id="api--q-player-onchange-fn"><code>Q.player.onChange(fn)</code></h3>
+<p>Calls <code>fn(track)</code> whenever the current track id changes. Returns an unsubscribe function. This is the one to use for "do something when the song changes".</p>
+<pre><code class="lang-js">var off = Q.player.onChange(function (track) {
+  console.log("now playing", track.title);
+});</code></pre>
+<p>Note: <code>onChange</code> is reliable for user-driven track changes but can miss some in-album auto-advances. If you need to be certain (a cover-art background, say), poll <code>getTrack()</code> on a cheap interval and dedupe by id. The lyrics extension does exactly that.</p>
+<h2 id="api--the-qobuz-api">The Qobuz API</h2>
+<h3 id="api--q-api-methodpath"><code>Q.api(methodPath)</code></h3>
+<p>Calls the Qobuz HTTP API with the in-app app id and your auth token, and returns the parsed JSON. Rejects on a non-OK response.</p>
+<pre><code class="lang-js">Q.api("album/get?album_id=" + id).then(function (j) {
+  var tracks = j.tracks.items;
+});</code></pre>
+<p>These are all read endpoints and playlist/favorite writes that Qobuz itself exposes as GET requests. A few that come up:</p>
+<pre><code>album/get?album_id=
+artist/get?artist_id=&amp;extra=albums|tracks
+artist/getSimilarArtists?artist_id=
+catalog/search?query=&amp;limit=
+favorite/getUserFavorites?type=artists|albums|tracks
+favorite/create?type=tracks&amp;track_ids=a,b,c        (batch works)
+playlist/get?playlist_id=&amp;extra=tracks&amp;limit=&amp;offset=
+playlist/create?name=&amp;is_public=false
+playlist/addTracks?playlist_id=&amp;track_ids=
+playlist/deleteTracks?playlist_id=&amp;playlist_track_ids=
+playlist/getUserPlaylists
+user/get</code></pre>
+<p>Two things to know: an emoji in a <code>playlist/create</code> name makes Qobuz save an empty name (use a plain prefix), and playlist track removal keys off <code>playlist_track_id</code>, not the plain track id. More in <a href="#gotchas">gotchas</a>.</p>
+<h2 id="api--dom-helpers">DOM helpers</h2>
+<h3 id="api--q-css-id-text"><code>Q.css(id, text)</code></h3>
+<p>Creates or updates a <code>&lt;style&gt;</code> element with the given id and sets its text. Calling it again with the same id replaces the contents, so it doubles as your handle for live updates. Returns the element.</p>
+<pre><code class="lang-js">Q.css("my-ext-css", ".my-thing { color: var(--qz-accent); }");</code></pre>
+<p>Remove it in cleanup: <code>document.getElementById("my-ext-css").remove()</code>.</p>
+<h3 id="api--q-el-html"><code>Q.el(html)</code></h3>
+<p>Builds a detached DOM node from an HTML string and returns the first element. Handy for building UI without <code>document.createElement</code> chains.</p>
+<pre><code class="lang-js">var btn = Q.el('&lt;button class="qz-pbtn"&gt;Hi&lt;/button&gt;');
+btn.addEventListener("click", ...);</code></pre>
+<h3 id="api--q-observe-fn-opts"><code>Q.observe(fn, opts)</code></h3>
+<p>A debounced <code>MutationObserver</code> over <code>document.body</code> (<code>childList</code>, <code>subtree</code>). Runs <code>fn</code> once immediately, then on DOM changes, coalesced to one call per <code>opts.debounce</code> milliseconds (default 120). Returns a function that disconnects it. This is how extensions re-apply themselves as React re-renders the page.</p>
+<pre><code class="lang-js">var off = Q.observe(function () { paintBadges(); }, { debounce: 200 });</code></pre>
+<p>Keep <code>fn</code> cheap and idempotent. It runs a lot, and it should be a no-op when there is nothing to do.</p>
+<h3 id="api--q-onroute-fn"><code>Q.onRoute(fn)</code></h3>
+<p>Registers <code>fn(path)</code> to run when the route changes. Returns an unregister function. Use it to tear down page-specific UI and set up the next page's.</p>
+<pre><code class="lang-js">var off = Q.onRoute(function (path) {
+  if (/^\/album\//.test(path)) { /* ... */ }
+});</code></pre>
+<h3 id="api--q-navigate-path"><code>Q.navigate(path)</code></h3>
+<p>Navigates the Qobuz router (a connected-react-router push), with an <code>&lt;a&gt;</code>-click fallback. Use this instead of <code>location.href</code> so you stay inside the SPA.</p>
+<h2 id="api--persistent-storage">Persistent storage</h2>
+<h3 id="api--q-storage-get-key-default-q-storage-set-key-value"><code>Q.storage.get(key, default)</code> / <code>Q.storage.set(key, value)</code></h3>
+<p>String key/value storage backed by <code>localStorage</code>, namespaced under <code>qobuzify:x:&lt;key&gt;</code>. <code>get</code> returns <code>default</code> when the key is missing. Each key is its own <code>localStorage</code> entry, not a shared JSON blob, so different extensions can't clobber each other.</p>
+<pre><code class="lang-js">Q.storage.set("mysetting", "1");
+var on = Q.storage.get("mysetting", "0") === "1";</code></pre>
+<p>Values are strings. <code>JSON.stringify</code> / <code>JSON.parse</code> yourself for anything structured.</p>
+<h2 id="api--adding-ui">Adding UI</h2>
+<h3 id="api--q-playerslot-id-zone-order-el"><code>Q.playerSlot({ id, zone, order, el })</code></h3>
+<p>Registers a button in the player bar. Returns <code>{ remove }</code>. The runtime places your element, keeps it alive across React re-renders, and spaces it against other extensions' buttons.</p>
+<ul><li><code>id</code>: unique string</li><li><code>zone</code>: <code>"left"</code> (by the track info and heart, in the open space before the transport) or <code>"right"</code> (the settings cluster, with lyrics and fullscreen)</li><li><code>order</code>: number; lower sorts first within the zone</li><li><code>el</code>: your button element (use the <code>qz-pbtn</code> class for a standard native-sized icon button)</li></ul>
+<pre><code class="lang-js">var btn = Q.el('&lt;button class="qz-pbtn" title="Do a thing"&gt;&lt;span class="icon-magic-stars"&gt;&lt;/span&gt;&lt;/button&gt;');
+btn.addEventListener("click", doThing);
+var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
+// cleanup: slot.remove();</code></pre>
+<h3 id="api--q-addnavitem-id-label-icon-onclick"><code>Q.addNavItem({ id, label, icon, onClick })</code></h3>
+<p>Adds an item to the sidebar nav. Returns <code>{ remove }</code>. For a full-page feature you'd typically add the nav item and open your own overlay from <code>onClick</code>. (For a page that replaces the main content region, see the overlay + z-index pattern in <a href="#writing-extensions">writing-extensions</a>.)</p>
+<h2 id="api--theming">Theming</h2>
+<h3 id="api--q-accent"><code>Q.accent()</code></h3>
+<p>The active theme's accent color (the <code>--qz-accent</code> CSS variable), trimmed. In CSS, just use the variable directly so your UI tracks theme changes automatically:</p>
+<pre><code class="lang-css">.my-thing { color: var(--qz-accent, #3DA8FE); }</code></pre>
+<h2 id="api--credentials-lyrics-only">Credentials (lyrics only)</h2>
+<p><code>Q.spotify</code>, <code>Q.spotifyToken</code>, and <code>Q.apple</code> carry the optional local lyric-source credentials from the install payload, or <code>null</code>. Only the Qobuzify Lyrics extension uses these. They never leave the machine except to the source they authenticate.</p>
+<h2 id="api--the-cleanup-contract">The cleanup contract</h2>
+<p>Your extension returns a function. The runtime calls it when the extension is toggled off. It has to undo everything:</p>
+<pre><code class="lang-js">return function cleanup() {
+  if (offRoute) offRoute();
+  if (obs) obs();
+  if (slot) slot.remove();
+  document.querySelectorAll(".my-injected-node").forEach(function (n) { n.remove(); });
+  var st = document.getElementById("my-ext-css"); if (st) st.remove();
+};</code></pre>
+<p>If you skip this, turning the extension off leaves styles, nodes, and live listeners behind. Every bundled extension returns a real cleanup; copy one as a checklist.</p></section>
+<section><h1 id="extensions">The bundled extensions</h1>
+<p>Eighteen extensions ship with Qobuzify. Each lives in <code>extensions/&lt;id&gt;/</code>, is on by default, and can be toggled from the Marketplace. This is what they do and, where it's interesting, how.</p>
+<p>Reading these is also the fastest way to learn the API, since they exercise all of it against real problems. If you're going to write your own, skim <a href="#feat-artists">feat-artists</a> and <a href="#ux-tweaks">ux-tweaks</a> first; they're the smallest complete examples.</p>
+<h2 id="extensions--discovery-and-playback">Discovery and playback</h2>
+<h3 id="extensions--recommended-for-you">recommended (For You)</h3>
+<p>A personalized home page built entirely from your own Qobuz data (favorites and listening history) plus Qobuz's own catalog endpoints. No external service. It adds a "For You" tab as the first nav item, becomes the app's home (auto-opens on launch, and the logo opens it), and renders a full-page overlay: a rotating "Top pick" hero, then shelves that fill in as data arrives (In your rotation, New from artists you love, Because you like X, Artists you might like, Fresh for you). It also builds "Made for you" mixes (a Daily Mix and per-artist mixes) into real playlists on demand. The hero rotates each visit and remembers its last pick so it doesn't get stuck.</p>
+<h3 id="extensions--better-search">better-search</h3>
+<p>Replaces Qobuz's weak native search with an instant, ranked, filterable full-page takeover. It hooks the real search box and, as you type, covers the content region so the native <code>/search</code> page never shows. Multi-word queries are scored per word with a full-phrase bonus; results you've heard before surface higher. Filters for quality, year, and sort; a Spotify-style "Top result" hero next to a Songs column, then card grids. Cover play buttons play the specific thing, including a specific track (not the album's track 1), which takes real work on a sealed player. Closing restores the route you were on.</p>
+<h3 id="extensions--smart-playback-smart-radio">smart-playback (Smart Radio)</h3>
+<p>A real fix for Qobuz's weak autoplay. The queue lives in the sealed player module, so instead of swapping its picks, one click builds a genuinely related set from what's playing (the current artist plus similar artists' top tracks, weighted to your favorites, deduped against recent plays), drops it into a fresh "Qobuzify Radio" playlist, and plays that through the app. The old radio playlist is deleted right after, so the library holds exactly one, and a fresh id each run sidesteps Qobuz's playlist-content cache.</p>
+<h2 id="extensions--library-and-playlists">Library and playlists</h2>
+<h3 id="extensions--playlist-tools">playlist-tools</h3>
+<p>Stats, Export, remove-duplicates, and Sort for your own playlists. A "Tools" button appears in the playlist header, but only on playlists you own. Stats and Export are read-only (top artists, decades, hi-res share; copy or download as Text / M3U / CSV / JSON). Duplicates edits the playlist after an inline confirm. Sort never touches the original, it builds a new sorted playlist and opens it.</p>
+<h3 id="extensions--bulk-actions">bulk-actions</h3>
+<p>"Favourite all", "Add all to a playlist", and a shuffle-and-play button in any album or playlist header. All through the playlist/favorite write API (favorite-create takes a batch). The shuffle builds a shuffled copy playlist and plays only those tracks, keeping exactly one shuffle playlist around.</p>
+<h3 id="extensions--feat-artists">feat-artists</h3>
+<p>Qobuz only shows the main artist on a track row; anyone featured or collaborating is buried in the credits. This digs the featured names out of <code>track.performers</code>, which rides along in the standard <code>album/get</code> / <code>playlist/get</code> response (one fetch per page, cached per id, no special credits endpoint), and appends " feat. X, Y" inline. One of the smallest complete extensions, and a good template.</p>
+<h3 id="extensions--quality-badges">quality-badges</h3>
+<p>Puts Qobuz's own Hi-Res Audio logo on hi-res tracks, reusing the app's bundled <code>hires.png</code> so it looks native. Only hi-res gets a badge; CD and lossy show nothing, which is the point: hi-res becomes easy to spot at a glance.</p>
+<h2 id="extensions--lyrics">Lyrics</h2>
+<h3 id="extensions--qobuzify-lyrics">qobuzify-lyrics</h3>
+<p>Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through a licensed UI bundle (shipped as <code>vendor.js</code>) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See <a href="#lyrics-server">lyrics-server</a>.</p>
+<h2 id="extensions--now-playing-and-controls">Now playing and controls</h2>
+<h3 id="extensions--full-app-display">full-app-display</h3>
+<p>A fullscreen now-playing overlay: big cover art, title/artist/album over a blurred backdrop, a live seekable progress bar, and prev/play-pause/next. Everything drives the real player controls underneath, so the sealed audio engine is never touched directly. Toggle from the player bar or the F key.</p>
+<h3 id="extensions--seek-controls">seek-controls</h3>
+<p>-10s / +10s skip buttons and an A-B loop in the player bar. Seeking a sealed JUCE engine has exactly one clean path, the app's own progress bar, and getting it right is subtle. See <a href="#player-control">player-control</a>.</p>
+<h3 id="extensions--keyboard-shortcuts">keyboard-shortcuts</h3>
+<p>Play/pause, seek, next/prev, volume, mute, like, shuffle, repeat, fullscreen, and focus-search, from anywhere. Every action drives the player's own DOM controls or the store. A <code>?</code> overlay lists them. Keys are ignored while you're typing and left alone when a modifier is held.</p>
+<h3 id="extensions--sleep-timer">sleep-timer</h3>
+<p>Stop playback after a set time or at the end of the current track. A moon button opens the menu; while armed it shows a live countdown. On expiry it pauses by clicking the play/pause control, since there's no pause API.</p>
+<h2 id="extensions--cleanup-and-quality-of-life">Cleanup and quality-of-life</h2>
+<h3 id="extensions--simple-client">simple-client</h3>
+<p>Strips the Magazine nav item and the editorial promo carousels for a lean, library-first client. A "Lean" control on the Discover page lets you check/uncheck each promo section live.</p>
+<h3 id="extensions--content-filters">content-filters</h3>
+<p>Hide the top-nav items you don't use. A funnel button opens a checklist; hidden items go away via a scoped CSS rule that's careful not to touch the brand logo.</p>
+<h3 id="extensions--ux-tweaks-quality-of-life">ux-tweaks (Quality of Life)</h3>
+<p>Four small annoyances fixed: double-click a track row to play it, the library opens on your last-used tab, your grid/list view choice sticks, and an optional switch to hide the Hi-Res badges. A good example of a small extension that adds a toggle to the Qobuzify settings panel.</p>
+<h3 id="extensions--copy-share">copy-share</h3>
+<p>Right-click a track to copy "Artist - Title" or a shareable <code>play.qobuz.com</code> link. Works on list rows and the player bar's current track.</p>
+<h3 id="extensions--discord-rpc">discord-rpc</h3>
+<p>Discord Rich Presence for what you're playing, matching the original qobuz-rpc presence (cover, timestamps, a pause state). The renderer is sandboxed, so the actual Discord IPC runs in the main process (<code>runtime/rpc-main.js</code>) and this extension posts track changes to it over localhost. A toggle in Qobuzify settings enables and disables it.</p>
+<h2 id="extensions--off-by-default">Off-by-default</h2>
+<p>An extension can set <code>"defaultOff": true</code> in its manifest to ship disabled. None of the current bundle does, but the loader honors it: <code>defaultOff</code> extensions stay off until you turn them on in the Marketplace.</p></section>
+<section><h1 id="player-control">Controlling a sealed player</h1>
+<p>Qobuz plays audio through a native JUCE addon, not an HTML <code>&lt;audio&gt;</code> element. There is no <code>play()</code>, <code>pause()</code>, <code>seek()</code>, <code>setVolume()</code>, or queue API reachable from the renderer. Everything that touches playback has to drive the app's own UI controls or, in one case, reach a React component's props through the fiber.</p>
+<p>This is the single most important thing to understand about extending Qobuz, and it's why the playback extensions are shaped the way they are. Here are the working techniques.</p>
+<h2 id="player-control--transport-play-pause-next-prev-shuffle-repeat-like">Transport (play, pause, next, prev, shuffle, repeat, like)</h2>
+<p>These are the easy ones. The player-bar buttons are real, so click them:</p>
+<pre><code class="lang-js">function click(sel) {
+  var el = document.querySelector(sel);
+  if (el) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+}</code></pre>
+<table><thead><tr><th>action</th><th>selector</th></tr></thead><tbody><tr><td>play/pause</td><td><code>.player__action-pause, .player__action-play</code></td></tr><tr><td>next</td><td><code>.pct-player-next</code></td></tr><tr><td>previous</td><td><code>.pct-player-prev</code></td></tr><tr><td>shuffle</td><td><code>.pct-shuffle</code></td></tr><tr><td>repeat</td><td><code>.pct-repeat</code></td></tr><tr><td>mute</td><td><code>.pct-volume</code></td></tr><tr><td>like</td><td><code>.player .ButtonFavorite</code></td></tr></tbody></table>
+<p>Play/pause has two possible classes because the same button relabels itself, so the combined selector catches whichever is current. This is how sleep-timer pauses and how keyboard-shortcuts does transport.</p>
+<h2 id="player-control--seek">Seek</h2>
+<p>Seeking is the subtle one. The only clean path is the player's own progress bar, and you have to fake the exact gesture it listens for.</p>
+<p>The bar derives the target time from the mouse x-position on <code>mousemove</code> (it stores a <code>potentialSeekPosition</code>) and commits it on <code>mouseup</code>. So you synthesize a <code>mousemove</code> at the x-coordinate for your target time, then a <code>mouseup</code>:</p>
+<pre><code class="lang-js">function seekToMs(targetMs) {
+  var bar = document.querySelector(".player__progressbar");
+  var input = document.querySelector(".player__progressbar input[type=range]");
+  if (!bar || !input) return;
+  var dur = parseInt(input.max, 10) || 0; if (!dur) return;
+  targetMs = Math.max(0, Math.min(targetMs, dur));
+  var rect = bar.getBoundingClientRect();
+  // invert the bundle's own formula: potentialSeekPosition = dur * (clientX - left - 7.5) / (width - 15)
+  var clientX = rect.left + 7.5 + targetMs * (rect.width - 15) / dur;
+  clientX = Math.max(rect.left + 1, Math.min(rect.left + rect.width - 1, clientX));
+  var clientY = input.getBoundingClientRect().top + 6; // must be &gt;= the input's top or it bails
+  var o = { bubbles: true, cancelable: true, view: window, clientX: clientX, clientY: clientY, button: 0 };
+  bar.dispatchEvent(new MouseEvent("mousemove", o));
+  input.dispatchEvent(new MouseEvent("mouseup", o));
+}</code></pre>
+<p>The trap: <strong>do not write <code>input.value</code> directly.</strong> That only sets the "seeked" visual preview, and with no <code>mouseup</code> to commit it the bar freezes at that value. Never touch the value; drive the gesture. This is the mechanism behind seek-controls, keyboard-shortcuts, and full-app-display's scrubber.</p>
+<h3 id="player-control--the-alternative-reach-the-seek-through-the-fiber">The alternative: reach the seek through the fiber</h3>
+<p>Qobuzify Lyrics needs to seek when you click a lyric line, and it uses a different route: the progress bar's React component (a legacy React 16 build, reached via <code>__reactInternalInstance$</code>) owns the real engine seek as <code>this.props.seek({ position })</code>. Walking the fiber up to that instance and calling it is cleaner than synthesizing the drag, when you already have a component reference:</p>
+<pre><code class="lang-js">var input = document.querySelector(".player__progressbar input[type=range]");
+var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactInternalInstance$") === 0; });
+var fiber = input[fk];
+while (fiber) {
+  var sn = fiber.stateNode;
+  if (sn &amp;&amp; sn.props &amp;&amp; typeof sn.props.seek === "function") { sn.props.seek({ position: ms }); break; }
+  fiber = fiber.return;
+}</code></pre>
+<p>One caveat that bit us: Qobuz seeks at whole-second granularity (the engine and the position clock both round to the nearest second). Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. Bias toward the clicked line by rounding up, unless the line starts in the first 150 ms of a second.</p>
+<h2 id="player-control--volume">Volume</h2>
+<p>Volume is a slider you drive with a click, but read it carefully. The store's <code>settings.volume</code> goes stale (it stayed pinned at 100 while the rendered slider moved), so compute the current level from the slider's rendered fill, not the store:</p>
+<pre><code class="lang-js">function currentVolPct() {
+  var sl = document.querySelector(".player__settings-volume-slider .rangeslider");
+  if (!sl) return null;
+  var sw = sl.getBoundingClientRect().width || 1;
+  var fill = sl.querySelector(".rangeslider__fill");
+  if (fill) return Math.max(0, Math.min(100, fill.getBoundingClientRect().width / sw * 100));
+  return null;
+}</code></pre>
+<p>Then set a new level by dispatching <code>mousedown</code>, <code>mouseup</code>, and <code>click</code> at the x-position for that percentage across the slider. keyboard-shortcuts snaps to clean 5% steps.</p>
+<h2 id="player-control--playing-a-specific-entity">Playing a specific entity</h2>
+<p>There's no "play this album" function either, so navigate to it and click its header Play button. The subtlety is *which* Play button, because the DOM is full of <code>aria-label="Play"</code> buttons: the For You page's cards (which stay mounted but hidden), your own extension's buttons, the player bar, and the previous page mid-transition. A broad selector clicks the wrong one and plays the wrong album.</p>
+<p>Scope to a <strong>visible</strong> button inside the page header:</p>
+<pre><code class="lang-js">function headerPlayBtn() {
+  var cands = document.querySelectorAll("[class*='PageHeader'] button[aria-label='Play']");
+  for (var i = 0; i &lt; cands.length; i++) {
+    var r = cands[i].getBoundingClientRect();
+    if (cands[i].offsetParent &amp;&amp; r.width &gt; 4 &amp;&amp; r.height &gt; 4) return cands[i];
+  }
+  return null;
+}
+
+function playEntity(path) {
+  Q.navigate(path);
+  var tries = 0;
+  var iv = setInterval(function () {
+    var onPage = (Q.getState().router.location.pathname || "").indexOf(path) &gt;= 0;
+    var btn = headerPlayBtn();
+    if (onPage &amp;&amp; btn) { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); }
+    else if (++tries &gt; 40) clearInterval(iv);
+  }, 150);
+}</code></pre>
+<p>You navigate, then poll until you're on the page and its Play button has rendered, then click.</p>
+<h2 id="player-control--playing-a-specific-track">Playing a specific track</h2>
+<p>Hardest of all, because there is no track page to navigate to. Open the track's album, wait for the tracklist, find the matching row, and click that row's own play arrow. Album track rows are <code>.ListItem</code> with <code>.ListItem__player[aria-label=Play]</code>, <code>.ListItem__title</code>, and <code>.ListItem__numberText</code>. Match by normalized title (exact, then prefix, then contains, diacritic-insensitive), break ties on the track number, and fall back to the album header Play if nothing matches so it can never hang:</p>
+<pre><code class="lang-js">function playTrack(albumId, title, num) {
+  Q.navigate("/album/" + albumId);
+  var tries = 0;
+  var iv = setInterval(function () {
+    if ((Q.getState().router.location.pathname || "").indexOf(albumId) &gt;= 0) {
+      var rows = [].slice.call(document.querySelectorAll(".ListItem"))
+        .filter(function (r) { return r.querySelector(".ListItem__title") &amp;&amp; r.querySelector(".ListItem__player"); });
+      if (rows.length) {
+        var target = matchTrackRow(rows, title, num);            // your title/number matcher
+        if (target) { fireClick(target.querySelector(".ListItem__player")); clearInterval(iv); return; }
+        if (tries &gt; 12) { var hb = headerPlayBtn(); if (hb) { hb.click(); clearInterval(iv); return; } }
+      }
+    }
+    if (++tries &gt; 40) clearInterval(iv);
+  }, 150);
+}
+
+function fireClick(el) {
+  ["mousedown", "mouseup", "click"].forEach(function (t) {
+    el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+  });
+}</code></pre>
+<p>both better-search and For You use this to make their result-card play buttons play the actual thing you clicked. Library track rows are different markup (<code>.ui-module-track-row.ui-block-item-row</code>, with the play button appearing on hover) if you need to handle those too.</p>
+<h2 id="player-control--when-you-can-t-do-it-live-build-a-playlist">When you can't do it live: build a playlist</h2>
+<p>Some things genuinely aren't reachable by clicking, notably the queue. Smart Radio and the shuffle button don't try. They build a playlist through the write API, then play that playlist with <code>playEntity</code>. Creating a fresh playlist each time (and deleting the old one after) also sidesteps Qobuz's playlist-content cache, which would otherwise serve stale tracks for a reused playlist id.</p></section>
+<section><h1 id="gotchas">Gotchas</h1>
+<p>Every one of these cost real time to find. They're collected here so they cost you minutes instead. Grouped by area.</p>
+<h2 id="gotchas--playback">Playback</h2>
+<p><strong>The player is sealed.</strong> No <code>&lt;audio&gt;</code>, no play/pause/seek/queue API. Drive the app's own DOM controls or reach a React component's props through the fiber. This is the root of most of the list below. See <a href="#player-control">player-control</a>.</p>
+<p><strong>Writing <code>input.value</code> on the progress bar freezes it.</strong> The bar commits a seek on <code>mouseup</code>, not on value change. Setting <code>input.value</code> directly only sets the visual "seeked" preview, and with no <code>mouseup</code> to commit it, the bar sticks at that value. Never write the value; synthesize the <code>mousemove</code> + <code>mouseup</code> gesture instead.</p>
+<p><strong>The store's <code>settings.volume</code> goes stale.</strong> It stayed pinned at 100 while the rendered slider moved, so every step computed off 100 and could only ever reach ~94. Read the true volume from the slider's rendered fill width, not the store.</p>
+<p><strong>There are many <code>aria-label="Play"</code> buttons in the DOM at once.</strong> The For You page's cards stay mounted but hidden (its first "In your rotation" card is the track you were just playing), plus the player bar, your own buttons, and the previous page mid-transition. A broad selector clicks the wrong one and plays the wrong album. Scope to a *visible* button inside a <code>PageHeader</code>.</p>
+<p><strong>Reuse a playlist id and you get its cached contents.</strong> Qobuz caches playlist content by id, so a "shuffle" or "radio" that reuses one playlist serves stale tracks. Create a fresh playlist each run (and delete the old one after) to sidestep the cache.</p>
+<h2 id="gotchas--the-qobuz-api">The Qobuz API</h2>
+<p><strong>An emoji in a <code>playlist/create</code> name saves an empty name.</strong> Keep generated playlist names to plain text with a plain prefix (<code>"Shuffle · " + name</code>, not an emoji).</p>
+<p><strong><code>playlist/deleteTracks</code> wants <code>playlist_track_id</code>, not the track id.</strong> Each entry in a playlist has its own <code>playlist_track_id</code>; that's what removal keys off. The plain track id won't work.</p>
+<p><strong><code>onChange</code> misses some in-album auto-advances.</strong> For anything that must never miss a track change (a cover-art background), poll <code>getTrack()</code> on a cheap interval and dedupe by id instead of relying on <code>onChange</code>.</p>
+<h2 id="gotchas--the-dom-and-react">The DOM and React</h2>
+<p><strong>It's a legacy <code>ReactDOM.render</code> build.</strong> The fiber root is at <code>#root._reactRootContainer._internalRoot.current</code> and the DOM key is <code>__reactContainere$&lt;id&gt;</code> (note the extra "e"). Find the Redux store by walking the fiber for a <code>memoizedProps</code> value with both <code>getState</code> and <code>subscribe</code>.</p>
+<p><strong>Re-inserting a hovered node resets its <code>:hover</code> and flashes.</strong> The player re-renders often, and re-appending an in-place, currently-hovered button detaches and reattaches it, resetting <code>:hover</code> to a blue/white flash. Only (re)insert a slot when it's actually out of place. And anchor it after a *stable* node, not the time display, which React swaps every second.</p>
+<p><strong>The player-bar track name links to <code>/album/</code>, not <code>/track/</code>.</strong> Clicking a song title in the player opens its album, so the title anchor is an <code>a[href*="/album/"]</code>, and it comes before the real album link in the DOM. A naive <code>querySelector('a[href*="/album/"]')</code> in the player grabs the title and hands you the title text as the "album". Scope album and artist reads to the <code>.player__track-album</code> line. The artist link text can also carry a trailing " -" separator, so strip leading/trailing dash junk. (<code>Q.player.getTrack()</code> does both for you.)</p>
+<p><strong>Selectors go stale between Qobuz versions.</strong> The Magazine nav item was <code>a.NavItem[href]</code>; it's now <code>.ui-block-nav-item &gt; a.ui-link</code> inside <code>.NavBar__items</code>. A dead selector silently matches nothing and the feature quietly stops working. When something you hide reappears, check the selector first. Using a <code>:has()</code> wrapper with the anchor and legacy selectors as fallbacks buys some version-resilience.</p>
+<h2 id="gotchas--overlays-and-z-index">Overlays and z-index</h2>
+<p><strong>Host full-page overlays inside the layout, not on <code>document.body</code>.</strong> Qobuz's nav and player sit at <code>z: 250</code>. An overlay on <code>document.body</code> at a max z-index covers them, and then the account menu and context menus open *behind* the overlay and can't be clicked. Host the overlay inside <code>.ui-layout--root--panel-top</code>'s parent at <code>z: 220</code> (above content at ~0, below the panels at 250). See the z-index map in <a href="#architecture">architecture</a>.</p>
+<p><strong>Never <code>display:none</code> a live overlay during recon.</strong> If you hide an element from a dev console to inspect around it, that change persists on the user's running app. This wiped the lyrics view out from under a live session once. Reload to undo, and prefer non-destructive inspection.</p>
+<h2 id="gotchas--css">CSS</h2>
+<p><strong>You must set the standard <code>scrollbar-color</code>, not just <code>::-webkit-scrollbar</code>.</strong> Any element that uses the standard <code>scrollbar-width</code> property (Qobuz's containers do, and so do several Qobuzify surfaces) makes Chromium ignore <code>::-webkit-scrollbar</code> and fall back to the native white scrollbar. Set <code>scrollbar-color</code> (with <code>!important</code>) globally or the webkit rules are quietly overridden.</p>
+<p><strong>Qobuz hardcodes many controls white, not to the brand token.</strong> Recoloring only <code>--color-brand-100</code> leaves a themed accent in a white-and-grey app. A real theme restyles actual controls (chrome, list rows, the player) through a companion CSS file. See <a href="#themes">themes</a>.</p>
+<h2 id="gotchas--electron-main-process">Electron main process</h2>
+<p><strong><code>backgroundThrottling</code> is read only at window creation.</strong> Chromium pauses <code>requestAnimationFrame</code> in a backgrounded renderer, which froze and stuttered the lyrics view on alt-tab. <code>setBackgroundThrottling</code> at runtime does nothing, and command-line switches load too late (Chromium reads them at process startup, before the main bundle runs). The fix has to patch the <code>webPreferences</code> at window creation: patch the literal directly and wrap the <code>BrowserWindow</code> constructor as a fallback.</p>
+<p><strong>Apple's <code>amp-api</code> validates the <code>Origin</code> header, and a renderer fetch can't set it.</strong> So the lyric request 401s. Rewrite the header in the main process with an <code>onBeforeSendHeaders</code> listener. Qobuz registers its own listener and "last listener wins", so install an all-URLs listener (pass everything through untouched, stamp <code>Origin</code>/<code>Referer</code> only on <code>amp-api</code>) and re-add it on a short timer to win the race.</p>
+<p><strong>A big vendor bundle can't be inlined into the payload.</strong> The runtime is injected as one inline <code>&lt;script&gt;</code>, and a 1.3 MB bundle inside it breaks the inline payload. Ship large bundles as a sibling <code>vendor.js</code>, copied into <code>dist</code>, loaded with <code>&lt;script src="/qobuzify-ext-&lt;id&gt;.js"&gt;</code>.</p>
+<h2 id="gotchas--lyrics-rendering">Lyrics rendering</h2>
+<p><strong>Alt-tab forced a synchronous whole-document reflow.</strong> On refocus, Chromium marks the whole document's layout dirty, and the lyrics animator's <code>getBoundingClientRect()</code> then forces a synchronous full-document reflow that blocks the frame (and could glitch the scroll to the top). <code>contain: layout</code> on the lyrics page and its scroll viewport keeps that expensive internal layout cached across the invalidation. Apply it to the page and viewport only, not per line (per-line <code>contain</code> forces a block formatting context per line and changes spacing).</p>
+<p><strong>Qobuz seeks at whole-second granularity.</strong> Both the engine and the position clock round to the nearest second. Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. When seeking to a lyric, round up to the next second, unless the line starts in the first 150 ms.</p>
+<p><strong>Same-title songs match the wrong lyrics.</strong> Two different songs called "Wolves" cross-matched, so an 83-second track served a 193-second song's lyrics. Guard with duration: if a cached lyric's timing overruns the track by more than 10 seconds, it's a wrong-song match. Evict and re-resolve. See <a href="#lyrics-server">lyrics-server</a>.</p>
+<h2 id="gotchas--development">Development</h2>
+<p><strong>Qobuzify Lyrics can't hot-swap over the debug port.</strong> Most extensions hot-load fine (inject the new source, no reload). The lyrics extension can't; it needs a full reload to re-run cleanly. See <a href="#dev-workflow">dev-workflow</a>.</p></section>
+<section><h1 id="writing-extensions">Writing an extension</h1>
+<p>An extension is a folder, a manifest, and one function. This walks through the lifecycle, the patterns you'll reuse, and the mistakes worth avoiding. A copy-paste starter lives in <code>templates/extension/</code>: <a href="templates/extension/manifest.json">manifest.json</a> plus <a href="templates/extension/index.js">index.js</a>.</p>
+<h2 id="writing-extensions--the-shape">The shape</h2>
+<pre><code>extensions/my-extension/
+  manifest.json
+  index.js</code></pre>
+<p><code>manifest.json</code>:</p>
+<pre><code class="lang-json">{
+  "id": "my-extension",
+  "name": "My Extension",
+  "description": "One sentence on what it does, shown in the Marketplace.",
+  "icon": "icon-magic-stars",
+  "version": "1.0.0",
+  "author": "you",
+  "defaultOff": false
+}</code></pre>
+<p><code>icon</code> is a Qobuz icon-font class (e.g. <code>icon-magic-stars</code>, <code>icon-heart</code>, <code>icon-users</code>). <code>defaultOff</code> is optional; set it to ship the extension disabled.</p>
+<p><code>index.js</code> is not a module. Its entire contents become the body of a function the runtime calls as <code>function (Qobuzify, vendor) { ... }</code>. It returns a cleanup function:</p>
+<pre><code class="lang-js">var Q = Qobuzify;
+
+Q.css("my-ext-css", ".my-badge { color: var(--qz-accent, #3DA8FE); }");
+
+var off = Q.onRoute(function (path) {
+  // do something on navigation
+});
+
+return function cleanup() {
+  off();
+  var st = document.getElementById("my-ext-css"); if (st) st.remove();
+};</code></pre>
+<p>To load it, run <code>qobuzify install</code> (or <code>apply</code>). The installer bundles every <code>extensions/&lt;id&gt;/</code> into the payload and the runtime loads the enabled ones. During development you can hot-load a single extension over the debug port without reinstalling; see <a href="#dev-workflow">dev-workflow</a>.</p>
+<h2 id="writing-extensions--patterns">Patterns</h2>
+<h3 id="writing-extensions--add-a-button-to-the-player-bar">Add a button to the player bar</h3>
+<pre><code class="lang-js">var btn = Q.el('&lt;button class="qz-pbtn" title="Do the thing"&gt;&lt;span class="icon-magic-stars"&gt;&lt;/span&gt;&lt;/button&gt;');
+btn.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); doThing(); });
+var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
+// cleanup: slot.remove();</code></pre>
+<p><code>zone</code> is <code>"left"</code> (near the track info) or <code>"right"</code> (the settings cluster). The <code>qz-pbtn</code> class gives you a standard native-sized icon button that already tracks the theme accent on hover.</p>
+<h3 id="writing-extensions--react-to-the-current-song">React to the current song</h3>
+<pre><code class="lang-js">var off = Q.player.onChange(function (track) {
+  if (!track) return;
+  render(track);
+});</code></pre>
+<p>For something that must never miss a change (a cover background), poll instead and dedupe:</p>
+<pre><code class="lang-js">var last = null;
+var iv = setInterval(function () {
+  var t = Q.player.getTrack();
+  var key = t ? t.id + "|" + t.cover : "";
+  if (key !== last) { last = key; render(t); }
+}, 250);
+// cleanup: clearInterval(iv);</code></pre>
+<h3 id="writing-extensions--paint-something-onto-the-page-and-keep-it-painted">Paint something onto the page, and keep it painted</h3>
+<p>Qobuz re-renders constantly. Use <code>observe</code> to re-apply your DOM changes, and make the work idempotent (a no-op when it's already done):</p>
+<pre><code class="lang-js">function paint() {
+  var rows = document.querySelectorAll(".ListItem");
+  for (var i = 0; i &lt; rows.length; i++) {
+    if (rows[i].querySelector("[data-my-badge]")) continue; // already done
+    // ... add your badge, marked with data-my-badge ...
+  }
+}
+var obs = Q.observe(paint, { debounce: 200 });
+var offRoute = Q.onRoute(function () { setTimeout(paint, 300); });</code></pre>
+<p>quality-badges and feat-artists are the reference implementations of this pattern.</p>
+<h3 id="writing-extensions--a-full-page-overlay-the-z-index-rule">A full-page overlay (the z-index rule)</h3>
+<p>This is the one to get right. A full-page overlay must sit above the content but below Qobuz's nav and player, or the account menu and context menus open behind it. Host it inside the layout, not on <code>document.body</code>:</p>
+<pre><code class="lang-js">function layoutHost() {
+  var pt = document.querySelector(".ui-layout--root--panel-top");
+  return (pt &amp;&amp; pt.parentElement) || document.body;
+}
+
+function open() {
+  var page = document.createElement("div");
+  page.id = "my-ext-page"; // CSS sets position:fixed; z-index:220; and fills the content rect
+  layoutHost().appendChild(page);
+}</code></pre>
+<p>Give it <code>z-index: 220</code> (above content at ~0, below the nav/player panels at 250). Re-append it on <code>observe</code> in case React reparents things. Never <code>display:none</code> a live overlay from a dev console during recon; it persists on the running app. See <a href="#gotchas">gotchas</a>, both of these cost real time.</p>
+<h3 id="writing-extensions--add-a-toggle-to-the-qobuzify-settings-panel">Add a toggle to the Qobuzify settings panel</h3>
+<p>If your extension has an option, add a row to the settings panel instead of building your own settings UI:</p>
+<pre><code class="lang-js">function injectToggle() {
+  var panel = document.querySelector('.qz-panel[data-panel="settings"]');
+  if (!panel || panel.querySelector("#my-ext-row")) return;
+  var on = Q.storage.get("my-ext:opt", "0") === "1";
+  var row = document.createElement("div");
+  row.className = "qz-set-row"; row.id = "my-ext-row";
+  row.innerHTML =
+    '&lt;div&gt;&lt;div class="qz-set-label"&gt;My option&lt;/div&gt;' +
+    '&lt;div class="qz-set-sub"&gt;What it does.&lt;/div&gt;&lt;/div&gt;' +
+    '&lt;button class="qz-switch ' + (on ? "qz-switch--on" : "") + '" data-my="opt"&gt;&lt;span&gt;&lt;/span&gt;&lt;/button&gt;';
+  panel.appendChild(row);
+  row.querySelector("[data-my]").addEventListener("click", function () {
+    var now = Q.storage.get("my-ext:opt", "0") !== "1";
+    Q.storage.set("my-ext:opt", now ? "1" : "0");
+    this.classList.toggle("qz-switch--on", now);
+    apply();
+  });
+}
+var obs = Q.observe(injectToggle, { debounce: 350 });</code></pre>
+<p>ux-tweaks does this for its "hide Hi-Res badges" switch.</p>
+<h3 id="writing-extensions--persist-a-setting">Persist a setting</h3>
+<pre><code class="lang-js">Q.storage.set("my-ext:count", "3");
+var n = parseInt(Q.storage.get("my-ext:count", "0"), 10);</code></pre>
+<p>Keys are namespaced per extension, so you won't collide with anyone else. Values are strings; serialize structured data yourself.</p>
+<h3 id="writing-extensions--call-the-qobuz-api">Call the Qobuz API</h3>
+<pre><code class="lang-js">Q.api("favorite/getUserFavorites?type=tracks&amp;limit=200").then(function (j) {
+  var tracks = (j.tracks &amp;&amp; j.tracks.items) || [];
+});</code></pre>
+<p>Guard everything and handle the empty case. These calls fail sometimes, and an unhandled rejection in an extension shouldn't take down the rest.</p>
+<h2 id="writing-extensions--the-cleanup-checklist">The cleanup checklist</h2>
+<p>Your returned function has to undo everything the extension did, because it can be toggled off at runtime:</p>
+<ul><li>Unsubscribe every <code>onRoute</code>, <code>observe</code>, <code>subscribe</code>, <code>player.onChange</code></li><li><code>clearInterval</code> / <code>clearTimeout</code> any timers</li><li><code>slot.remove()</code> / <code>navItem.remove()</code> for anything you added through the API</li><li>Remove every DOM node you injected (mark them with a <code>data-</code> attribute or a class so you can find them all)</li><li>Remove your <code>&lt;style&gt;</code> (<code>document.getElementById("my-ext-css").remove()</code>)</li><li>Remove document-level listeners you added directly</li></ul>
+<p>If toggling your extension off leaves anything behind, the cleanup is incomplete. Copy the cleanup from a bundled extension as a template.</p>
+<h2 id="writing-extensions--defensive-style">Defensive style</h2>
+<p>The DOM you're scripting against isn't yours and changes between Qobuz versions. A selector that returns nothing today might return something unexpected tomorrow. Wrap store reads in try/catch, null-check every <code>querySelector</code>, and make observers no-op when the thing they need isn't there. This isn't paranoia; it's what keeps one changed class name from crashing the whole extension.</p>
+<h2 id="writing-extensions--testing">Testing</h2>
+<p>Build against a live Qobuz over the Chrome DevTools Protocol. Hot-load your extension, screenshot, inspect, iterate, then bake it into <code>app.html</code> for a faithful final test. The full loop is in <a href="#dev-workflow">dev-workflow</a>.</p>
+<h2 id="writing-extensions--submitting-it">Submitting it</h2>
+<p>When it's ready, submit it at <a href="https://qobuzify.app/submit">qobuzify.app/submit</a> with a link to the source. Approved extensions ship in the bundled catalog, so everyone gets them in the Marketplace. Every submission is reviewed by hand first, because an extension is arbitrary JavaScript running with full access inside Qobuz, so keep the source public until it's merged and don't obfuscate it.</p></section>
+<section><h1 id="themes">Writing a theme</h1>
+<p>A theme recolors the Qobuz UI. At its simplest it's a handful of CSS variables in a JSON file. At its fullest it also ships a CSS file that restyles real controls. A copy-paste starter lives in <code>templates/theme/</code>: <a href="templates/theme/my-theme.json">my-theme.json</a> plus <a href="templates/theme/my-theme.css">my-theme.css</a>.</p>
+<h2 id="themes--the-token-system">The token system</h2>
+<p>Qobuz styles its modern UI with a named CSS-variable design-token system. A theme's <code>tokens</code> map overrides those variables, and the runtime injects them as a <code>:root { ...; !important }</code> block. The ones that matter most:</p>
+<pre><code>--color-brand-100         the accent (the gold, by default). This is the big one.
+--color-brand-80          a lighter accent, for hovers and secondary highlights
+--color-grey-120 .. -80   the surface ramp, darkest to lightest (backgrounds, panels, cards)
+--color-opacity-accent-soft-10/20/30      translucent accent tints (subtle fills)
+--color-opacity-accent-strong-25/30/40    stronger accent tints (borders, glows)</code></pre>
+<p>A minimal accent swap is just the brand token:</p>
+<pre><code class="lang-json">{
+  "name": "Electric Blue",
+  "author": "you",
+  "description": "Qobuz gold swapped for Electric Blue.",
+  "preview": { "bg": "#121212", "surface": "#181818", "accent": "#3DA8FE", "text": "#f3f3f3" },
+  "tokens": {
+    "--color-brand-100": "#3DA8FE",
+    "--color-brand-80": "#62B8FF",
+    "--color-opacity-accent-soft-10": "#3DA8FE1a",
+    "--color-opacity-accent-soft-20": "#3DA8FE26",
+    "--color-opacity-accent-soft-30": "#3DA8FE33",
+    "--color-opacity-accent-strong-25": "#3DA8FE40",
+    "--color-opacity-accent-strong-30": "#3DA8FE4d",
+    "--color-opacity-accent-strong-40": "#3DA8FE66"
+  }
+}</code></pre>
+<p>The <code>preview</code> object is the swatch the Marketplace draws (background, surface, accent, text). It's also where <code>--qz-accent</code> comes from: the runtime sets that variable to <code>preview.accent</code>, and every extension uses <code>var(--qz-accent)</code> for its own accent, so your theme automatically colors the Qobuzify UI too.</p>
+<h2 id="themes--going-full-depth">Going full-depth</h2>
+<p>Here's the thing about Qobuz's controls: a lot of them are hardcoded white, not tied to the brand token. Recolor only <code>--color-brand-100</code> and you get a themed accent sitting in a still-white-and-grey app. A theme that actually feels like a theme recolors the real controls, the chrome, the panels, the list rows, the player, not just the brand variable.</p>
+<p>That's what the optional <code>cssFile</code> is for. Point a theme at a companion CSS file and it's appended after the tokens:</p>
+<pre><code class="lang-json">{
+  "name": "Glass",
+  "tokens": { "...": "..." },
+  "cssFile": "glass.css"
+}</code></pre>
+<p><code>glass.css</code> then does the structural work: frosted translucent chrome, accent-tinted list rows, a transparent player bar, glow shadows. The bundled Glass, Neon, Matrix, Cosmic, Dramatic, and Terracotta themes all ship a CSS file; the plain accent-swaps (Electric Blue, Nord, Dracula, OLED Black) don't.</p>
+<h2 id="themes--generating-a-theme">Generating a theme</h2>
+<p>The bundled set was generated programmatically: take a design system's color ramp, map the neutral ramp onto Qobuz's grey tokens and the brand color onto the accent, then emit both the token map and Glass-level structural CSS with a per-theme effect mode (a glow, a hard neon, a soft glass). That's how one design system became several accented themes at once.</p>
+<p>You don't need any of that to write a theme, though. Hand-writing the JSON is fine, and copying <code>glass.css</code> as a starting point for the structural layer is often faster. The generative approach only pays off when you're turning a whole design system into a consistent family in one go.</p>
+<h2 id="themes--adding-your-theme">Adding your theme</h2>
+<ol><li>Drop <code>my-theme.json</code> (and optionally <code>my-theme.css</code>) in <code>themes/</code>.</li><li>Run <code>qobuzify install</code>. Your theme shows up in the Marketplace, switchable live.</li></ol>
+<p>Theme order in the Marketplace is set by the <code>ORDER</code> array in <code>lib/apply.js</code> (flagship themes first, then the rest alphabetically). Add your slug there if you want it in a particular spot; otherwise it sorts to the end.</p>
+<h2 id="themes--tips">Tips</h2>
+<ul><li>Design against a dark base. Qobuz's UI is dark, and <code>--color-grey-120</code> is the darkest surface. Set your backgrounds from the grey ramp so contrast stays right.</li><li>Keep the accent readable on both dark surfaces and white text. The accent lands on buttons (dark text on accent) and as text/borders (accent on dark), so it has to work both ways.</li><li>Test the player bar and the context menus, not just the main content. Those are the surfaces most likely to stay stubbornly white if you only touched the brand token.</li><li>Switch themes live from the Marketplace while you iterate. No reinstall needed to see a JSON change after a fresh <code>install</code>.</li></ul>
+<h2 id="themes--submitting-it">Submitting it</h2>
+<p>Happy with it? Submit it at <a href="https://qobuzify.app/submit">qobuzify.app/submit</a> with a link to the JSON (and CSS, if it has one). Approved themes ship in the bundled catalog so everyone can pick them from the Marketplace. Submissions are reviewed by hand before they ship.</p></section>
+<section><h1 id="lyrics-server">The lyrics cache-proxy</h1>
+<p>Qobuzify Lyrics can resolve lyrics entirely on the client from open sources. But there's also an optional server, a Cloudflare Worker, that sits in front of the whole thing as a shared cache and proxy. This doc is about why it exists and how it's built, because the caching design is the reusable part.</p>
+<p>It lives under <code>server/</code> and deploys to <code>api.qobuzify.app</code>. The client is proxy-first: it asks the Worker, and only falls back to resolving locally if the proxy misses.</p>
+<h2 id="lyrics-server--why-a-server-at-all">Why a server at all</h2>
+<p>Two reasons.</p>
+<p><strong>Speed through sharing.</strong> Lyric resolution is slow: it can mean an ISRC lookup, a search, a fetch, and a parse across several upstreams. Once one person's client has resolved a track, nobody else should have to. A shared cache means a track anyone has already played loads for everyone else in a single warm round-trip with zero client-side parsing.</p>
+<p><strong>One source, from the client's view.</strong> The client only ever talks to <code>api.qobuzify.app</code>. Which source actually served a given lyric never shows up in the client's network tab, because the API response reports a codename, not the real source. The client never advertises where a lyric came from.</p>
+<h2 id="lyrics-server--storage-in-priority-order">Storage, in priority order</h2>
+<p>The Worker answers a lyric request from the first of these that hits:</p>
+<ol><li><strong>D1 (the parsed cache).</strong> A SQLite row holding the already-parsed lyric JSON at the current parse version. This is the fast path, served instantly with no work.</li><li><strong>R2 (the raw archive).</strong> The original upstream payload, stored permanently. If the parser changed or the D1 row was lost, the Worker re-parses the archived raw locally. It never re-downloads. This is the "download once, own it forever" layer: once a lyric is pulled, it lives in R2 for good.</li><li><strong>Upstream.</strong> Only for a track nobody has ever resolved. The Worker resolves from a ranked set of lyric sources, preferring syllable-timed word-by-word (keyed by ISRC when there is one) and falling back to line-level, then archives the raw payload to R2 and caches the parsed result in D1.</li></ol>
+<p>A confirmed no-lyrics result is cached negatively in D1 for a TTL, so a track with no lyrics anywhere doesn't re-trigger a full upstream sweep on every play. It can still pick up lyrics added upstream later.</p>
+<h2 id="lyrics-server--parse-versioning">Parse versioning</h2>
+<p>The parsed cache is tagged with a <code>PARSE_VER</code>. When the parsing logic changes (a better word-break rule, a new background-vocal split), you bump <code>PARSE_VER</code>, and every cached track re-parses from its archived R2 raw the next time it's requested. No re-downloading, just re-parsing what's already owned. The client carries a matching <code>CACHE_VER</code>; keep the two in sync so client and server agree on what a "current" parse is.</p>
+<p>The resolver (<code>server/src/resolver.js</code>) is a deliberate, near-verbatim port of the client's resolve-and-parse chain, so a lyric cached server-side is byte-identical to what the client would have produced locally. That's what lets the two share a cache at all.</p>
+<h2 id="lyrics-server--self-healing-a-wrong-song-match">Self-healing a wrong-song match</h2>
+<p>Same-title songs are a real problem. Selena Gomez and Baby Keem both have a track called "Wolves"; an early cache entry matched the wrong one, so Baby Keem's 83-second track served Selena's 193-second lyrics.</p>
+<p>The fix is a duration guard on both sides. If a cached lyric's timing runs well past the current track's end (more than 10 seconds over), it belongs to a different, longer song with the same title. The server evicts that D1 row and R2 raw and re-resolves; the client drops its local cache entry and re-asks. A stale wrong-song match now auto-corrects on the next play instead of being stuck forever.</p>
+<h2 id="lyrics-server--cache-only-what-s-trustworthy">Cache only what's trustworthy</h2>
+<p>Not every result is worth caching. The Worker caches only high-confidence lyrics: results from the trusted high-quality sources even at line level, or anything word-by-word. Line-level results from the open sources are served to the client but not cached, so they stay re-resolvable and can upgrade to a better source on a later play. The client mirrors this with a <code>cacheable</code> flag in the response, and a cached line-level result gets a background re-resolve (fired with no user latency) so the next play can quietly upgrade it to word-by-word.</p>
+<h2 id="lyrics-server--the-home-ip-relay">The home-IP relay</h2>
+<p>One good word-by-word source is often blocked from Cloudflare's egress IPs. So the Worker can call a small relay running on a home IP, and the client keeps that same source as its own local fallback for tracks the Worker can't reach. It's a pragmatic way to keep a useful source alive from an environment that can't reach it directly.</p>
+<h2 id="lyrics-server--also-on-the-worker-stats-sync">Also on the Worker: stats sync</h2>
+<p>The same Worker hosts the opt-in listening-stats cloud sync for the stats extension. Data is scoped to a client-generated random sync id, with no account and no personal information, deduped by (sync id, timestamp), and off by default in the client. It's a separate set of endpoints (<code>/v1/stats/*</code>) that happens to share the deployment.</p>
+<h2 id="lyrics-server--endpoints">Endpoints</h2>
+<pre><code>GET  /v1/lyrics?name=&amp;artist=&amp;album=&amp;durationMs=&amp;isrc=&amp;spotifyId=
+GET  /v1/stats  |  POST /v1/stats/push  |  GET /v1/stats/pull  |  POST /v1/stats/wipe
+GET  /health</code></pre>
+<p>Plus a few admin endpoints gated behind a secret (flush, upgrade line-to-word-by-word in bulk, purge one track). The lyric response is <code>{ ok, cached, hasLyrics, source, lyrics, key, cacheable }</code>, where <code>cached</code> is <code>false</code>, <code>"d1"</code>, or <code>"r2"</code>, and <code>source</code> is the codename.</p>
+<h2 id="lyrics-server--rate-limits-and-unblocking">Rate limits and unblocking</h2>
+<p>The public API is rate-limited per IP so no single client can hammer the shared cache and ruin it for everyone else. The ceiling is 120 requests a minute from one IP, which normal listening never gets near; it's there to slow down scrapers, not people. Trip it and the edge returns a <code>429</code> with a small JSON body in place of a lyric:</p>
+<pre><code>{
+  "ok": false,
+  "error": "rate_limited",
+  "message": "Too many requests. If you are a real person, unblock your IP at https://qobuzify.app/unban",
+  "unban": "https://qobuzify.app/unban"
+}</code></pre>
+<p>The client treats a <code>429</code> the same as a cache miss and just resolves locally, so a real listener keeps getting lyrics even in the rare case they trip the limit. And if a genuine person is stuck behind a flagged or shared IP, the unblock page at <a href="https://qobuzify.app/unban">qobuzify.app/unban</a> clears it: pass the human check and the IP you're connecting from goes on an allowlist for 24 hours, then expires on its own through an hourly prune. It only ever allowlists the connecting IP, never one typed into a box, so passing the check can unblock you but not some scraper somewhere else.</p></section>
+<section><h1 id="dev-workflow">Development workflow</h1>
+<p>All of Qobuzify was built against a live Qobuz over the Chrome DevTools Protocol. Because Qobuz is Electron, you can open a debug port and drive the running app: read its state, probe selectors, hot-load an extension, screenshot the result, and iterate, without reinstalling for every change. This is the loop.</p>
+<h2 id="dev-workflow--open-a-debug-port">Open a debug port</h2>
+<p>Launch Qobuz with a remote debugging port:</p>
+<pre><code>Qobuz.exe --remote-debugging-port=9333</code></pre>
+<p>Then <code>http://localhost:9333/json</code> lists the page targets, each with a <code>webSocketDebuggerUrl</code>. Connect a CDP client to the app page's socket and you can run <code>Runtime.evaluate</code> against the renderer, take screenshots with <code>Page.captureScreenshot</code>, and reload with <code>Page.reload</code>.</p>
+<p>A small Node script is all you need for this: a plain WebSocket-to-CDP client, nothing fancy. Node 18+ has a global <code>WebSocket</code> and <code>fetch</code>, so there are no dependencies.</p>
+<h2 id="dev-workflow--probe-the-app">Probe the app</h2>
+<p>Before you can script something, you have to find it. Evaluate JavaScript in the page to dump state and test selectors:</p>
+<pre><code class="lang-js">// what does the player state look like?
+JSON.stringify(window.Qobuzify.getState().player, null, 2)
+
+// does this selector find what I think?
+document.querySelectorAll(".ListItem__player").length
+
+// what's on the player bar right now?
+document.querySelector(".player").outerHTML</code></pre>
+<p>This is how the DOM selectors and store shapes throughout the docs were found: dump, inspect, confirm, then write the extension against what's actually there. Every selector these docs cite (the store, the player controls, the playlist rows, the search results, the lyrics renderer) came from exactly this kind of probing.</p>
+<h2 id="dev-workflow--hot-load-an-extension">Hot-load an extension</h2>
+<p>Most extensions can be loaded live without reinstalling. Read the extension source, wrap it the way the runtime does, and call it with the live API:</p>
+<pre><code class="lang-js">var src = /* contents of extensions/my-ext/index.js */;
+window.__cleanup_myext &amp;&amp; window.__cleanup_myext();          // undo a previous load
+window.__cleanup_myext = new Function("Qobuzify", "vendor", src)(window.Qobuzify, "");</code></pre>
+<p>Edit, re-run, see the change. Keep the returned cleanup around so each reload tears down the last one; this is exactly why the cleanup contract matters.</p>
+<p>The one exception is Qobuzify Lyrics. It can't hot-swap cleanly (its shim and the vendor renderer don't unwind), so test it with a full reload after baking.</p>
+<h2 id="dev-workflow--screenshot-to-verify">Screenshot to verify</h2>
+<p>Don't trust that it looks right, look. <code>Page.captureScreenshot</code> gives you the rendered result, which is the honest check for anything visual. Pair a hot-load with a screenshot to check a specific feature end to end.</p>
+<h2 id="dev-workflow--bake-for-the-real-test">Bake for the real test</h2>
+<p>Hot-loading proves the logic, but the faithful test is the extension running the way a user gets it: injected into <code>app.html</code> at launch. So the final check is always a real install:</p>
+<pre><code>qobuzify install</code></pre>
+<p>That rebuilds the payload from every extension and theme, injects it, and relaunches. If it works after a clean install and reload, it works. Hot-loading can hide load-order and boot-timing issues that only appear when the runtime loads everything fresh; baking catches those.</p>
+<h2 id="dev-workflow--a-note-on-the-dev-scaffolding">A note on the dev scaffolding</h2>
+<p>The recon, debug, and verify scripts used to build Qobuzify were local scaffolding: one-off probes against a running Qobuz, not a stable interface, so they aren't part of this repo. What's worth keeping is the loop itself, and you can reproduce all of it with any CDP client and the snippets above.</p></section></main>
+</div></body></html>

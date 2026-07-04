@@ -1,0 +1,13 @@
+{
+  "name": "OLED Black",
+  "author": "matthewprince",
+  "description": "True black background for OLED screens; Qobuz gold accent kept.",
+  "preview": { "bg": "#000000", "surface": "#0d0d0d", "accent": "#dea442", "text": "#f3f3f3" },
+  "tokens": {
+    "--color-grey-120": "#000000",
+    "--color-grey-110": "#050505",
+    "--color-grey-100": "#0d0d0d",
+    "--color-grey-90": "#151515",
+    "--color-grey-80": "#1f1f1f"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "copy-share",
+  "name": "Copy & Share",
+  "description": "Right-click any track (in a list or the player bar) to copy \"Artist - Title\" or a shareable Qobuz link. Quick, no digging through menus.",
+  "icon": "icon-label",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

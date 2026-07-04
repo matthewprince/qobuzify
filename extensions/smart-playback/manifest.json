@@ -1,0 +1,8 @@
+{
+  "id": "smart-playback",
+  "name": "Smart Radio",
+  "description": "One click builds a genuinely related queue from what you're playing - the current artist plus similar artists' top tracks, weighted to your favorites and deduped against recent plays - and plays it. A real fix for Qobuz's weak autoplay. Adds a Radio button to the player bar.",
+  "icon": "icon-magic-stars",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

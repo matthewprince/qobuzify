@@ -1,0 +1,8 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "description": "A template extension: a player-bar button that shows the current track.",
+  "icon": "icon-magic-stars",
+  "version": "1.0.0",
+  "author": "you"
+}

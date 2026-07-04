@@ -1,0 +1,32 @@
+{
+  "name": "Terracotta",
+  "author": "matthewprince",
+  "description": "Warm earthy browns and terracotta - a cozy listening theme.",
+  "preview": {
+    "bg": "#18110B",
+    "surface": "#2B1D14",
+    "accent": "#D8825A",
+    "text": "#FBF4E7"
+  },
+  "tokens": {
+    "--color-grey-120": "#18110B",
+    "--color-grey-110": "#1F1610",
+    "--color-grey-100": "#2B1D14",
+    "--color-grey-90": "#3A2818",
+    "--color-grey-80": "#4D3624",
+    "--color-brand-100": "#D8825A",
+    "--color-brand-80": "#C56A3C",
+    "--color-opacity-accent-soft-10": "#D8825A1a",
+    "--color-opacity-accent-soft-20": "#D8825A26",
+    "--color-opacity-accent-soft-30": "#D8825A33",
+    "--color-opacity-accent-strong-25": "#D8825A40",
+    "--color-opacity-accent-strong-30": "#D8825A4d",
+    "--color-opacity-accent-strong-40": "#D8825A66"
+  },
+  "legacyReplace": {
+    "#dea442": "#D8825A",
+    "#ffcb74": "#C56A3C",
+    "#ffb12f": "#D8825A"
+  },
+  "cssFile": "terracotta.css"
+}

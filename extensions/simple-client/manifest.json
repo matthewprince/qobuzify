@@ -1,0 +1,8 @@
+{
+  "id": "simple-client",
+  "name": "Simple Client",
+  "description": "Lean Qobuz: hide the Magazine and the editorial promo carousels on Discover. Tune exactly what's hidden from the Lean control on the Discover page.",
+  "icon": "icon-discover",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

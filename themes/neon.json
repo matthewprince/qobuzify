@@ -1,0 +1,32 @@
+{
+  "name": "Neon",
+  "author": "matthewprince",
+  "description": "Cyberpunk lime on near-black, with accent glow.",
+  "preview": {
+    "bg": "#0A0A0A",
+    "surface": "#111111",
+    "accent": "#BBF351",
+    "text": "#F0F0F0"
+  },
+  "tokens": {
+    "--color-grey-120": "#0A0A0A",
+    "--color-grey-110": "#000000",
+    "--color-grey-100": "#111111",
+    "--color-grey-90": "#1A1A1A",
+    "--color-grey-80": "#2A2A2A",
+    "--color-brand-100": "#BBF351",
+    "--color-brand-80": "#D4F785",
+    "--color-opacity-accent-soft-10": "#BBF3511a",
+    "--color-opacity-accent-soft-20": "#BBF35126",
+    "--color-opacity-accent-soft-30": "#BBF35133",
+    "--color-opacity-accent-strong-25": "#BBF35140",
+    "--color-opacity-accent-strong-30": "#BBF3514d",
+    "--color-opacity-accent-strong-40": "#BBF35166"
+  },
+  "legacyReplace": {
+    "#dea442": "#BBF351",
+    "#ffcb74": "#D4F785",
+    "#ffb12f": "#BBF351"
+  },
+  "cssFile": "neon.css"
+}

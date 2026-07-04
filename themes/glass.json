@@ -1,0 +1,27 @@
+{
+  "name": "Glass",
+  "author": "matthewprince",
+  "description": "Electric Blue glassmorphism, ported from the Qobuz RPC design system: frosted chrome over a deep navy.",
+  "preview": { "bg": "#060A12", "surface": "#0b0f19", "accent": "#3DA8FE", "text": "#F0F6FC" },
+  "tokens": {
+    "--color-grey-120": "#060A12",
+    "--color-grey-110": "#0B0F19",
+    "--color-grey-100": "#141C2E",
+    "--color-grey-90": "#1E293B",
+    "--color-grey-80": "#2A3650",
+    "--color-brand-100": "#3DA8FE",
+    "--color-brand-80": "#62B8FF",
+    "--color-opacity-accent-soft-10": "#3DA8FE1a",
+    "--color-opacity-accent-soft-20": "#3DA8FE26",
+    "--color-opacity-accent-soft-30": "#3DA8FE33",
+    "--color-opacity-accent-strong-25": "#3DA8FE40",
+    "--color-opacity-accent-strong-30": "#3DA8FE4d",
+    "--color-opacity-accent-strong-40": "#3DA8FE66"
+  },
+  "legacyReplace": {
+    "#dea442": "#3DA8FE",
+    "#ffcb74": "#62B8FF",
+    "#ffb12f": "#3DA8FE"
+  },
+  "cssFile": "glass.css"
+}

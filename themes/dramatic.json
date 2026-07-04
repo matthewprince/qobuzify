@@ -1,0 +1,32 @@
+{
+  "name": "Dramatic",
+  "author": "matthewprince",
+  "description": "High-contrast near-black with a hot-red accent.",
+  "preview": {
+    "bg": "#080604",
+    "surface": "#1E1A16",
+    "accent": "#FF2A52",
+    "text": "#FDFBF9"
+  },
+  "tokens": {
+    "--color-grey-120": "#080604",
+    "--color-grey-110": "#0E0B08",
+    "--color-grey-100": "#1E1A16",
+    "--color-grey-90": "#352F28",
+    "--color-grey-80": "#423B34",
+    "--color-brand-100": "#FF2A52",
+    "--color-brand-80": "#FF2A52",
+    "--color-opacity-accent-soft-10": "#FF2A521a",
+    "--color-opacity-accent-soft-20": "#FF2A5226",
+    "--color-opacity-accent-soft-30": "#FF2A5233",
+    "--color-opacity-accent-strong-25": "#FF2A5240",
+    "--color-opacity-accent-strong-30": "#FF2A524d",
+    "--color-opacity-accent-strong-40": "#FF2A5266"
+  },
+  "legacyReplace": {
+    "#dea442": "#FF2A52",
+    "#ffcb74": "#FF2A52",
+    "#ffb12f": "#FF2A52"
+  },
+  "cssFile": "dramatic.css"
+}

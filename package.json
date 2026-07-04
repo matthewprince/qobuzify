@@ -1,0 +1,24 @@
+{
+  "name": "qobuzify",
+  "version": "0.1.0",
+  "description": "Spicetify, but for Qobuz. Theme (and soon extend) the Qobuz desktop app.",
+  "bin": {
+    "qobuzify": "bin/qobuzify.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node bin/qobuzify.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "qobuz",
+    "spicetify",
+    "theme",
+    "electron",
+    "customization"
+  ],
+  "author": "matthewprince",
+  "license": "MIT"
+}

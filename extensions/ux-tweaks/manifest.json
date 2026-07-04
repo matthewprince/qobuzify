@@ -1,0 +1,8 @@
+{
+  "id": "ux-tweaks",
+  "name": "Quality of Life",
+  "description": "The most-requested r/qobuz desktop fixes: double-click a track to play it, open Library on your last tab (Tracks by default), remember your grid/list view, and an optional switch to hide the Hi-Res badges.",
+  "icon": "icon-check-circle-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

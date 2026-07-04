@@ -1,0 +1,97 @@
+/* Qobuzify "Matrix" - generated from the TypeUI "matrix" design system.
+   Structural skeleton verified against the live Qobuz DOM (same coverage as Glass). */
+
+body,
+.grid-layout--root {
+  background-color: #0A0D14 !important;
+  background-image:
+    radial-gradient(820px 520px at 88% -10%, rgba(38, 161, 123, 0.18), transparent 60%),
+    radial-gradient(640px 560px at -8% 2%, rgba(31, 134, 102, 0.12), transparent 60%) !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+
+/* strip Qobuz's opaque page backgrounds so the themed base + glow show through */
+.PlaylistPage,
+.grid-layout--content,
+.grid-layout--main,
+.grid-layout--inner,
+.grid-layout--container,
+.ui-layout-001--content,
+[class*="ui-template-"] {
+  background: transparent !important;
+}
+
+/* theme the album-color-extracted page header */
+.PageHeader,
+.StickyHeader,
+.PageHeader__background,
+.StickyHeader__background {
+  background: linear-gradient(180deg, rgba(38, 161, 123, 0.22), rgba(10, 13, 20, 0) 92%) !important;
+}
+
+/* accent on every control - Qobuz's controls are white by default, so recolor the
+   play button, all icons, hearts, active nav, and links to the theme accent */
+.ButtonRoundPrimary,
+[class*="ButtonRoundPrimary"] {
+  background: #26A17B !important;
+  color: #ffffff !important;
+  border-color: #26A17B !important;
+  box-shadow: 0 0 22px rgba(38, 161, 123, 0.45) !important;
+}
+.ButtonIconPrimary,
+[class*="ButtonIcon"],
+[class^="icon-"],
+[class*=" icon-"] {
+  color: #26A17B !important;
+  fill: #26A17B !important;
+}
+[class*="ButtonFavorite"] {
+  color: #26A17B !important;
+  fill: #26A17B !important;
+}
+.NavItem--isActive,
+[class*="NavItem--isActive"] {
+  background: rgba(38, 161, 123, 0.1) !important;
+  border: 1px solid rgba(38, 161, 123, 0.3) !important;
+}
+.NavItem--isActive *,
+[class*="NavItem--isActive"] * {
+  color: #26A17B !important;
+  fill: #26A17B !important;
+}
+[class*="--isClickable"]:hover { color: #26A17B !important; }
+
+.ui-layout-001--topbar,
+.grid-layout--panel-outer-right,
+.ui-layout-001--panel-outer-right,
+.grid-layout--panel-outer-bottom,
+.ui-layout-001--panel-outer-bottom {
+  background: rgba(10, 13, 20, 0.6) !important;
+  border: 1px solid rgba(38, 161, 123, 0.35) !important;
+  box-shadow: 0 0 26px rgba(38, 161, 123, 0.16) !important;
+}
+.player,
+.player__content,
+.player__track,
+.player__settings,
+.player__controls {
+  background: transparent !important;
+}
+.ListItem {
+  background: rgba(38, 161, 123, 0.04) !important;
+  border: 1px solid rgba(38, 161, 123, 0.08) !important;
+  border-radius: 8px !important;
+}
+.ListItem:hover {
+  background: rgba(38, 161, 123, 0.1) !important;
+  border-color: rgba(38, 161, 123, 0.45) !important;
+  box-shadow: 0 0 16px rgba(38, 161, 123, 0.18) !important;
+}
+[class*="ui-base-menu-"]:not([class*="trigger"]),
+[class*="ui-base-panel-"]:not([class*="trigger"]),
+[class*="ui-base-tooltip-"]:not([class*="trigger"]) {
+  background: rgba(10, 13, 20, 0.92) !important;
+  border: 1px solid rgba(38, 161, 123, 0.3) !important;
+  box-shadow: 0 0 26px rgba(38, 161, 123, 0.16) !important;
+}
