@@ -3,6 +3,7 @@ import { THEMES } from "./themes";
 import ThemeCard from "./ThemeCard";
 
 const INSTALL_CMD = "irm https://qobuzify.app/install.ps1 | iex";
+const GITHUB = "https://github.com/matthewprince/qobuzify";
 
 const FEATURES = [
   { title: "10 live themes", body: "Recolor the whole client. Switch instantly from the in-app Marketplace, no relaunch." },
@@ -62,6 +63,7 @@ export default function App() {
             <a href="/#extensions">Extensions</a>
             <a href="/docs/">Docs</a>
             <a href="/docs/#lyrics-server">API</a>
+            <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
             <a href="/unban">Unblock IP</a>
             <button className="nav-cta" onClick={copyInstall}>
               {copied ? "copied" : "Install"}
@@ -148,11 +150,20 @@ export default function App() {
       </section>
 
         <footer className="foot">
-          <span>{THEMES.length} themes</span>
-          <span>·</span>
-          <span>18 extensions</span>
-          <span>·</span>
-          <span>qobuzify.app</span>
+          <div className="foot-links">
+            <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
+            <span>·</span>
+            <a href="/docs/">Docs</a>
+            <span>·</span>
+            <a href="/issues">Report a bug</a>
+            <span>·</span>
+            <a href="/submit">Submit a theme or extension</a>
+            <span>·</span>
+            <a href="/security">Security</a>
+            <span>·</span>
+            <a href="/unban">Unblock IP</a>
+          </div>
+          <div className="foot-info">{THEMES.length} themes · 18 extensions · qobuzify.app</div>
         </footer>
       </div>
     </>

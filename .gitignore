@@ -23,8 +23,9 @@ site/public/qobuzify.zip
 .archive/
 nul
 
-# private lyrics backend (kept private, permanently) and local dev scaffolding
+# private lyrics backend + admin dashboard (kept private, permanently) and local dev scaffolding
 server/
+dash/
 tools/
 
 # logs / os cruft

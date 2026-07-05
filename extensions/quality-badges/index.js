@@ -7,8 +7,12 @@
 // /album/ instead. Tier comes from Qobuz's album/get, cached per album id so we fetch each once.
 var Q = Qobuzify;
 var STYLE_ID = "qz-badges-css";
-// Qobuz's own Hi-Res AUDIO badge, relative to app.html (verified it loads from here).
-var HIRES_IMG = "node_modules/@qobuz/qobuz-dwp-ui/dist/assets/images/logos/hires.png";
+// Qobuz's own Hi-Res AUDIO badge. On the DESKTOP app it loads relative to app.html from the unpacked
+// bundle; on the WEB player (play.qobuz.com - the Linux/Mac wrapper) that node_modules path returns the
+// SPA HTML fallback (200 text/html -> broken image), so use the served /assets path there instead.
+var HIRES_IMG = (location.host.indexOf("play.qobuz.com") >= 0)
+  ? "/assets/images/logos/hires.png"
+  : "node_modules/@qobuz/qobuz-dwp-ui/dist/assets/images/logos/hires.png";
 var albums = {}; // albumId -> "loading" | { byNum:{n:tier}, order:[tier], albumTier }
 
 Q.css(STYLE_ID, [

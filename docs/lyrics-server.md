@@ -12,6 +12,18 @@ Two reasons.
 
 **One source, from the client's view.** The client only ever talks to `api.qobuzify.app`. Which source actually served a given lyric never shows up in the client's network tab, because the API response reports a codename, not the real source. The client never advertises where a lyric came from.
 
+## Lyric tiers
+
+Every track resolves to one of three tiers, and the response tells you which one you got:
+
+- **Word-by-word** (`lyrics.Type` is `"Syllable"`). Karaoke-grade: every word carries its own start and end time, so the client can sweep a fill across the line as it's sung. This is the top tier and what the resolver reaches for first, keyed by ISRC when the track has one.
+- **Line-level** (`lyrics.Type` is `"Line"`). Each line has a single timestamp. The current line highlights as a block when it's reached, but there's no per-word timing. This is the fallback for a track that no reachable source has word-by-word for.
+- **None** (`hasLyrics` is `false`). No synced lyrics anywhere reachable. It's cached as a negative result for a TTL so it doesn't re-sweep every play, and can still pick up lyrics added upstream later.
+
+The resolver always prefers word-by-word over line-level, so a track that has both comes back `"Syllable"`. A line-level result is never treated as final: the server serves it now but re-resolves it in the background (no user latency), so the next play can quietly upgrade it to word-by-word if a better source has since become reachable.
+
+One consequence worth knowing: the client is proxy-first with a local fallback, so if the server call misses or fails, the client resolves locally, and the local path may only find line-level for a track the server actually has word-by-word for. Re-opening the lyrics re-asks the server and gets the better tier.
+
 ## Storage, in priority order
 
 The Worker answers a lyric request from the first of these that hits:
@@ -54,7 +66,7 @@ GET  /v1/stats  |  POST /v1/stats/push  |  GET /v1/stats/pull  |  POST /v1/stats
 GET  /health
 ```
 
-Plus a few admin endpoints gated behind a secret (flush, upgrade line-to-word-by-word in bulk, purge one track). The lyric response is `{ ok, cached, hasLyrics, source, lyrics, key, cacheable }`, where `cached` is `false`, `"d1"`, or `"r2"`, and `source` is the codename.
+Plus a few admin endpoints gated behind a secret (flush, upgrade line-to-word-by-word in bulk, purge one track). The lyric response is `{ ok, cached, hasLyrics, source, lyrics, key, cacheable }`, where `cached` is `false`, `"d1"`, or `"r2"`, `source` is the codename, and `lyrics.Type` is `"Syllable"` (word-by-word) or `"Line"` (line-level), the tier you got (see [Lyric tiers](#lyric-tiers)).
 
 ## Rate limits and unblocking
 

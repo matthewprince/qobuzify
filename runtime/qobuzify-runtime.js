@@ -359,7 +359,10 @@
   }
 
   // --- extension layer ---
-  var APP_ID = "304027809";        // Qobuz desktop public client id (X-App-Id)
+  // X-App-Id must match the client the session token was issued for: the desktop app and the web
+  // player (play.qobuz.com, used by the Linux/Mac wrapper) have different public app ids, and a
+  // mismatched pair 401s. Pick by host so Q.api works in both.
+  var APP_ID = (location.host.indexOf("play.qobuz.com") >= 0) ? "798273057" : "304027809";
   var QZ_STORE = null;             // the app's Redux store (found via React fiber)
   var routeCbs = [], lastPath = null;
   var extCleanups = {};            // ext id -> cleanup fn

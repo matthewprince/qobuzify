@@ -85,18 +85,33 @@ function doSearch(q) {
   }).catch(function () { if (id === state.reqId) { state.data = { __err: 1 }; render(); } });
 }
 
+// Cover/karaoke/instrumental/tribute markers. These versions get demoted so the real recording wins
+// (the #1 reason a billion-stream original ends up buried under knockoffs). Live/acoustic/unplugged
+// are deliberately NOT here - they're legit alternate takes, not knockoffs.
+var COVER_RE = /karaoke|instrumental|originally performed|in the style of|made famous|tribute|backing track|cover version|bossa nova version|lullaby|piano cover|8 ?bit|ringtone|remake/;
 function rankList(group, q, opts) {
   opts = opts || {};
   var items = (group && group.items) || [];
+  var nq = norm(q);
   var scored = items.map(function (it, idx) {
     var nm = it.title || it.name || "";
     var sub = (it.artist && it.artist.name) || (it.performer && it.performer.name) || "";
-    var s = Math.max(score(nm, q), score(sub, q) * 0.6);
+    // Score title, artist, AND the combined "title artist" text. score() needs every query word to hit
+    // ONE field, so a query that mixes song + artist ("Blank Space Taylor Swift") zeroes the real track
+    // (title has the song, artist has the name) while a cover that stuffs the artist into its own title
+    // matches fully. Scoring the combined string lets the split match count.
+    var s = Math.max(score(nm, q), score(sub, q) * 0.6, score(nm + " " + sub, q) * 0.9);
+    // If the query actually names this artist, they own it: lift their real tracks above covers by
+    // others that just put the artist's name in the title (the "Blank Space Taylor Swift"/Aiden Yoo trap).
+    var ns = norm(sub), nnm = norm(nm);
+    if (ns && ns.length > 2 && nq.indexOf(ns) >= 0) s += 500; // query names this artist
+    if (nnm && nnm.length > 2 && nq.indexOf(nnm) >= 0) s += 350; // query contains this item's own name (keeps a named artist from being filtered out)
+    if (s && COVER_RE.test(nnm)) s *= 0.4; // demote karaoke/instrumental/cover/tribute versions
     var k = opts.track ? knownOf(it) : null;
     if (k) s += k.recent ? 150 : 90; // songs you've heard surface in relevance ranking
     return { it: it, s: s, idx: idx, k: k };
   });
-  if (opts.quality) scored = scored.filter(function (x) { var k = tier(x.it).k; return state.hires ? k === "hires" : state.lossless ? (k === "hires" || k === "lossless") : true; });
+  if (opts.quality) scored = scored.filter(function (x) { var k = tier(x.it).k; return state.hires ? k === "hires" : state.lossless ? k === "lossless" : true; });
   if (opts.dated && state.year) scored = scored.filter(function (x) { var y = new Date(relAt(x.it) * 1000).getFullYear(); return y >= state.year; });
   if (opts.track && state.heard) scored = scored.filter(function (x) { return x.k; });
   var sort = state.sort;
@@ -278,10 +293,21 @@ function render() {
   if (state.tab === "top") {
     // strongest of the top artist/album becomes the hero
     var aBest = artists[0] ? { it: artists[0], kind: "artist", s: score(artists[0].name, q) } : null;
-    var alBest = albums[0] ? { it: albums[0], kind: "album", s: score(albums[0].title, q) } : null;
+    // if the query explicitly names the top artist, they're the top result the user wants - not a
+    // keyword-stuffed cover/mashup album that happens to put the artist's name in its own title.
+    if (aBest && norm(artists[0].name).length > 2 && norm(q).indexOf(norm(artists[0].name)) >= 0) aBest.s += 1200;
+    var alBest = albums[0] ? { it: albums[0], kind: "album", s: score(albums[0].title, q) * (COVER_RE.test(norm(albums[0].title)) ? 0.4 : 1) } : null;
     var hero = null;
     if (aBest && (!alBest || aBest.s >= alBest.s)) hero = aBest; else if (alBest) hero = alBest;
     if (hero && hero.s < 300) hero = null;
+    // "song + artist" queries (e.g. "Blank Space Taylor Swift") return no artist result and only cover
+    // albums, so there's no clean artist/album hero. Fall back to the top track's real performer when the
+    // query names them - the actual artist is a better Top result than a cover album or an empty slot.
+    if (!hero && tracks[0]) {
+      var perf = tracks[0].performer || tracks[0].artist;
+      if (perf && perf.id && norm(perf.name).length > 2 && norm(q).indexOf(norm(perf.name)) >= 0)
+        hero = { it: { id: perf.id, name: perf.name, image: cover(tracks[0]) }, kind: "artist" };
+    }
 
     if (hero || tracks.length) {
       var topWrap = document.createElement("div"); topWrap.className = "qz-s-topgrid";
@@ -323,7 +349,7 @@ function ensureUI() {
           }).join("") +
         '</div>' +
         '<div class="qz-s-controls">' +
-          '<div class="qz-s-qual"><button class="qz-s-chip" data-q="hires">Hi-Res</button><button class="qz-s-chip" data-q="lossless">Lossless</button><button class="qz-s-chip" data-q="heard" title="Only songs you\'ve played before">Heard</button></div>' +
+          '<div class="qz-s-qual"><button class="qz-s-chip" data-q="hires" title="24-bit hi-res only">Hi-Res</button><button class="qz-s-chip" data-q="lossless" title="16-bit CD quality only">CD</button><button class="qz-s-chip" data-q="heard" title="Only songs you\'ve played before">Heard</button></div>' +
           '<select class="qz-s-sel qz-s-year"></select>' +
           '<select class="qz-s-sel qz-s-sort">' +
             '<option value="relevance">Relevance</option><option value="popularity">Popularity</option><option value="familiar">Familiar</option><option value="newest">Newest</option><option value="oldest">Oldest</option>' +

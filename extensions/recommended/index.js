@@ -552,7 +552,9 @@ Q.css(CSS_ID, [
   ".qz-fy-rowhead{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;}",
   ".qz-fy-rowtitle{font-size:20px;font-weight:800;letter-spacing:-.2px;color:#eef2f7;}",
   ".qz-fy-rowsub{font-size:12.5px;color:#8b94a3;}",
-  ".qz-fy-track{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(158px,1fr);grid-template-rows:1fr;gap:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:12px;scroll-snap-type:x proximity;scrollbar-width:thin;}",
+  // fixed-ish card width: cap the max so a sparse row (few items, e.g. a fresh account's history)
+  // can't stretch one card to the full row width. 1fr used to balloon a single card to giant size.
+  ".qz-fy-track{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(158px,190px);grid-template-rows:1fr;gap:20px;overflow-x:auto;overflow-y:hidden;padding-bottom:12px;scroll-snap-type:x proximity;scrollbar-width:thin;}",
   ".qz-fy-track::-webkit-scrollbar{height:9px;}.qz-fy-track::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:9px;}",
   ".qz-fy-card{display:block;text-decoration:none;scroll-snap-align:start;cursor:pointer;min-width:0;}",
   ".qz-fy-art{position:relative;width:100%;aspect-ratio:1;border-radius:12px;overflow:hidden;background:rgba(255,255,255,.05);box-shadow:0 10px 28px -14px rgba(0,0,0,.8);transition:transform .16s,box-shadow .16s;}",

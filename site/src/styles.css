@@ -412,12 +412,26 @@ body {
 
 .foot {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 12px;
   margin-top: 56px;
   color: var(--sub);
   font-size: 13px;
+}
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.foot-links span {
+  color: var(--sub);
+  opacity: 0.6;
+}
+.foot-info {
+  color: var(--sub);
 }
 .foot a {
   color: var(--body);

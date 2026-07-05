@@ -499,6 +499,29 @@ function stripWrapParens(line) {
   var joined = syl.map(function (s) { return s.Text; }).join("").trim();
   if (/^[\(（][\s\S]*[\)）]$/.test(joined)) line.Lead.Syllables = stripBgParens(syl);
 }
+// NetEase yrc often terminates each line with a stray fullwidth comma/period ("，" "。" "、"), which
+// renders as a dangling "," and also breaks the fully-parenthesized-echo test above ("（...）" arrives
+// as "（...），"). Trim a trailing run of fullwidth CJK terminators (+ spaces) off the last syllable,
+// dropping any syllable left empty. ASCII punctuation and mid-line marks are untouched.
+function trimLineTerminator(line) {
+  var syl = line.Lead && line.Lead.Syllables; if (!syl || !syl.length) return;
+  while (syl.length) {
+    var last = syl[syl.length - 1];
+    last.Text = last.Text.replace(/[，。、；：\s]+$/, "");
+    if (last.Text === "") { syl.pop(); continue; }
+    break;
+  }
+}
+// A held note (or a last word running into the following instrumental) can get a 10-12s syllable from
+// NetEase, so the karaoke fill creeps imperceptibly and looks stuck ("Out of My League": the "dream..."
+// syllable was 11-12s). Cap any single syllable's fill span at 4s (above every real sung note, below the
+// instrumental-folded ones) so it fills promptly then holds lit. Runs pre-toSeconds, so times are in MS.
+function capSyllables(line) {
+  var CAP = 4000;
+  var syl = line.Lead && line.Lead.Syllables;
+  if (syl) for (var i = 0; i < syl.length; i++) { if (syl[i].EndTime - syl[i].StartTime > CAP) syl[i].EndTime = syl[i].StartTime + CAP; }
+  if (line.Background) line.Background.forEach(function (b) { (b.Syllables || []).forEach(function (s) { if (s.EndTime - s.StartTime > CAP) s.EndTime = s.StartTime + CAP; }); });
+}
 
 // --- TTML (Apple Music / AMLL canonical) -> SL Syllable ---
 // Word-by-word from <span begin end>, duet sides from ttm:agent (v1/v2), background vocals from
@@ -588,7 +611,7 @@ function toSeconds(ly) {
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
-var CACHE_VER = 6; // bumped 2026-07-03: fullwidth-paren bg-vocal split + asterisk-censor clustering + strip-all-parens on multi-echo bg (mirrors server PARSE_VER 5)
+var CACHE_VER = 9; // bumped 2026-07-05: cap syllable fill span at 4s so held/instrumental-folded 11-12s syllables don't look stuck (mirrors server PARSE_VER 8)
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}
@@ -612,7 +635,10 @@ var USE_PROXY = true; // __QZ_SL_DEBUG.setProxy(false) to force local-only for t
 function proxyLyrics(track) {
   if (!USE_PROXY || !track || !track.name || !track.artist) return Promise.resolve(null);
   try {
-    var u = PROXY_BASE + "?name=" + encodeURIComponent(track.name) + "&artist=" + encodeURIComponent(track.artist);
+    // qz=1 marks this as a real client request so a WAF rule can whitelist it and skip the bot
+    // challenge. a browser fetch can't set a custom User-Agent (forbidden header), and a custom
+    // header would force a CORS preflight the challenge could block, so a query param is the clean way.
+    var u = PROXY_BASE + "?qz=1&name=" + encodeURIComponent(track.name) + "&artist=" + encodeURIComponent(track.artist);
     if (track.album) u += "&album=" + encodeURIComponent(track.album);
     if (track.durationMs) u += "&durationMs=" + track.durationMs;
     var isrc = (curMeta && curMeta.isrc) || track.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
@@ -743,11 +769,15 @@ function isLyricPlaceholder(ly) {
 // "混音/母带：Z", "词：A 曲：B") that aren't lyrics. Drop any line that is such a credit:
 // a colon near the start whose label contains a known credit keyword - so a real lyric that
 // merely has a colon ("他说：你好") is KEPT. Western/Apple/AMLL lines never match.
-var CREDIT_KW = /(作词|作曲|编曲|改编|制作|出品|监制|混音|母带|和声|配唱|录音|演唱|制作人|文案|策划|统筹|发行|后期|吉他|贝斯|键盘|弦乐|鼓|词|曲)/;
-var CREDIT_EN = /^(written|compos|arrang|produc|mix|master|record|lyric|music|vocal|piano|keyboard|synth|guitar|bass|drum|program|engineer|perform|publish|copyright)/i;
+var CREDIT_KW = /(作词|作曲|编曲|改编|制作|出品|监制|混音|母带|和声|配唱|录音|演唱|制作人|文案|策划|统筹|发行|后期|吉他|贝斯|键盘|弦乐|鼓|词|曲|专辑|歌手|歌名)/;
+var CREDIT_EN = /^(album|artist|title|singer|written|compos|arrang|produc|mix|master|record|lyric|music|vocal|piano|keyboard|synth|guitar|bass|drum|program|engineer|perform|publish|copyright)/i;
 function isCreditLine(t) {
   t = (t || "").replace(/^\s+/, "");
   if (!t) return false;
+  // Structure/section tags NetEase ships as their own lines ("<VERSE 1: MICHAEL KOVACH>",
+  // "<CHORUS: MIKE & CHI-CHI>", "[Bridge]") aren't sung - drop them so the instrumental dots show
+  // in the gap instead. Whole-line < > or [ ] tags only; ( ) echoes are handled as background vocals.
+  if (/^[<＜\[［][\s\S]*[>＞\]］]\s*$/.test(t)) return true;
   // NetEase metadata (the "Artist、Artist - Title" line and credit name-lists) uses the ideographic
   // comma "、" (U+3001) as a separator; 2+ of them marks a list/title, never a real lyric line.
   if ((t.match(/、/g) || []).length >= 2) return true;
@@ -786,7 +816,7 @@ function resolveLyricsRaw(track) {
         ly = stripCredits(ly);
         // parenthesized echoes -> Background sub-text for every source (Apple inline asides too, not
         // just NetEase's buildSyllable pass); a fully-parenthesized line just has its parens stripped.
-        if (ly.Content) ly.Content.forEach(function (l) { if (!l.Background) splitBackgroundVocals(l); if (!l.Background) stripWrapParens(l); });
+        if (ly.Content) ly.Content.forEach(function (l) { trimLineTerminator(l); if (!l.Background) splitBackgroundVocals(l); if (!l.Background) stripWrapParens(l); capSyllables(l); });
         return toSeconds(ly);
       });
   });
