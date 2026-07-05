@@ -1,0 +1,66 @@
+{
+  "name": "qobuzify",
+  "productName": "Qobuzify",
+  "version": "0.1.2",
+  "private": true,
+  "description": "Qobuzify for Linux and macOS - the Qobuz web player with Qobuzify themes and extensions.",
+  "author": "Qobuzify",
+  "homepage": "https://qobuzify.app",
+  "main": "main.js",
+  "scripts": {
+    "prebuild": "node prebuild.js",
+    "start": "npm run prebuild && electron .",
+    "dist": "npm run prebuild && electron-builder -mwl",
+    "dist:linux": "npm run prebuild && electron-builder --linux",
+    "dist:win": "npm run prebuild && electron-builder --win",
+    "dist:mac": "npm run prebuild && electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.qobuzify.desktop",
+    "productName": "Qobuzify",
+    "copyright": "Qobuzify",
+    "artifactName": "Qobuzify-${version}-${os}-${arch}.${ext}",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "qz-payload.js",
+      "qz-vendors.json",
+      "vendor/**/*",
+      "package.json",
+      "!payload.js",
+      "!prebuild.js",
+      "!qz-state.json",
+      "!.qz-payload.js",
+      "!dist/**/*"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "AudioVideo",
+      "icon": "build/icon.png",
+      "maintainer": "Qobuzify <hello@qobuzify.app>",
+      "desktop": { "Name": "Qobuzify", "Comment": "Qobuz web player with Qobuzify themes + extensions" }
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Qobuzify"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.music",
+      "icon": "build/icon.png",
+      "identity": null
+    },
+    "dmg": { "title": "Qobuzify ${version}" }
+  }
+}
