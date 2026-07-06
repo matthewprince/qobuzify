@@ -104,9 +104,10 @@
     <h1>The Qobuzify API</h1>
     <p class="lede">
       A few features are backed by one small Cloudflare Worker at <span class="inline">https://api.qobuzify.app</span>.
-      It is a shared, proxy-first lyrics cache with an optional stats sync. The client only ever talks to this one
-      endpoint: it asks the API first and falls back to resolving locally if the call misses, so a lyric anyone has
-      already played loads warm for everyone else, and no request ever reveals which upstream a lyric came from.
+      It is a shared, proxy-first lyrics cache with an optional stats sync. The client asks the API first, so a track
+      anyone has already played loads warm for everyone else, and a proxy response names a codename rather than the
+      real upstream. If the proxy misses or rate-limits you, the client falls back to resolving from the open lyric
+      sources itself, so you always get lyrics even when the cache can't help.
     </p>
   </div>
 
