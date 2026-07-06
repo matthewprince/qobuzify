@@ -5,13 +5,6 @@ import Downloads from "./Downloads";
 
 const INSTALL_CMD = "irm https://qobuzify.app/install.ps1 | iex";
 const GITHUB = "https://github.com/matthewprince/qobuzify";
-const API_BASE = "https://api.qobuzify.app";
-
-const API_ROUTES = [
-  { path: "/v1/lyrics", body: "Synced word-by-word lyrics from a shared cache-proxy. Resolved once, then served warm to everyone after, so the client never re-parses." },
-  { path: "/v1/stats", body: "Optional sync for your listening stats, so your top artists, minutes, and streaks can follow you across machines." },
-  { path: "/v1/version", body: "The latest release, used for the in-app update check that surfaces a new version in the Qobuzify menu." },
-];
 
 const FEATURES = [
   { title: "10 live themes", body: "Recolor the whole client. Switch instantly from the in-app Marketplace, no relaunch." },
@@ -70,7 +63,7 @@ export default function App() {
             <a href="/#themes">Themes</a>
             <a href="/#extensions">Extensions</a>
             <a href="/docs/">Docs</a>
-            <a href="/#api">API</a>
+            <a href="/api">API</a>
             <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
             <a href="/unban">Unblock IP</a>
             <button className="nav-cta" onClick={copyInstall}>
@@ -134,25 +127,6 @@ export default function App() {
               <div className="step-n">{s.n}</div>
               <h3>{s.title}</h3>
               <p>{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="section" id="api">
-        <h2>The Qobuzify API</h2>
-        <p className="lede">
-          A few features are backed by our own endpoint, <code>{API_BASE}</code>, a small
-          Cloudflare Worker. It is proxy-first: the client asks it, and falls back to resolving
-          locally if it misses. The client only ever talks to this one endpoint, never third
-          parties directly.
-        </p>
-        <div className="features">
-          {API_ROUTES.map((r) => (
-            <div className="card feature" key={r.path}>
-              <div className="feature-dot" />
-              <h3><code>{r.path}</code></h3>
-              <p>{r.body}</p>
             </div>
           ))}
         </div>
