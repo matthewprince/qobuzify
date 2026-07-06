@@ -11,10 +11,43 @@ Write-Host "  Qobuzify " -ForegroundColor Cyan -NoNewline
 Write-Host "- Spicetify, but for Qobuz" -ForegroundColor DarkGray
 Write-Host ""
 
-# Node.js is the only requirement.
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host "Node.js (v16+) is required and was not found." -ForegroundColor Yellow
-  Write-Host "Install it from https://nodejs.org, then run this command again." -ForegroundColor Yellow
+# Node.js is the only requirement. A just-installed Node usually isn't on the PATH of an
+# already-open PowerShell yet, so if the first check misses, reload PATH from the registry
+# (and probe the default install dir) before giving up - saves people the confusing
+# "not found" right after they installed it.
+function Test-Node {
+  if (Get-Command node -ErrorAction SilentlyContinue) { return $true }
+  try {
+    $m = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $u = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = (@($m, $u) | Where-Object { $_ }) -join ";"
+  } catch {}
+  if (Get-Command node -ErrorAction SilentlyContinue) { return $true }
+  foreach ($b in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if ($b) {
+      $d = Join-Path $b "nodejs"
+      if (Test-Path (Join-Path $d "node.exe")) { $env:Path = "$d;$env:Path"; return $true }
+    }
+  }
+  return $false
+}
+
+if (-not (Test-Node)) {
+  Write-Host "Node.js (v16 or newer) is required and was not found." -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "  1. Install the LTS build from https://nodejs.org" -ForegroundColor Yellow
+  Write-Host "  2. Close this window, open a NEW PowerShell, and run the command again." -ForegroundColor Yellow
+  Write-Host ""
+  Write-Host "If you just installed Node and still see this, a fresh window is the fix:" -ForegroundColor DarkGray
+  Write-Host "an already-open terminal doesn't pick up Node until it's reopened." -ForegroundColor DarkGray
+  return
+}
+
+# Guard against an ancient Node that would only fail later with a cryptic error.
+$nv = ""
+try { $nv = (& node -v) } catch {}
+if ($nv -match "v(\d+)" -and [int]$matches[1] -lt 16) {
+  Write-Host "Found Node $nv, but Qobuzify needs v16 or newer. Update it from https://nodejs.org." -ForegroundColor Yellow
   return
 }
 
