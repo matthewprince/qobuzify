@@ -61,6 +61,9 @@ function showMenu(x, y, info) {
   setTimeout(function () { document.addEventListener("mousedown", onDocDown, true); document.addEventListener("keydown", onEsc, true); window.addEventListener("blur", removeMenu); document.addEventListener("scroll", removeMenu, true); }, 0);
 }
 function onContext(e) {
+  // don't hijack right-clicks on Qobuzify's own player-bar controls (e.g. the Playlist Context
+  // chip) - let the extension that owns that button handle its own menu
+  if (e.target.closest && e.target.closest(".qz-slot-left, .qz-slot-right, [data-qz-slot]")) return;
   var inPlayer = e.target.closest(".player__track, .player__content, .player__track-infos");
   var row = e.target.closest(".ListItem, .track-item");
   var info = null;
