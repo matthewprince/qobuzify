@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { THEMES } from "./themes";
 import ThemeCard from "./ThemeCard";
+import Downloads from "./Downloads";
 
 const INSTALL_CMD = "irm https://qobuzify.app/install.ps1 | iex";
 const GITHUB = "https://github.com/matthewprince/qobuzify";
+const API_BASE = "https://api.qobuzify.app";
+
+const API_ROUTES = [
+  { path: "/v1/lyrics", body: "Synced word-by-word lyrics from a shared cache-proxy. Resolved once, then served warm to everyone after, so the client never re-parses." },
+  { path: "/v1/stats", body: "Optional sync for your listening stats, so your top artists, minutes, and streaks can follow you across machines." },
+  { path: "/v1/version", body: "The latest release, used for the in-app update check that surfaces a new version in the Qobuzify menu." },
+];
 
 const FEATURES = [
   { title: "10 live themes", body: "Recolor the whole client. Switch instantly from the in-app Marketplace, no relaunch." },
@@ -18,8 +26,8 @@ const FEATURES = [
 
 const STEPS = [
   { n: "1", title: "Install", body: "One command patches your local Qobuz. It backs up the originals and is fully reversible." },
-  { n: "2", title: "Theme", body: "Pick from 10 themes in the in-app Marketplace. Switching is live, with no relaunch." },
-  { n: "3", title: "Extend", body: "18 extensions ship on by default, each one toggleable from the same Marketplace." },
+  { n: "2", title: "Theme", body: "In Qobuz, click your profile picture in the top-right and open the Marketplace, then pick from 10 themes. Switching is live, no relaunch." },
+  { n: "3", title: "Extend", body: "18 extensions ship on by default. Toggle any of them in that same Marketplace, or open Qobuzify in the menu for settings." },
 ];
 
 const EXTENSIONS = [
@@ -62,7 +70,7 @@ export default function App() {
             <a href="/#themes">Themes</a>
             <a href="/#extensions">Extensions</a>
             <a href="/docs/">Docs</a>
-            <a href="/docs/#lyrics-server">API</a>
+            <a href="/#api">API</a>
             <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
             <a href="/unban">Unblock IP</a>
             <button className="nav-cta" onClick={copyInstall}>
@@ -83,12 +91,20 @@ export default function App() {
           from your own library, synced lyrics, and a stack of quality-of-life tools. It all
           lives inside the app, and it is fully reversible.
         </p>
+        <div className="install-reco">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+          Recommended install
+        </div>
         <button className="install" onClick={copyInstall} title="Copy install command">
           <code>{INSTALL_CMD}</code>
           <span>{copied ? "copied" : "PowerShell · click to copy"}</span>
         </button>
-        <p className="install-note">Windows, needs Node.js. Then switch themes and toggle extensions live in the app. Fully reversible.</p>
+        <p className="install-note">Windows, needs Node.js. Then in Qobuz, open the Marketplace from your profile picture (top-right) to theme and extend. Fully reversible.</p>
       </header>
+
+      <Downloads />
 
       <section className="section">
         <h2>What you get</h2>
@@ -123,6 +139,25 @@ export default function App() {
         </div>
       </section>
 
+      <section className="section" id="api">
+        <h2>The Qobuzify API</h2>
+        <p className="lede">
+          A few features are backed by our own endpoint, <code>{API_BASE}</code>, a small
+          Cloudflare Worker. It is proxy-first: the client asks it, and falls back to resolving
+          locally if it misses. The client only ever talks to this one endpoint, never third
+          parties directly.
+        </p>
+        <div className="features">
+          {API_ROUTES.map((r) => (
+            <div className="card feature" key={r.path}>
+              <div className="feature-dot" />
+              <h3><code>{r.path}</code></h3>
+              <p>{r.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="section" id="themes">
         <h2>Themes</h2>
         <div className="gallery">
@@ -132,11 +167,12 @@ export default function App() {
         </div>
       </section>
 
+
       <section className="section" id="extensions">
         <h2>Extensions</h2>
         <p className="lede">
-          Eighteen extensions ship on by default, each one toggleable from the in-app Marketplace.
-          Here is the full set.
+          Eighteen extensions ship on by default. To manage them, click your profile picture in the
+          top-right of Qobuz and open the Marketplace. Here is the full set.
         </p>
         <div className="features">
           {EXTENSIONS.map((e) => (
