@@ -63,13 +63,17 @@ function spotifyToken() {
   }).catch(function (e) { _tokP = null; throw e; });
   return _tokP;
 }
-function isrcToSpotifyId(isrc) {
+function isrcToSpotifyId(isrc, name) {
   if (!isrc) return Promise.resolve(null);
   if (_isrc[isrc] !== undefined) return Promise.resolve(_isrc[isrc]);
   return spotifyToken().then(function (tok) {
     return fetch("https://api.spotify.com/v1/search?type=track&limit=1&q=" + encodeURIComponent("isrc:" + isrc), { headers: { Authorization: "Bearer " + tok } });
   }).then(function (r) { return r.json(); }).then(function (j) {
-    var t = j.tracks && j.tracks.items && j.tracks.items[0]; var id = t ? t.id : null; _isrc[isrc] = id; return id;
+    var t = j.tracks && j.tracks.items && j.tracks.items[0];
+    // a wrong or reused ISRC (common on nightcore/bootleg uploads) points at an unrelated recording;
+    // only trust the hit if its title matches, or we key Qz Lyrics off the wrong song
+    var id = (t && (!name || titleMatch(name, t.name))) ? t.id : null;
+    _isrc[isrc] = id; return id;
   }).catch(function () { return null; });
 }
 
@@ -95,7 +99,7 @@ function mapTrack(qt) {
   // track - guards against a stale async overwrite landing after a song change.
   Q.api("track/get?track_id=" + qt.id).then(function (tr) {
     if (tr && tr.isrc && curMeta && curMeta.name === qt.title) curMeta.isrc = tr.isrc; // Apple Music keys lyrics by ISRC
-    return isrcToSpotifyId(tr && tr.isrc);
+    return isrcToSpotifyId(tr && tr.isrc, qt.title);
   }).then(function (spid) {
     if (spid && cur && curMeta && curMeta.name === qt.title) {
       cur.uri = "spotify:track:" + spid;
@@ -611,7 +615,7 @@ function toSeconds(ly) {
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
-var CACHE_VER = 9; // bumped 2026-07-05: cap syllable fill span at 4s so held/instrumental-folded 11-12s syllables don't look stuck (mirrors server PARSE_VER 8)
+var CACHE_VER = 10; // bumped 2026-07-05: reject wrong/reused-ISRC Spotify matches (a nightcore/bootleg ISRC was serving an unrelated song's word-by-word); invalidates the local cache so a bad match re-resolves
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}

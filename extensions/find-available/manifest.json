@@ -1,0 +1,8 @@
+{
+  "id": "find-available",
+  "name": "Find Available Version",
+  "description": "When a track is greyed out because it isn't streamable in your country, this adds a button to the dead row that finds a version of the same song you can actually play and plays it. No more dead ends in a playlist.",
+  "icon": "icon-search",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

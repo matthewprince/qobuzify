@@ -50,6 +50,14 @@ body,
   color: var(--nz) !important;
   fill: var(--nz) !important;
 }
+/* The icon-accent rule above also recolours the play/pause glyph inside the accent-filled round
+   button, turning it accent-on-accent - an invisible triangle inside a solid circle. Reassert the
+   button's own dark foreground (the lime accent is light, so the glyph is near-black). */
+.ButtonRoundPrimary[class*="icon-"],
+.ButtonRoundPrimary[class*="icon-"]::before {
+  color: #06090a !important;
+  fill: #06090a !important;
+}
 /* hearts / favorites -> lime */
 [class*="ButtonFavorite"] { color: var(--nz) !important; fill: var(--nz) !important; }
 /* active nav -> lime pill */

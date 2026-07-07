@@ -449,6 +449,27 @@
         prev = s.el;
       });
     });
+    fitPlayerSlots();
+  }
+
+  // Player-bar overflow guard. Qobuz centres the transport controls over the bar independently of the
+  // left/right flow sections (hiding a slot doesn't move them), so on a narrow or portrait window our
+  // injected slot buttons - which sit at the inner edge of those sections - end up on top of the play /
+  // next controls and cover them, so they can't be clicked (reported on a portrait monitor). The left
+  // zone's width depends on which extensions are on, so a fixed CSS breakpoint can't judge it. Measure
+  // instead: show a zone, read whether it reaches the transport, hide it if so. The show and the hide
+  // happen in one synchronous pass with no paint in between, so there's no flicker.
+  function fitPlayerSlots() {
+    var prev = document.querySelector(".pct-player-prev");
+    var next = document.querySelector(".pct-player-next");
+    if (!prev && !next) return;
+    var GAP = 10;
+    var pr = prev && prev.getBoundingClientRect();
+    var nr = next && next.getBoundingClientRect();
+    var left = document.querySelector(".player__track > .qz-slot-left");
+    if (left && pr) { left.style.display = ""; var lr = left.getBoundingClientRect(); if (lr.width && lr.right > pr.left - GAP) left.style.display = "none"; }
+    var right = document.querySelector(".player__settings > .qz-slot-right");
+    if (right && nr) { right.style.display = ""; var rr = right.getBoundingClientRect(); if (rr.width && rr.left < nr.right + GAP) right.style.display = "none"; }
   }
 
   function buildApi() {
@@ -591,6 +612,9 @@
     var pending;
     function schedule() { if (pending) return; pending = setTimeout(function () { pending = null; injectMenu(); injectNavItems(); injectPlayerSlots(); }, 80); }
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    // a pure window resize doesn't mutate the DOM, so the observer above won't fire - re-fit the
+    // player-bar slots explicitly so buttons re-appear/hide as the window widens or narrows.
+    var rzT; window.addEventListener("resize", function () { clearTimeout(rzT); rzT = setTimeout(fitPlayerSlots, 120); });
     // startup guarantee: poll until the navbar mounts, then stop
     var tries = 0;
     var iv = setInterval(function () { injectMenu(); injectNavItems(); injectPlayerSlots(); if (++tries > 40 || document.querySelector('[data-qz="qobuzify"]')) clearInterval(iv); }, 250);
@@ -604,6 +628,15 @@
   // overlay CSS, kept as one string so the file stays self-contained
   var QZ_CSS = [
     ":root{--qz-accent:#3DA8FE;}",
+    // Qobuz's native fullscreen now-playing (.FullPlayer) is position:fixed and expects to fill the
+    // viewport. But it lives inside the bottom player panel, and any theme that puts a backdrop-filter
+    // (or transform/filter) on that panel turns the panel into the fixed element's containing block -
+    // so .FullPlayer renders offset and clipped to the panel's box instead of fullscreen. That's the
+    // "full screen only covers part of the window" bug, and it only bit the blur themes (glass/cosmic/
+    // dramatic/terracotta), which is why it looked intermittent. While it's open, strip those props off
+    // the hosting panels so it escapes back to the viewport. The :has() out-specifies the themes' plain
+    // panel rules, so it wins even against their !important, and it self-heals for any user theme too.
+    ".grid-layout--panel-outer-bottom:has(.FullPlayer),.ui-layout-001--panel-outer-bottom:has(.FullPlayer),.grid-layout--panel-outer-right:has(.FullPlayer),.ui-layout-001--panel-outer-right:has(.FullPlayer){backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transform:none!important;filter:none!important;}",
     // Qobuzify brand wordmark - replaces the Qobuz logo in the NavBar (kept an <a href=/discover> so click-to-ForYou still works)
     ".NavBar__brand.icon-brand-medium{-webkit-mask:none!important;mask:none!important;background-color:transparent!important;background-image:url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5MzQgMjczIiBmaWxsPSJub25lIj48cGF0aCBkPSJNMTE0LjIwIDI1Ni4zNUwxMTQuMjAgMTgyLjY0UTEwNi43MCAxOTEuNDMgOTYuMTAgMTk2LjEyUTg1LjQ5IDIwMC44MCA3Mi40OCAyMDAuODBRNTcuNzIgMjAwLjgwIDQ0LjU5IDE5Mi44NFEzMS40NyAxODQuODcgMjMuNzMgMTcxLjM5UTE2IDE1Ny45MSAxNiAxNDIuMzNRMTYgMTI2LjM5IDIzLjg1IDExMi45MVEzMS41OSA5OS40NCA0NC42NSA5MS41OVE1Ny43MiA4My43MyA3Mi40OCA4My43M1E4NS40OSA4My43MyA5Ni4xMCA4OC40MlExMDYuNzAgOTMuMTEgMTE0LjIwIDEwMS45MEwxMTQuMjAgODUuODRMMTMzLjg5IDg1Ljg0TDEzMy44OSAyNTYuMzVMMTE0LjIwIDI1Ni4zNU03NS4wNiAxODEuNzBRODUuOTYgMTgxLjcwIDk0Ljg3IDE3Ni40M1ExMDMuODkgMTcxLjE2IDEwOS4wNSAxNjIuMTNRMTE0LjIwIDE1My4xMSAxMTQuMjAgMTQyLjMzUTExNC4yMCAxMzEuNTUgMTA5LjA1IDEyMi41MlExMDMuNzcgMTEzLjM4IDk0LjgxIDEwOC4xN1E4NS44NCAxMDIuOTUgNzUuMDYgMTAyLjk1UTY0LjI4IDEwMi45NSA1NS4yNiAxMDguMjNRNDYuMTIgMTEzLjUwIDQwLjkwIDEyMi41MlEzNS42OSAxMzEuNTUgMzUuNjkgMTQyLjMzUTM1LjY5IDE1My4xMSA0MC45NiAxNjIuMTNRNDYuMjMgMTcxLjI3IDU1LjI2IDE3Ni40OVE2NC4yOCAxODEuNzAgNzUuMDYgMTgxLjcwTTIyMi4wMiAyMDAuODBRMjA1Ljg0IDIwMC44MCAxOTIuMzcgMTkyLjk1UTE3OC43NyAxODUuMTAgMTcwLjg2IDE3MS42M1ExNjIuOTUgMTU4LjE1IDE2Mi45NSAxNDIuMzNRMTYyLjk1IDEyNi41MSAxNzAuOTIgMTEyLjkxUTE3OC44OSA5OS4zMiAxOTIuNDMgOTEuNTNRMjA1Ljk2IDgzLjczIDIyMi4wMiA4My43M1EyMzguMDcgODMuNzMgMjUxLjU1IDkxLjU5UTI2NS4wMiA5OS40NCAyNzIuODggMTEyLjk3UTI4MC43MyAxMjYuNTEgMjgwLjczIDE0Mi4zM1EyODAuNzMgMTU4LjM4IDI3Mi44OCAxNzEuNjNRMjY1LjAyIDE4NS4yMiAyNTEuNDkgMTkzLjAxUTIzNy45NSAyMDAuODAgMjIyLjAyIDIwMC44ME0yMjIuMDIgMTgxLjcwUTIzMi42OCAxODEuNzAgMjQxLjU5IDE3Ni40M1EyNTAuNDkgMTcxLjE2IDI1NS43NyAxNjIuMDJRMjYxLjA0IDE1Mi44OCAyNjEuMDQgMTQyLjMzUTI2MS4wNCAxMzEuNTUgMjU1Ljg4IDEyMi41MlEyNTAuNjEgMTEzLjM4IDI0MS41OSAxMDguMTdRMjMyLjU2IDEwMi45NSAyMjIuMDIgMTAyLjk1UTIxMS4xMiAxMDIuOTUgMjAyLjA5IDEwOC4yM1ExOTIuOTUgMTEzLjUwIDE4Ny44MCAxMjIuNTJRMTgyLjY0IDEzMS41NSAxODIuNjQgMTQyLjMzUTE4Mi42NCAxNTMuMTEgMTg3LjkxIDE2Mi4xM1ExOTMuMTkgMTcxLjI3IDIwMi4yMSAxNzYuNDlRMjExLjIzIDE4MS43MCAyMjIuMDIgMTgxLjcwTTM3MS40MyAyMDAuODBRMzU4LjQyIDIwMC44MCAzNDcuODIgMTk2LjEyUTMzNy4yMSAxOTEuNDMgMzI5LjcxIDE4Mi42NEwzMjkuNzEgMTk4LjcwTDMxMC4wMiAxOTguNzBMMzEwLjAyIDE4LjcwTDMyOS43MSAxOC43MEwzMjkuNzEgMTAxLjkwUTMzNy4yMSA5My4xMSAzNDcuODIgODguNDJRMzU4LjQyIDgzLjczIDM3MS40MyA4My43M1EzODYuNDMgODMuNzMgMzk5LjMyIDkxLjU5UTQxMi40NSA5OS41NSA0MjAuMTIgMTEzLjA5UTQyNy44MCAxMjYuNjMgNDI3LjgwIDE0Mi4zM1E0MjcuODAgMTU4LjAzIDQyMC4wNiAxNzEuNjNRNDEyLjMzIDE4NS4xMCAzOTkuMjYgMTkyLjk1UTM4Ni4yMCAyMDAuODAgMzcxLjQzIDIwMC44ME0zNjguNzMgMTgxLjcwUTM3OS42MyAxODEuNzAgMzg4LjU0IDE3Ni40M1EzOTcuNjggMTcxLjE2IDQwMi44OSAxNjIuMTNRNDA4LjExIDE1My4xMSA0MDguMTEgMTQyLjMzUTQwOC4xMSAxMzEuNDMgNDAyLjg0IDEyMi41MlEzOTcuNTYgMTEzLjM4IDM4OC41NCAxMDguMTdRMzc5LjUyIDEwMi45NSAzNjguNzMgMTAyLjk1UTM1OC4wNyAxMDIuOTUgMzQ5LjA1IDEwOC4yM1EzNDAuMDIgMTEzLjUwIDMzNC44NyAxMjIuNThRMzI5LjcxIDEzMS42NiAzMjkuNzEgMTQyLjMzUTMyOS43MSAxNTMuMTEgMzM0Ljk4IDE2Mi4xM1EzNDAuMTQgMTcxLjI3IDM0OS4xNiAxNzYuNDlRMzU4LjE5IDE4MS43MCAzNjguNzMgMTgxLjcwTTUwMC45MiAyMDAuODBRNDg4LjAzIDIwMC44MCA0NzguMTMgMTk1LjQ3UTQ2OC4yMyAxOTAuMTQgNDYyLjcyIDE4MC41M1E0NTcuMjEgMTcwLjkyIDQ1Ny4yMSAxNTguMjdMNDU3LjIxIDg1Ljg0TDQ3Ni42NiA4NS44NEw0NzYuNjYgMTU2LjYzUTQ3Ni42NiAxNjUuMDYgNDgwLjQ3IDE3MS4xNlE0ODQuMjggMTc3LjI1IDQ4OS42NyAxNzkuOTVRNDk1LjA2IDE4Mi42NCA1MDAuOTIgMTgyLjY0UTUwNi43OCAxODIuNjQgNTEyLjUyIDE3OS45NVE1MTguMjcgMTc3LjI1IDUyMS43OCAxNzEuODZRNTI1LjMwIDE2Ni40NyA1MjUuMzAgMTU2LjYzTDUyNS4zMCA4NS44NEw1NDQuNjMgODUuODRMNTQ0LjYzIDE1OC4yN1E1NDQuNjMgMTcwLjkyIDUzOS4xMyAxODAuNTNRNTMzLjYyIDE5MC4xNCA1MjMuNzEgMTk1LjQ3UTUxMy44MSAyMDAuODAgNTAwLjkyIDIwMC44ME01NjQuNTUgMTk4LjcwTDU2NC40NCAxODUuOTJMNjI2LjMxIDEwMy44OUw1NjcuMTMgMTAzLjg5TDU2Ny4xMyA4NS44NEw2NTMuNzMgODUuODRMNjUzLjczIDk4LjYyTDU5MS44NiAxODAuNjVMNjU1LjE0IDE4MC42NUw2NTUuMTQgMTk4LjcwTDU2NC41NSAxOTguNzBNNjg3LjcyIDE5OC43MEw2ODcuNzIgODUuODRMNzA3LjE3IDg1Ljg0TDcwNy4xNyAxOTguNzBMNjg3LjcyIDE5OC43ME02OTcuNTYgNjQuOThRNjkyLjE3IDY0Ljk4IDY4OC4yNSA2MS4xOFE2ODQuMzIgNTcuMzcgNjg0LjMyIDUyLjA5UTY4NC4zMiA0Ni41OSA2ODguMjUgNDIuODRRNjkyLjE3IDM5LjA5IDY5Ny41NiAzOS4wOVE3MDIuOTUgMzkuMDkgNzA2Ljc2IDQyLjg0UTcxMC41NyA0Ni41OSA3MTAuNTcgNTIuMDlRNzEwLjU3IDU3LjM3IDcwNi43MCA2MS4xOFE3MDIuODQgNjQuOTggNjk3LjU2IDY0Ljk4TTc1Mi45OSAxOTguNzBMNzUyLjk5IDEwMy44OUw3MzQuMDEgMTAzLjg5TDczNC4wMSA4NS44NEw3NTIuOTkgODUuODRMNzUyLjk5IDUxLjA0UTc1Mi45OSA0MC4zOCA3NTcuMTUgMzIuNDZRNzYxLjMxIDI0LjU1IDc2OC45MyAyMC4yOFE3NzYuNTUgMTYgNzg2LjYzIDE2UTc5MS40MyAxNiA3OTUuNTkgMTYuOTRRNzk5Ljc1IDE3Ljg4IDgwMS45OCAxOS40MEw4MDEuOTggMzguODVRNzk5LjQwIDM2Ljg2IDc5NS44OCAzNS42OVE3OTIuMzcgMzQuNTIgNzg4Ljk3IDM0LjUyUTc4MS41OSAzNC41MiA3NzcuMTMgMzkuNzNRNzcyLjY4IDQ0Ljk1IDc3Mi42OCA1My41MEw3NzIuNjggODUuODRMODAyLjQ1IDg1Ljg0TDgwMi40NSAxMDMuODlMNzcyLjY4IDEwMy44OUw3NzIuNjggMTk4LjcwTDc1Mi45OSAxOTguNzBNODIyLjEzIDI1Ni4zNUw4MjIuMTMgMjM3LjEzUTgzMC4yMiAyMzcuMTMgODMzLjUwIDIzNS4wMlE4MzYuMzEgMjMzLjE1IDgzOS4yNCAyMjZMODUwLjYxIDE5OC43MEw4MDQuNzkgODUuODRMODI2LjcwIDg1Ljg0TDg2MS44NiAxNzQuMDlMODk1LjAyIDg1Ljg0TDkxNy4xNyA4NS44NEw4NTYuODIgMjM1LjYxUTg1Mi4xMyAyNDUuMjIgODQ0Ljg3IDI1MC42MVE4MzYuNjYgMjU2LjM1IDgyMi4xMyAyNTYuMzUiIGZpbGw9IiNGRkZGRkYiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIxMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+\")!important;background-repeat:no-repeat!important;background-position:left center!important;background-size:contain!important;width:82px!important;height:24px!important;font-size:0!important;color:transparent!important;}.NavBar__brand.icon-brand-medium::before{content:none!important;background:none!important;-webkit-mask:none!important;mask:none!important;}",
     // dark scrollbars app-wide (replaces the default light/white native ones so they match the theme).

@@ -46,6 +46,14 @@ body,
   color: #26A17B !important;
   fill: #26A17B !important;
 }
+/* The icon-accent rule above also recolours the play/pause glyph inside the accent-filled round
+   button, turning it accent-on-accent - an invisible triangle inside a solid circle. Reassert the
+   button's own white foreground (higher specificity than the icon rule so it wins). */
+.ButtonRoundPrimary[class*="icon-"],
+.ButtonRoundPrimary[class*="icon-"]::before {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
 [class*="ButtonFavorite"] {
   color: #26A17B !important;
   fill: #26A17B !important;

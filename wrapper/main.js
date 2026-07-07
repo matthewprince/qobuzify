@@ -12,7 +12,7 @@
 //      (the desktop copies it into the app's dist dir; here we intercept and serve it).
 //   3. Sets backgroundThrottling:false + disables native-window-occlusion so the lyrics
 //      render loop never freezes when the window is hidden (a free fix vs the desktop hack).
-const { app, BrowserWindow, session } = require("electron");
+const { app, BrowserWindow, session, shell } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -24,6 +24,17 @@ const path = require("path");
 // GPU; launched from a real session the GPU is fine.)
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 app.commandLine.appendSwitch("no-sandbox");
+// Some Linux setups (reported on Arch) crash the GPU process on launch or login with the GPU sandbox
+// on. Dropping just the GPU sandbox keeps hardware acceleration but avoids that crash; it's a no-op
+// elsewhere. (`no-sandbox` above covers the renderer/AppImage side.)
+if (process.platform === "linux") app.commandLine.appendSwitch("disable-gpu-sandbox");
+
+// The qz-state.json probe loop below is a dev-only verification channel. A shipped build must NOT run
+// a setInterval that calls executeJavaScript on the renderer: if it fires while the window is tearing
+// down (clicking X to quit) Electron can segfault mid-teardown on Linux, which is the reported
+// "crashed when clicking X" bug. Gate the whole diagnostics path behind QZ_DEBUG so it never runs for
+// end users.
+const DEBUG = !!process.env.QZ_DEBUG;
 
 const PARTITION = "persist:qobuz"; // keep the Qobuz login across runs
 // Baked at build time by prebuild.js so the packaged app carries no ../ Qobuzify source. The preload
@@ -39,10 +50,13 @@ const STATE_FILE = path.join(__dirname, "qz-state.json");
 const state = { stage: "init", vendorPort: 0, probes: [] };
 function saveState(patch) {
   Object.assign(state, patch);
+  if (!DEBUG) return; // no state-file writes (or the probe loop that feeds them) in a shipped build
   try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch (_) {}
 }
 
 let vendorPort = 0;
+let win = null;        // module-scoped so the lifecycle handlers can null it out on close
+let probeTimer = null; // dev-only diagnostics interval; cleared on window close so it can't outlive it
 
 // A tiny loopback server for the extension vendor bundles. http://127.0.0.1 is treated as a
 // trustworthy origin, so an https page can load these without a mixed-content block.
@@ -98,7 +112,7 @@ async function createWindow() {
     cb({});
   });
 
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1440,
     height: 900,
     backgroundColor: "#0d0d10",
@@ -118,10 +132,22 @@ async function createWindow() {
   });
   saveState({ stage: "window-created" });
 
+  // Open external links (Qobuz "open in browser" links, any auth popup, help pages) in the user's real
+  // browser instead of spawning an in-app child window. Besides being the right behaviour, an unhandled
+  // popup window is one more thing that can crash the shell on Linux, so deny it outright.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
+    return { action: "deny" };
+  });
+
+  // Clean lifecycle: clear the (dev-only) probe interval and drop the window reference when it closes,
+  // so nothing runs against a destroyed webContents during teardown.
+  win.on("closed", () => { if (probeTimer) { clearInterval(probeTimer); probeTimer = null; } win = null; });
+
   // Recover if the app ever restores a dead route: /foryou is a fake overlay route (the For You
   // nav opens an overlay, it never really navigates there), so a persisted /foryou lands on
   // /error/404 on next launch. Bounce any such route back to /discover once.
-  let recovered = false;
+  let recovered = false, crashReloads = 0, crashResetT = null;
   win.webContents.on("did-finish-load", () => {
     const u = win.webContents.getURL();
     saveState({ stage: "loaded", url: u.slice(0, 60) });
@@ -137,32 +163,43 @@ async function createWindow() {
   // minutes in; log why and reload so the window comes back instead of staying blank/dead.
   win.webContents.on("render-process-gone", (_e, details) => {
     saveState({ stage: "render-gone", reason: details && details.reason, exitCode: details && details.exitCode });
-    try { win.webContents.reload(); } catch (_) {}
+    // Reload to recover, but cap it: if the renderer keeps dying faster than it can stay up (a login
+    // that crashes on every attempt), stop reloading instead of looping - that loop is what reads as
+    // "crashed twice". The counter resets once the renderer survives 15s, so occasional crashes over a
+    // long session still self-heal.
+    if (win && crashReloads++ < 5) {
+      try { win.webContents.reload(); } catch (_) {}
+      clearTimeout(crashResetT);
+      crashResetT = setTimeout(() => { crashReloads = 0; }, 15000);
+    }
   });
   win.webContents.on("unresponsive", () => {
     saveState({ stage: "unresponsive" });
-    try { win.webContents.reload(); } catch (_) {}
+    try { if (win) win.webContents.reload(); } catch (_) {}
   });
   win.webContents.on("responsive", () => saveState({ stage: "responsive-again" }));
 
   win.loadURL("https://play.qobuz.com/discover");
 
-  // Report state periodically to the state file so the run is verifiable while it runs. Guarded so a
-  // slow/hung renderer doesn't pile up overlapping executeJavaScript calls (which itself adds pressure).
-  let probing = false;
-  setInterval(async () => {
-    if (probing) return;
-    probing = true;
-    try {
-      const v = await win.webContents.executeJavaScript(PROBE, true);
-      const probes = state.probes.concat([v]).slice(-3);
-      saveState({ stage: "running", probes });
-    } catch (e) {
-      saveState({ stage: "probe-error", error: e && e.message });
-    } finally {
-      probing = false;
-    }
-  }, 5000);
+  // Dev-only: report state to the file every few seconds so a headless/CDP run is verifiable. This
+  // never runs in a shipped build (see the DEBUG note at the top) - an executeJavaScript firing while
+  // the window is being destroyed is what segfaults the app on Linux when you click X.
+  if (DEBUG) {
+    let probing = false;
+    probeTimer = setInterval(async () => {
+      if (probing || !win) return;
+      probing = true;
+      try {
+        const v = await win.webContents.executeJavaScript(PROBE, true);
+        const probes = state.probes.concat([v]).slice(-3);
+        saveState({ stage: "running", probes });
+      } catch (e) {
+        saveState({ stage: "probe-error", error: e && e.message });
+      } finally {
+        probing = false;
+      }
+    }, 5000);
+  }
 }
 
 app.whenReady().then(async () => {

@@ -20,7 +20,7 @@ const FEATURES = [
 const STEPS = [
   { n: "1", title: "Install", body: "One command patches your local Qobuz. It backs up the originals and is fully reversible." },
   { n: "2", title: "Theme", body: "In Qobuz, click your profile picture in the top-right and open the Marketplace, then pick from 10 themes. Switching is live, no relaunch." },
-  { n: "3", title: "Extend", body: "18 extensions ship on by default. Toggle any of them in that same Marketplace, or open Qobuzify in the menu for settings." },
+  { n: "3", title: "Extend", body: "19 extensions ship on by default. Toggle any of them in that same Marketplace, or open Qobuzify in the menu for settings." },
 ];
 
 const EXTENSIONS = [
@@ -41,6 +41,7 @@ const EXTENSIONS = [
   { name: "Copy & Share", body: "Right-click any track to copy the artist and title, or a shareable link." },
   { name: "Content Filters", body: "Hide the top-nav items you never use for a cleaner, leaner Qobuz." },
   { name: "Simple Client", body: "Hide the Magazine and the editorial promos for a leaner Discover." },
+  { name: "Find Available Version", body: "When a track is greyed out in your country, find and play a version of the same song that streams for you." },
   { name: "Quality of Life", body: "The most-requested r/qobuz fixes: double-click to play, remembered views, and more." },
 ];
 
@@ -145,7 +146,7 @@ export default function App() {
       <section className="section" id="extensions">
         <h2>Extensions</h2>
         <p className="lede">
-          Eighteen extensions ship on by default. To manage them, click your profile picture in the
+          Nineteen extensions ship on by default. To manage them, click your profile picture in the
           top-right of Qobuz and open the Marketplace. Here is the full set.
         </p>
         <div className="features">
@@ -173,7 +174,7 @@ export default function App() {
             <span>·</span>
             <a href="/unban">Unblock IP</a>
           </div>
-          <div className="foot-info">{THEMES.length} themes · 18 extensions · qobuzify.app</div>
+          <div className="foot-info">{THEMES.length} themes · 19 extensions · qobuzify.app</div>
         </footer>
       </div>
     </>
