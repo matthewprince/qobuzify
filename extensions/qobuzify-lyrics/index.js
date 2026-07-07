@@ -1,19 +1,18 @@
 // Synced, word-by-word lyrics for Qobuz - a karaoke-style fill, an album-cover background, and
 // auto-scroll. It renders through a licensed UI bundle (passed in as `vendor`) sitting behind a
 // Qobuzify-API shim, and a Qobuz->Spotify ISRC bridge feeds Player.data.item.uri the mapped
-// spotify:track:<id>. The lyric data itself comes from open sources (NetEase Cloud Music yrc plus
-// LRCLIB). Opens from a player-bar button.
+// spotify:track:<id>. The lyric data is resolved server-side and delivered pre-aligned through the
+// Qobuzify lyrics API. Opens from a player-bar button.
 var Q = Qobuzify;
 var SP = Q.spotify || {}; // { client_id, client_secret } - local only (ISRC->Spotify bridge)
 var ST = Q.spotifyToken || null; // { access_token, expires_at } - Spotify user token for SL's real lyric sources
-var AP = Q.apple || null; // { developer_token, media_user_token, storefront } - Apple Music TTML (syllable + duet agents)
 function userToken() { return (ST && ST.access_token) || ""; }
 // only treat the token as usable for SL's gated Spotify source when it's a real, non-expired user
 // token (client-creds are ~140 chars and only give you static; user tokens are ~500+). otherwise we
-// fall back to the open NetEase/LRCLIB source, which needs no token at all and now syncs (the clock
+// fall back to the open lyric source, which needs no token at all and now syncs (the clock
 // is fixed). a usable user token either has a refresh_token (OAuth login, ~270+ chars) or is a long
 // desktop-grabbed token (~500). client-credentials tokens (~140, no refresh) get rejected, so we
-// fall back to the open NetEase source instead of getting static.
+// fall back to the open lyric source instead of getting static.
 function hasFreshUserToken() { return !!(ST && ST.access_token && (ST.refresh_token || ST.access_token.length > 300) && (!ST.expires_at || ST.expires_at > Date.now() + 60000)); }
 // renew the access token from the refresh token (OAuth PKCE, no secret) so the user logs in once
 // and synced lyrics keep working. updates ST in place.
@@ -98,7 +97,7 @@ function mapTrack(qt) {
   // only re-emit (to retry lyrics with that key) if we still have none and we're still on this
   // track - guards against a stale async overwrite landing after a song change.
   Q.api("track/get?track_id=" + qt.id).then(function (tr) {
-    if (tr && tr.isrc && curMeta && curMeta.name === qt.title) curMeta.isrc = tr.isrc; // Apple Music keys lyrics by ISRC
+    if (tr && tr.isrc && curMeta && curMeta.name === qt.title) curMeta.isrc = tr.isrc; // the resolver keys some lyrics by ISRC
     return isrcToSpotifyId(tr && tr.isrc, qt.title);
   }).then(function (spid) {
     if (spid && cur && curMeta && curMeta.name === qt.title) {
@@ -158,10 +157,9 @@ function qobuzSeek(ms) {
   } catch (e) {}
 }
 
-// --- lyrics source: LRCLIB (open, no auth) feeding SL's renderer ---
-// SL fetches from api.qzlyrics.org/query, which is auth-gated and ToS-restricted to their
-// official client. so we intercept that fetch and instead hand back LRCLIB lyrics packed into the
-// exact shape SL's lyricsPacker.unpack() and renderer expect.
+// --- lyrics source: our own resolver feeding SL's renderer ---
+// SL fetches from api.qzlyrics.org/query; we intercept that fetch and instead hand back our own
+// lyrics packed into the exact shape SL's lyricsPacker.unpack() and renderer expect.
 var _origFetch = window.fetch.bind(window);
 
 // faithful port of SL's SLObjPack.pack() so SL's strict unpack() accepts our payload
@@ -204,22 +202,6 @@ function slPack(obj) {
   return [values, stream];
 }
 
-// parse LRC ([mm:ss.xx] text) into SL line objects (StartTime/EndTime in ms)
-function parseLRC(lrc, durationMs) {
-  var rx = /\[(\d+):(\d+)(?:[.:](\d+))?\]/g, lines = [];
-  (lrc || "").split(/\r?\n/).forEach(function (raw) {
-    var ms = [], m; rx.lastIndex = 0;
-    while ((m = rx.exec(raw))) { var cs = m[3] ? parseInt((m[3] + "000").slice(0, 3), 10) : 0; ms.push((parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000 + cs); }
-    var text = raw.replace(rx, "").trim();
-    ms.forEach(function (t) { lines.push({ Text: text, StartTime: t, EndTime: 0 }); });
-  });
-  lines.sort(function (a, b) { return a.StartTime - b.StartTime; });
-  for (var i = 0; i < lines.length; i++) lines[i].EndTime = i + 1 < lines.length ? lines[i + 1].StartTime : (durationMs || lines[i].StartTime + 5000);
-  return lines;
-}
-
-// LRCLIB matching: titles like "Levels (Radio Edit)" / "Take It Easy (2013 Remaster)"
-// miss an exact /api/get, so strip suffixes, relax album+duration, then search.
 function cleanTitle(s) {
   return (s || "")
     .replace(/\s*[\(\[][^)\]]*(remaster|remastered|radio edit|edit|version|mono|stereo|live|remix|feat\.?|ft\.?|with )[^)\]]*[\)\]]/gi, "")
@@ -234,388 +216,11 @@ function norm(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[̀-
 function titleMatch(a, b) { a = norm(cleanTitle(a)); b = norm(cleanTitle(b)); if (!a || !b) return false; return a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0; }
 // An artist string "matches" if any 3+ char word of the wanted artist appears in the candidate's.
 function artistMatch(want, have) { want = norm(cleanArtist(want)); have = norm(have); if (!want || !have) return false; if (have.indexOf(want) >= 0 || want.indexOf(have) >= 0) return true; return want.split(" ").some(function (w) { return w.length > 2 && have.indexOf(w) >= 0; }); }
-function lrGet(track, artist, album, dur) {
-  var u = "https://lrclib.net/api/get?track_name=" + encodeURIComponent(track) + "&artist_name=" + encodeURIComponent(artist);
-  if (album) u += "&album_name=" + encodeURIComponent(album);
-  if (dur) u += "&duration=" + dur;
-  return _origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
-}
-function lrSearch(track, artist) {
-  return _origFetch("https://lrclib.net/api/search?track_name=" + encodeURIComponent(track) + "&artist_name=" + encodeURIComponent(artist))
-    .then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
-}
-function lrclibFetch(track) {
-  var dur = Math.round((track.durationMs || 0) / 1000);
-  var ct = cleanTitle(track.name), ca = cleanArtist(track.artist);
-  var ok = function (h) { return h && h.syncedLyrics; };
-  return lrGet(track.name, track.artist, track.album, dur).then(function (h) {
-    if (ok(h)) return h;
-    return lrGet(ct, ca, track.album, dur).then(function (h2) {
-      if (ok(h2)) return h2;
-      // Search, but VALIDATE the pick by duration + title - never a blind res[0]
-      // (that loose fallback is what tied lyrics to the wrong song).
-      return lrSearch(ct, ca).then(function (res) {
-        if (!res || !res.length) return null;
-        var v = res.filter(function (x) { return x.syncedLyrics && (!dur || Math.abs((x.duration || 0) - dur) <= 4) && titleMatch(track.name, x.trackName); });
-        return v[0] || null;
-      });
-    });
-  }).catch(function () { return null; });
-}
-
-function buildSLLyrics(ll, durationMs) {
-  if (!ll) return null;
-  if (ll.syncedLyrics) { var content = parseLRC(ll.syncedLyrics, durationMs); if (content.length) return { Type: "Line", StartTime: content[0].StartTime, Content: content, classes: "", styles: {}, source: "spl" }; }
-  if (ll.plainLyrics) return { Type: "Static", StartTime: 0, Lines: ll.plainLyrics.split(/\r?\n/).map(function (t) { return { Text: t }; }) };
-  return null;
-}
-
-// --- NetEase Cloud Music public API: word-by-word (yrc) -> SL Syllable mode ---
-var NE_HDR = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", Referer: "https://music.163.com" };
-// Return ALL plausible NCM ids for a track, ranked best-first: title+artist+duration
-// matches before title+duration-only. Returning several (not one) matters because
-// different NetEase releases of the same song differ - one pressing may carry
-// word-by-word yrc while the top result only has line-level lrc, so the resolver
-// scans candidates and prefers whichever has word-by-word.
-function neteaseSearchIds(track) {
-  var q = (track.name || "") + " " + (track.artist || "");
-  return _origFetch("https://music.163.com/api/search/get?type=1&limit=10&s=" + encodeURIComponent(q), { headers: NE_HDR })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) {
-      var songs = j && j.result && j.result.songs; if (!songs || !songs.length) return [];
-      var durS = Math.round((track.durationMs || 0) / 1000);
-      var strong = [], weak = []; // strong = title+artist+duration; weak = title+duration only
-      for (var i = 0; i < songs.length; i++) {
-        var s = songs[i];
-        if (durS && Math.abs(Math.round((s.duration || 0) / 1000) - durS) > 3) continue;
-        if (!titleMatch(track.name, s.name)) continue;
-        var sArtists = (s.artists || []).map(function (a) { return a.name; }).join(" ");
-        (artistMatch(track.artist, sArtists) ? strong : weak).push(s.id);
-      }
-      return strong.concat(weak);
-    }).catch(function () { return []; });
-}
-// first candidate only (used by the neMatch debug hook)
-function neteaseSearch(track) { return neteaseSearchIds(track).then(function (ids) { return ids[0] || null; }); }
-// the live Spotify id our ISRC bridge mapped onto the current track (for spotify-lyrics)
 function currentSpotifyId() { try { var m = /^spotify:track:([A-Za-z0-9]+)/.exec((cur && cur.uri) || ""); return m ? m[1] : null; } catch (e) { return null; } }
-function neteaseLyric(id) {
-  return _origFetch("https://music.163.com/api/song/lyric/v1?id=" + id + "&lv=-1&kv=-1&tv=-1&yv=-1&cp=false", { headers: NE_HDR })
-    .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
-}
-
-// --- AMLL TTML DB: CC0 public-domain, hand-authored lyrics (the same database the renderer's
-// "community" lyrics came from) ---
-// The DB cross-indexes each song under "ncm-lyrics/<NCM id>" and "spotify-lyrics/<22-char Spotify
-// id>", so we can key it by either - and the Spotify id (from our ISRC bridge) sidesteps the
-// ASCII-only NetEase title search. we fetch the canonical .ttml (word-by-word + duet agents + bg
-// vocals; AMLL is dropping the .yrc/.lrc derivatives) and parse it, with .yrc as a fallback while it
-// lasts. jsDelivr first (fast, cached, no token), raw GitHub as a fallback.
-function dbFetchText(urls, i) {
-  if (i >= urls.length) return Promise.resolve(null);
-  return _origFetch(urls[i]).then(function (r) { return r.ok ? r.text() : null; })
-    .then(function (t) { return t || dbFetchText(urls, i + 1); })
-    .catch(function () { return dbFetchText(urls, i + 1); });
-}
-function amllDbLyrics(folder, id) {
-  if (!id) return Promise.resolve(null);
-  var base = "https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/" + folder + "/" + id;
-  var raw = "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main/" + folder + "/" + id;
-  return dbFetchText([base + ".ttml", raw + ".ttml"], 0).then(function (ttml) {
-    var ly = ttml && parseTTML(ttml);
-    if (ly) return ly;
-    return dbFetchText([base + ".yrc", raw + ".yrc"], 0).then(function (yrc) {
-      return (yrc && /^\[\d+,\d+\]/m.test(yrc)) ? buildSyllable(yrc) : null;
-    });
-  });
-}
-
-// --- Apple Music: the best source - hand-timed syllable TTML with real duet agents, the format
-// AMLL emulates ---
-// Keyed by ISRC (exact). It needs the user's own developer + media-user tokens (AP), and a
-// main-process header rewrite supplies the Origin amp-api wants (the renderer can't set it).
-// ISRC -> catalog search -> song id -> syllable-lyrics TTML -> parseTTML.
-function appleHeaders() { return { Authorization: "Bearer " + AP.developer_token, "Music-User-Token": AP.media_user_token }; }
-function appleTTMLById(sf, H, id) {
-  return _origFetch("https://amp-api.music.apple.com/v1/catalog/" + sf + "/songs/" + id + "/syllable-lyrics", { headers: H })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j2) { var t = j2 && j2.data && j2.data[0] && j2.data[0].attributes && j2.data[0].attributes.ttml; return t ? parseTTML(t) : null; });
-}
-function appleLyrics(isrc) {
-  if (!AP || !AP.developer_token || !AP.media_user_token || !isrc) return Promise.resolve(null);
-  var sf = AP.storefront || "us", H = appleHeaders();
-  return _origFetch("https://amp-api.music.apple.com/v1/catalog/" + sf + "/songs?filter[isrc]=" + encodeURIComponent(isrc), { headers: H })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) { var id = j && j.data && j.data[0] && j.data[0].id; return id ? appleTTMLById(sf, H, id) : null; })
-    .catch(function () { return null; });
-}
-// Apple by NAME+ARTIST: fallback when the track's ISRC isn't in Apple's catalog (common for
-// remasters/re-releases whose ISRC differs from Apple's copy - e.g. Pink Floyd "Money"). Lyrics
-// are identical recording-to-recording, so any same-song+artist Apple match yields clean syllable
-// TTML (fixes NetEase's rough word spacing). Require BOTH title and artist to match (so a same-
-// titled different song can't win); prefer the closest duration.
-function appleSearchLyrics(track) {
-  if (!AP || !AP.developer_token || !AP.media_user_token || !track || !track.name) return Promise.resolve(null);
-  var sf = AP.storefront || "us", H = appleHeaders();
-  var term = encodeURIComponent(((track.name || "") + " " + (track.artist || "")).trim());
-  return _origFetch("https://amp-api.music.apple.com/v1/catalog/" + sf + "/search?types=songs&limit=12&term=" + term, { headers: H })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) {
-      var songs = (j && j.results && j.results.songs && j.results.songs.data) || [];
-      var cand = songs.map(function (s) {
-        var a = s.attributes || {};
-        var dd = (track.durationMs && a.durationInMillis) ? Math.abs(a.durationInMillis - track.durationMs) : 1e9;
-        return { id: s.id, ok: titleMatch(track.name, a.name || "") && artistMatch(track.artist || "", a.artistName || ""), dd: dd };
-      }).filter(function (c) { return c.ok; }).sort(function (x, y) { return x.dd - y.dd; });
-      return cand.length ? appleTTMLById(sf, H, cand[0].id) : null;
-    }).catch(function () { return null; });
-}
-// yrc line: [startMs,durMs](wMs,wDurMs,0)word (wMs,wDurMs,0)word ...
-// The token text keeps its trailing space (the regex captures up to the next "(").
-// Forward word-break marker (matches the bundle + Apple's collectTTMLSyl): IsPartOfWord=true means
-// "this syllable joins the next one" (no space after it). We work out newWord per token (does this
-// token start a new word) and then set the previous token's IsPartOfWord = !newWord. It was written
-// backward (space-before) before - fine for all-separate words, but it broke joins: NetEase splits
-// "We're" into "We" + "'" + "re", which backward-rendered as "We 'renot". Same with melisma bits ("h"+"ead").
-function parseYRC(yrc) {
-  var lines = [];
-  (yrc || "").split(/\r?\n/).forEach(function (raw) {
-    var m = raw.match(/^\[(\d+),(\d+)\]/); if (!m) return;
-    var lineStart = parseInt(m[1], 10), lineDur = parseInt(m[2], 10);
-    var syl = [], re = /\((\d+),(\d+),\d+\)([^(\n]*)/g, w, prevEndedSpace = true;
-    while ((w = re.exec(raw))) {
-      var rawText = w[3], text = rawText.replace(/^\s+|\s+$/g, "");
-      if (text === "") { prevEndedSpace = true; continue; } // a space-only token = word boundary
-      var st = parseInt(w[1], 10), en = st + parseInt(w[2], 10);
-      // Sentence/closing punctuation (, . : ; ! ? ...) is emitted as its OWN timed
-      // token; the renderer then groups it as a separate "word", leaving a stray space
-      // ("mind :", "me ,"). Merge it onto the previous syllable so it hugs the word,
-      // and treat what follows as a fresh word (such punctuation is followed by space).
-      if (syl.length && /^[.,;:!?…)\]。、，；：！？]+$/.test(text)) {
-        var p = syl[syl.length - 1];
-        p.Text += text; p.EndTime = en;
-        prevEndedSpace = true;
-        continue;
-      }
-      // A token that LEADS with closing punctuation (",in") hugs the punctuation onto the
-      // previous word, then the remainder is a fresh word ("ead," + " in" -> "head, in").
-      if (syl.length) { var lp = text.match(/^([.,;:!?…)\]，。、；：！？]+)([\s\S]+)$/); if (lp) { syl[syl.length - 1].Text += lp[1]; text = lp[2].replace(/^\s+/, ""); prevEndedSpace = true; } }
-      // NetEase yrc spacing is unreliable: some words jam (no trailing space -> "don'tknow",
-      // "thatass") while OTHER words are split into syllables for melisma timing ("h"+"ead",
-      // "mistak"+"es"). We can't dictionary-check, but the tell is length: two adjacent
-      // no-space tokens are separate words only if BOTH are >=3 chars - melisma fragments are
-      // short ("h","es","ed"), real words ("know","that","baby") aren't. yrc-spaced tokens and
-      // closing punctuation are already word-ends via prevEndedSpace.
-      var prevWord = syl.length ? syl[syl.length - 1].Text : "";
-      var bothWords = prevWord.length >= 3 && text.length >= 3 && /[A-Za-z]$/.test(prevWord) && /^[A-Za-z]/.test(text);
-      // Contractions: NetEase splits "We're" into "We" + "'" + "re" (apostrophe is its OWN token), or
-      // "Don't" into "Don " + "'t". A LONE apostrophe must join both sides ("We'"+"re"); an ENCLITIC
-      // ('t 's 're 've 'll 'd 'm as one token) hugs the previous word and lets what follows be fresh.
-      // ('em / 'cause / 'til stay standalone: not matched.)
-      var isLoneApos = /^['’]$/.test(text);
-      var isEnclitic = syl.length > 0 && /^['’](t|s|re|ve|ll|d|m)$/i.test(text);
-      // Two more NetEase jamming tells: a lowercase->Capital seam means two words got jammed
-      // ("AndI"->"And I", "n*ggaMax"->"n*gga Max"). (A token ending in an apostrophe is handled below
-      // as a word-end: g-drop "runnin'", possessive "dogs'".)
-      var camelSeam = /[a-z]$/.test(prevWord) && /^[A-Z]/.test(text);
-      // Censored words: NetEase emits each "*" as its own space-terminated token ("* * * * ed") plus a
-      // short suffix after the run. Cluster consecutive asterisks + a <=3-char lowercase suffix into ONE
-      // word so "****ed" renders together, not "* * * * ed" (a real word after the run keeps its space).
-      var isStar = /^\*+$/.test(text), prevIsStar = /^\*+$/.test(prevWord);
-      var starCluster = (isStar && prevIsStar) || (prevIsStar && /^[a-z]{1,3}$/.test(text));
-      var newWord = (isLoneApos || isEnclitic || starCluster) ? false : (prevEndedSpace || /^\s/.test(rawText) || bothWords || camelSeam);
-      syl.push({ Text: text, StartTime: st, EndTime: en, IsPartOfWord: false });
-      if (syl.length >= 2) syl[syl.length - 2].IsPartOfWord = !newWord; // FORWARD: prev joins this token iff this isn't a new word
-      prevEndedSpace = isLoneApos ? false : (isEnclitic ? true : /[\s,.;:!?…)\]，。、；：！？'’]$/.test(rawText));
-    }
-    if (syl.length) lines.push({ Type: "Vocal", OppositeAligned: false, Lead: { StartTime: lineStart, EndTime: lineStart + lineDur, Syllables: syl } });
-  });
-  return lines;
-}
-// Reconstruct a line's display text from its syllables (respecting word breaks).
-function lineText(line) {
-  var syl = (line.Lead && line.Lead.Syllables) || [];
-  return syl.map(function (s) { return s.Text + (s.IsPartOfWord ? "" : " "); }).join("");
-}
-// Duet/section alignment: many lyrics mark who sings with a standalone label line
-// ("Machine Gun Kelly:", "Blackbear:"). Assign each singer an alternating side (1st
-// left, 2nd right, ...) so a two-part song reads like a back-and-forth. The bundle
-// right-aligns lines flagged OppositeAligned (and adds .HasDuetLines). Only engages
-// when there are >=2 distinct singers, so a lone stray "X:" line can't skew a solo.
-var DUET_LABEL = /^[A-Za-z][A-Za-z0-9 .'&!-]{0,28}:$/;
-function applyDuetAlignment(lines) {
-  var singers = {}, order = 0, curAlign = false;
-  for (var i = 0; i < lines.length; i++) {
-    var t = lineText(lines[i]).replace(/\s+/g, " ").trim();
-    if (t && DUET_LABEL.test(t) && t.split(" ").length <= 5) {
-      var name = t.slice(0, -1).trim().toLowerCase();
-      if (singers[name] === undefined) { singers[name] = (order % 2 === 1); order++; }
-      curAlign = singers[name];
-    }
-    lines[i].OppositeAligned = curAlign;
-  }
-  if (Object.keys(singers).length < 2) lines.forEach(function (l) { l.OppositeAligned = false; });
-  return lines;
-}
-function buildSyllable(yrc) {
-  var content = parseYRC(yrc); if (!content.length) return null;
-  content.forEach(splitBackgroundVocals);
-  applyDuetAlignment(content);
-  return { Type: "Syllable", StartTime: content[0].Lead.StartTime, Content: content, classes: "", styles: {}, source: "spl" };
-}
-// NetEase yrc puts backing-vocal echoes inline in parentheses ("...obsessed (Obsessed)").
-// Move any parenthesized run into line.Background so the bundle renders it as the smaller
-// offset sub-text (same shape parseTTML builds for Apple x-bg vocals). Parens are stripped.
-function splitBackgroundVocals(line) {
-  var syl = line.Lead && line.Lead.Syllables; if (!syl || syl.length < 2) return;
-  var lead = [], bg = [], depth = 0;
-  for (var i = 0; i < syl.length; i++) {
-    var s = syl[i], opens = (s.Text.match(/[(（]/g) || []).length, closes = (s.Text.match(/[)）]/g) || []).length; // include NetEase fullwidth parens （ ）
-    if (depth > 0 || opens > 0) { bg.push(s); depth = Math.max(0, depth + opens - closes); }
-    else lead.push(s);
-  }
-  if (!bg.length || !lead.length) return; // need both a real main line AND a parenthesized echo
-  bg = stripBgParens(bg); if (!bg.length) return;
-  lead[lead.length - 1].IsPartOfWord = false;
-  bg[bg.length - 1].IsPartOfWord = false;
-  line.Lead.Syllables = lead;
-  line.Lead.EndTime = lead[lead.length - 1].EndTime;
-  line.Background = [{ StartTime: bg[0].StartTime, EndTime: bg[bg.length - 1].EndTime, Syllables: bg }];
-}
-// Strip the wrapping parens Apple/NetEase put around backing-vocal echoes so the sub-line reads
-// "Fine, fine, fine" not "(Fine, fine, fine)": trim a leading "(" off the first syllable and a
-// trailing ")" off the last, then drop any syllable left empty (the survivors keep the run timing).
-function stripBgParens(bg) {
-  if (!bg || !bg.length) return bg;
-  // strip ALL parens (ASCII + fullwidth) from every syllable, so a multi-echo line like
-  // "(Kiss), (Dub)" reads "Kiss, Dub" not "Kiss ）, （ Dub" (only outer-stripping left the middle ones)
-  for (var i = 0; i < bg.length; i++) bg[i].Text = bg[i].Text.replace(/[\(（\)）]/g, "");
-  bg[0].Text = bg[0].Text.replace(/^\s+/, "");
-  bg[bg.length - 1].Text = bg[bg.length - 1].Text.replace(/\s+$/, "");
-  var out = bg.filter(function (s) { return s.Text.replace(/^\s+|\s+$/g, "") !== ""; });
-  return out.length ? out : bg;
-}
-// A line that is ENTIRELY a parenthesized echo ("( And I need you )") has no lead OUTSIDE the parens,
-// so splitBackgroundVocals can't split it into lead+bg - just strip the wrapping parens so it doesn't
-// render "( ... )". (Kept in the main line; it's already a standalone echo line.)
-function stripWrapParens(line) {
-  var syl = line.Lead && line.Lead.Syllables; if (!syl || !syl.length) return;
-  var joined = syl.map(function (s) { return s.Text; }).join("").trim();
-  if (/^[\(（][\s\S]*[\)）]$/.test(joined)) line.Lead.Syllables = stripBgParens(syl);
-}
-// NetEase yrc often terminates each line with a stray fullwidth comma/period ("，" "。" "、"), which
-// renders as a dangling "," and also breaks the fully-parenthesized-echo test above ("（...）" arrives
-// as "（...），"). Trim a trailing run of fullwidth CJK terminators (+ spaces) off the last syllable,
-// dropping any syllable left empty. ASCII punctuation and mid-line marks are untouched.
-function trimLineTerminator(line) {
-  var syl = line.Lead && line.Lead.Syllables; if (!syl || !syl.length) return;
-  while (syl.length) {
-    var last = syl[syl.length - 1];
-    last.Text = last.Text.replace(/[，。、；：\s]+$/, "");
-    if (last.Text === "") { syl.pop(); continue; }
-    break;
-  }
-}
-// A held note (or a last word running into the following instrumental) can get a 10-12s syllable from
-// NetEase, so the karaoke fill creeps imperceptibly and looks stuck ("Out of My League": the "dream..."
-// syllable was 11-12s). Cap any single syllable's fill span at 4s (above every real sung note, below the
-// instrumental-folded ones) so it fills promptly then holds lit. Runs pre-toSeconds, so times are in MS.
-function capSyllables(line) {
-  var CAP = 4000;
-  var syl = line.Lead && line.Lead.Syllables;
-  if (syl) for (var i = 0; i < syl.length; i++) { if (syl[i].EndTime - syl[i].StartTime > CAP) syl[i].EndTime = syl[i].StartTime + CAP; }
-  if (line.Background) line.Background.forEach(function (b) { (b.Syllables || []).forEach(function (s) { if (s.EndTime - s.StartTime > CAP) s.EndTime = s.StartTime + CAP; }); });
-}
-
-// --- TTML (Apple Music / AMLL canonical) -> SL Syllable ---
-// Word-by-word from <span begin end>, duet sides from ttm:agent (v1/v2), background vocals from
-// ttm:role="x-bg". AMLL is dropping the .yrc/.lrc derivatives, so .ttml is the source of truth - and
-// it's the same format Apple Music serves, so this one parser covers both. Parsed with the
-// renderer's DOMParser.
-function ttmlTime(s) {
-  if (s == null) return 0; s = ("" + s).trim(); if (!s) return 0;
-  if (/s$/i.test(s)) return Math.round(parseFloat(s) * 1000); // "12.3s"
-  var p = s.split(":"), sec = 0;
-  for (var i = 0; i < p.length; i++) sec = sec * 60 + (parseFloat(p[i]) || 0);
-  return Math.round(sec * 1000);
-}
-function ttmlAttr(el, name) { return el.getAttribute(name) || el.getAttribute("ttm:" + name) || el.getAttributeNS("http://www.w3.org/ns/ttml#metadata", name) || ""; }
-// Collect word syllables of a <p> (or an x-bg group) into `out`; nested x-bg -> `bgOut`.
-// IsPartOfWord is a FORWARD marker for the bundle: true = "this syllable joins the
-// NEXT (same word)". A syllable is part-of-word UNLESS a space follows it (a whitespace
-// text node, a leading space on the next span, or its own trailing space); the last
-// syllable of a line ends its word (set in parseTTML). A BACKWARD marker shifts every
-// word break by one on true syllable-split lyrics like Apple's ("grooving" -> "groo
-// vingup").
-function collectTTMLSyl(container, out, bgOut) {
-  var nodes = container.childNodes;
-  var endPrev = function () { if (out.length) out[out.length - 1].IsPartOfWord = false; };
-  for (var i = 0; i < nodes.length; i++) {
-    var n = nodes[i];
-    if (n.nodeType === 3) { if (/\s/.test(n.nodeValue || "")) endPrev(); continue; }
-    if (n.nodeType !== 1) continue;
-    var role = ttmlAttr(n, "role");
-    if (role === "x-bg") { if (bgOut) collectTTMLSyl(n, bgOut, null); endPrev(); continue; }
-    if (role === "x-translation" || role === "x-roman") continue;
-    if (n.getElementsByTagName("span").length) { collectTTMLSyl(n, out, bgOut); continue; } // nested syllables
-    var st = ttmlTime(n.getAttribute("begin")), en = ttmlTime(n.getAttribute("end"));
-    var raw = n.textContent || "";
-    if (/^\s/.test(raw)) endPrev(); // a space before this span ends the previous word
-    var text = raw.replace(/^\s+/, "").replace(/\s+$/, "");
-    if (!text) { endPrev(); continue; }
-    if (out.length && /^[.,;:!?…)\]。、，；：！？]+$/.test(text)) { out[out.length - 1].Text += text; out[out.length - 1].EndTime = en; out[out.length - 1].IsPartOfWord = false; continue; }
-    out.push({ Text: text, StartTime: st, EndTime: en, IsPartOfWord: !/\s$/.test(raw) });
-  }
-}
-function parseTTML(xml) {
-  if (!xml || xml.indexOf("<tt") === -1) return null;
-  var doc; try { doc = new DOMParser().parseFromString(xml, "application/xml"); } catch (e) { return null; }
-  if (!doc || doc.getElementsByTagName("parsererror").length) return null;
-  var ps = doc.getElementsByTagName("p"); if (!ps.length) return null;
-  var agentIdx = {}, agentN = 0, lines = [];
-  for (var i = 0; i < ps.length; i++) {
-    var p = ps[i], agent = ttmlAttr(p, "agent");
-    if (agent && agentIdx[agent] === undefined) agentIdx[agent] = agentN++;
-    var lead = [], bg = [];
-    collectTTMLSyl(p, lead, bg);
-    if (!lead.length) continue;
-    lead[lead.length - 1].IsPartOfWord = false; // last syllable always ends its word
-    if (bg.length) bg = stripBgParens(bg); // Apple x-bg echoes come wrapped in parens - strip them
-    if (bg.length) bg[bg.length - 1].IsPartOfWord = false;
-    var ls = ttmlTime(p.getAttribute("begin")) || lead[0].StartTime, le = ttmlTime(p.getAttribute("end")) || lead[lead.length - 1].EndTime;
-    var line = { Type: "Vocal", OppositeAligned: (agentIdx[agent] || 0) % 2 === 1, Lead: { StartTime: ls, EndTime: le, Syllables: lead } };
-    if (bg.length) line.Background = [{ StartTime: bg[0].StartTime, EndTime: bg[bg.length - 1].EndTime, Syllables: bg }];
-    lines.push(line);
-  }
-  if (!lines.length) return null;
-  if (agentN < 2) lines.forEach(function (l) { l.OppositeAligned = false; }); // not a duet
-  return { Type: "Syllable", StartTime: lines[0].Lead.StartTime, Content: lines, classes: "", styles: {}, source: "spl" };
-}
-
-// Our parsers produce times in MS, but SL's applyer runs ConvertTime (x1000) on
-// them, i.e. it expects SECONDS. Convert every StartTime/EndTime ms -> s so the
-// animator's ms position matches; without this, lines time out hours in the future
-// and the active line/glow never advance (render works, sync doesn't).
-function toSeconds(ly) {
-  function div(o) {
-    if (!o || typeof o !== "object") return;
-    if (typeof o.StartTime === "number") o.StartTime = o.StartTime / 1000;
-    if (typeof o.EndTime === "number") o.EndTime = o.EndTime / 1000;
-    if (o.Lead) div(o.Lead);
-    ["Content", "Syllables", "Background"].forEach(function (k) { if (Array.isArray(o[k])) o[k].forEach(div); });
-  }
-  div(ly);
-  return ly;
-}
-
-// Cache a track's resolved lyrics so repeated fetches (SL re-queries on re-render /
-// track re-selection) return the SAME result instead of flickering between lyrics
-// and "no lyrics" when a source answers inconsistently. Only successes are cached,
-// so a track with no hit can still be retried later.
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
-var CACHE_VER = 10; // bumped 2026-07-05: reject wrong/reused-ISRC Spotify matches (a nightcore/bootleg ISRC was serving an unrelated song's word-by-word); invalidates the local cache so a bad match re-resolves
+var CACHE_VER = 11; // bumped 2026-07-07: match server PARSE_VER, drop entries cached with the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches (a nightcore/bootleg ISRC was serving an unrelated song's word-by-word); invalidates the local cache so a bad match re-resolves
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}
@@ -629,11 +234,9 @@ function saveCache() {
     try { var k2 = Object.keys(lsCache).sort(function (a, b) { return (lsCache[a].t || 0) - (lsCache[b].t || 0); }); for (var j = 0; j < Math.ceil(k2.length / 2); j++) delete lsCache[k2[j]]; localStorage.setItem(LS_KEY, JSON.stringify({ ver: CACHE_VER, songs: lsCache })); } catch (_) {}
   }
 }
-// --- Cloudflare proxy (api.qobuzify.app): shared D1 cache + server-side Apple/AMLL/LRCLIB
-// resolution. it's tried before the local resolver, so a warm (edge-cached) track loads in one fast
-// round-trip with no client-side parsing at all. on a proxy miss / no-lyrics / failure we fall back
-// to the full local resolver, which still has NetEase from the home IP (the proxy can't reach it
-// from CF egress). server output is byte-identical (same parse chain), already toSeconds'd + credited.
+// --- Cloudflare proxy (api.qobuzify.app): shared server-side cache + resolution. The client sends
+// track metadata and gets back pre-parsed, time-aligned lyrics plus a codename in a single
+// round-trip - no client-side parsing, and no upstream is ever contacted from the client.
 var PROXY_BASE = "https://api.qobuzify.app/v1/lyrics";
 var USE_PROXY = true; // __QZ_SL_DEBUG.setProxy(false) to force local-only for testing
 function proxyLyrics(track) {
@@ -650,17 +253,9 @@ function proxyLyrics(track) {
     return withTimeout(_origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }), 8000);
   } catch (e) { return Promise.resolve(null); }
 }
-// Proxy + hedged local resolve. the proxy fires first; if it comes back with lyrics fast (warm edge
-// / Apple) we're done with no local work. if the proxy is slow (>HEDGE_MS), or returns no-lyrics /
-// errors, we run the full local resolver in parallel and take whichever returns lyrics first. only a
-// non-null result wins early - a null waits for the other side - so a slow proxy never blocks and we
-// never serialise proxy-timeout then local (the old 10s worst case). local still has NetEase on the
-// home IP for tracks CF can't reach.
-// the proxy (api.qobuzify.app) is the only lyric source the client touches, so which upstream
-// actually served the lyrics (Apple/AMLL/NetEase/LRCLIB) never shows up in the network tab - the
-// proxy hands back only the codename. LOCAL_FALLBACK would let the client resolve directly on a proxy
-// miss, but that makes the direct upstream requests visible, so it's off by default.
-var LOCAL_FALLBACK = false;
+// Proxy-only resolve: the client asks the proxy and renders whatever it returns; a miss / no-lyrics
+// / error just yields null. The proxy (api.qobuzify.app) is the only lyric source the client
+// touches - it hands back just a codename, so no upstream is ever visible in the network tab.
 function lyrSpanSec(ly) { if (!ly || !ly.Content || !ly.Content.length) return 0; var l = ly.Content[ly.Content.length - 1]; return (l.Lead ? l.Lead.EndTime : l.EndTime) || 0; }
 function resolveLyrics(track) {
   var key = lyrKey(track), hit = lsCache[key];
@@ -670,23 +265,22 @@ function resolveLyrics(track) {
   // under Baby Keem's "Wolves" (83s) from before the client started sending duration.
   if (hit && hit.ly && track.durationMs && lyrSpanSec(hit.ly) * 1000 > track.durationMs + 10000) { delete lsCache[key]; saveCache(); hit = null; }
   if (hit && hit.ly) { hit.t = Date.now(); if (hit.src) curLyricSource = hit.src; return Promise.resolve(hit.ly); }
-  function local() { return resolveLyricsRaw(track).then(function (ly) { if (ly) { lsCache[key] = { ly: ly, src: curLyricSource, t: Date.now() }; saveCache(); } return ly; }); }
   return proxyLyrics(track).then(function (pr) {
     if (pr && pr.ok && pr.hasLyrics && pr.lyrics) {
       curLyricSource = pr.source || curLyricSource; // codename from the proxy (never the raw source)
-      // persist only high-confidence lyrics (the proxy sets pr.cacheable for Apple/Qz or word-by-word).
-      // line-level LRCLIB/NetEase results get shown but not cached, so they stay re-resolvable (and can
-      // upgrade to Qz/Apple on a later play) instead of getting locked into the local cache.
+      // persist only high-confidence lyrics (the proxy sets pr.cacheable for word-by-word / syllable).
+      // line-level results get shown but not cached, so they stay re-resolvable (and can upgrade to
+      // word-by-word on a later play) instead of getting locked into the local cache.
       if (pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, t: Date.now() }; saveCache(); }
       return pr.lyrics;
     }
-    return LOCAL_FALLBACK ? local() : null;
-  }).catch(function () { return LOCAL_FALLBACK ? local() : null; });
+    return null;
+  }).catch(function () { return null; });
 }
 
 // ---- Prefetch: warm the NEXT queued track's lyrics in the background so they're already cached
 // (instant) when it starts. Read the next play-queue item's trackId -> Qobuz track API for its
-// metadata (incl. ISRC -> exact Apple match) -> warm the proxy (populates D1 + our local cache).
+// metadata (incl. ISRC for an exact match) -> warm the proxy (populates D1 + our local cache).
 // Proxy-only + heavily guarded: fires 2.5s after a track change (never competes with the current
 // resolve), never touches playback, skips shuffle (next is unpredictable), and dedupes.
 var _prefetchTimer = null, _prefetchedKey = null;
@@ -711,120 +305,15 @@ function prefetchNext() {
       if (meta.durationMs) u += "&durationMs=" + meta.durationMs;
       if (meta.isrc) u += "&isrc=" + encodeURIComponent(meta.isrc);
       _origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (pr) {
-        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || "apple", t: Date.now() }; saveCache(); }
+        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || null, t: Date.now() }; saveCache(); }
       }).catch(function () {});
     }).catch(function () {});
   } catch (e) {}
 }
-// Race a promise against a timeout so one slow source can't stall the whole resolve
-// (NetEase's API in particular can hang for tens of seconds).
+// Race a promise against a timeout so one slow request can't stall the whole resolve
+// (an upstream can occasionally hang for tens of seconds).
 function withTimeout(p, ms) { return Promise.race([Promise.resolve(p), new Promise(function (r) { setTimeout(function () { r(null); }, ms); })]); }
 
-// resolve, word-by-word preferred, sources fired in PARALLEL so a song loads fast:
-//   1) AMLL TTML DB (CC0) - Spotify id + every NCM candidate at once; best key wins
-//   2) else NetEase lyrics for all candidates at once - prefer yrc, then lrc
-//   3) else LRCLIB (line/plain)
-// (Was sequential before: 5 DB tries + 4 NetEase fetches back-to-back = 10-40s/song.)
-function resolveOpen(track) { // open sources (AMLL DB + NetEase + LRCLIB); Apple is tried before this
-  var spid = currentSpotifyId();
-  return withTimeout(neteaseSearchIds(track), 7000).then(function (allIds) {
-    var ids = (allIds || []).slice(0, 3);
-    var dbJobs = [];
-    if (spid) dbJobs.push(withTimeout(amllDbLyrics("spotify-lyrics", spid), 6000).then(function (ly) { return { pri: 0, ly: ly }; }));
-    ids.forEach(function (id, i) { dbJobs.push(withTimeout(amllDbLyrics("ncm-lyrics", id), 6000).then(function (ly) { return { pri: 1 + i, ly: ly }; })); });
-    return Promise.all(dbJobs).then(function (rs) {
-      var hit = rs.filter(function (r) { return r.ly; }).sort(function (a, b) { return a.pri - b.pri; })[0];
-      if (hit) { curLyricSource = "amll"; return hit.ly; }
-      if (!ids.length) return null;
-      return Promise.all(ids.map(function (id) { return withTimeout(neteaseLyric(id), 6000); })).then(function (js) {
-        for (var i = 0; i < js.length; i++) { var j = js[i]; if (j && j.yrc && j.yrc.lyric) { var s = buildSyllable(j.yrc.lyric); if (s) { curLyricSource = "netease"; return s; } } }
-        for (var k = 0; k < js.length; k++) { var j2 = js[k]; if (j2 && j2.lrc && j2.lrc.lyric) { var c = parseLRC(j2.lrc.lyric, track.durationMs); if (c.length) { curLyricSource = "netease"; return { Type: "Line", StartTime: c[0].StartTime, Content: c, classes: "", styles: {}, source: "spl" }; } } }
-        return null;
-      });
-    });
-  }).then(function (ly) {
-    if (ly) return ly;
-    return lrclibFetch(track).then(function (ll) { var r = buildSLLyrics(ll, track.durationMs); if (r) curLyricSource = "lrclib"; return r; });
-  }).catch(function () { return lrclibFetch(track).then(function (ll) { var r = buildSLLyrics(ll, track.durationMs); if (r) curLyricSource = "lrclib"; return r; }).catch(function () { return null; }); });
-}
-// Apple Music TTML first (best quality + real duet agents), keyed by ISRC, otherwise the open
-// sources. toSeconds runs once, on the winner (the parsers emit ms; SL wants seconds). the ISRC is
-// fetched async in mapTrack, so if a lyric request beats it the isrc is null and we skip Apple (clean
-// spacing/timing) for the rougher NetEase. we wait briefly so Apple wins for the tracks it has - it
-// matters most on remasters and dialogue, where NetEase data is poor.
-function waitForIsrc(ms) {
-  return new Promise(function (res) {
-    var t0 = Date.now();
-    (function poll() {
-      if (curMeta && curMeta.isrc) return res(curMeta.isrc);
-      if (Date.now() - t0 > ms) return res(null);
-      setTimeout(poll, 150);
-    })();
-  });
-}
-// NetEase returns a stub for instrumentals / missing lyrics ("纯音乐, 请欣赏", "暂无歌词",
-// "no lyrics") - treat as no-lyrics so we don't render a Chinese placeholder.
-function isLyricPlaceholder(ly) {
-  if (!ly || !ly.Content || ly.Content.length > 4) return false;
-  var txt = ly.Content.map(function (l) { return l.Text || ((l.Lead && l.Lead.Syllables) || []).map(function (s) { return s.Text; }).join(""); }).join(" ");
-  return /纯音乐|純音樂|暂无歌词|暫無歌詞|no\s*lyric|instrumental/i.test(txt);
-}
-// NetEase yrc/lrc often prepend Chinese production-credit lines ("作词 : X", "作曲：Y",
-// "混音/母带：Z", "词：A 曲：B") that aren't lyrics. Drop any line that is such a credit:
-// a colon near the start whose label contains a known credit keyword - so a real lyric that
-// merely has a colon ("他说：你好") is KEPT. Western/Apple/AMLL lines never match.
-var CREDIT_KW = /(作词|作曲|编曲|改编|制作|出品|监制|混音|母带|和声|配唱|录音|演唱|制作人|文案|策划|统筹|发行|后期|吉他|贝斯|键盘|弦乐|鼓|词|曲|专辑|歌手|歌名)/;
-var CREDIT_EN = /^(album|artist|title|singer|written|compos|arrang|produc|mix|master|record|lyric|music|vocal|piano|keyboard|synth|guitar|bass|drum|program|engineer|perform|publish|copyright)/i;
-function isCreditLine(t) {
-  t = (t || "").replace(/^\s+/, "");
-  if (!t) return false;
-  // Structure/section tags NetEase ships as their own lines ("<VERSE 1: MICHAEL KOVACH>",
-  // "<CHORUS: MIKE & CHI-CHI>", "[Bridge]") aren't sung - drop them so the instrumental dots show
-  // in the gap instead. Whole-line < > or [ ] tags only; ( ) echoes are handled as background vocals.
-  if (/^[<＜\[［][\s\S]*[>＞\]］]\s*$/.test(t)) return true;
-  // NetEase metadata (the "Artist、Artist - Title" line and credit name-lists) uses the ideographic
-  // comma "、" (U+3001) as a separator; 2+ of them marks a list/title, never a real lyric line.
-  if ((t.match(/、/g) || []).length >= 2) return true;
-  // "<label>:" credit line - a Chinese label carrying a credit keyword, OR an English credit label
-  // ("Written by:", "Composed by:", "Piano:", "Programmer:", ...).
-  var m = t.match(/^([^\n:：]{0,22})[:：]/);
-  if (m) { var label = m[1]; if ((/[一-鿿]/.test(label) && CREDIT_KW.test(label)) || CREDIT_EN.test(label)) return true; }
-  return false;
-}
-function lineDisplayText(l) { return l.Text != null ? l.Text : ((l.Lead && l.Lead.Syllables) || []).map(function (s) { return s.Text; }).join(""); }
-function stripCredits(ly) {
-  if (!ly || !ly.Content || ly.Content.length < 2) return ly;
-  var kept = ly.Content.filter(function (l) { return !isCreditLine(lineDisplayText(l).replace(/^\s+/, "")); });
-  if (kept.length && kept.length < ly.Content.length) {
-    ly.Content = kept;
-    var first = kept[0];
-    ly.StartTime = (first.StartTime != null ? first.StartTime : (first.Lead && first.Lead.StartTime)) || ly.StartTime;
-  }
-  return ly;
-}
-function resolveLyricsRaw(track) {
-  return waitForIsrc(1800).then(function (isrc) {
-    return (isrc ? withTimeout(appleLyrics(isrc), 3500) : Promise.resolve(null))
-      .then(function (apl) {
-        if (apl) { curLyricSource = "apple"; return apl; }
-        // ISRC missed Apple (e.g. a remaster) -> try Apple by name+artist before the rougher
-        // open sources, since Apple's word boundaries are clean. Same song = same lyrics.
-        return withTimeout(appleSearchLyrics(track), 3500).then(function (aps) {
-          if (aps) { curLyricSource = "apple"; return aps; }
-          return resolveOpen(track);
-        }).catch(function () { return resolveOpen(track); });
-      })
-      .catch(function () { return resolveOpen(track); })
-      .then(function (ly) {
-        if (!ly || isLyricPlaceholder(ly)) return null;
-        ly = stripCredits(ly);
-        // parenthesized echoes -> Background sub-text for every source (Apple inline asides too, not
-        // just NetEase's buildSyllable pass); a fully-parenthesized line just has its parens stripped.
-        if (ly.Content) ly.Content.forEach(function (l) { trimLineTerminator(l); if (!l.Background) splitBackgroundVocals(l); if (!l.Background) stripWrapParens(l); capSyllables(l); });
-        return toSeconds(ly);
-      });
-  });
-}
 function markLyricsMode(type) {
   setTimeout(function () { var p = document.getElementById("QzLyricsPage"); if (p) p.classList.toggle("qz-line-mode", type !== "Syllable"); }, 250);
 }
@@ -838,8 +327,8 @@ function clearLoaderSoon() {
   });
 }
 function installLyricsBridge() {
-  // Always feed the UI from the open lyric sources (NetEase yrc / LRCLIB). We use the
-  // licensed renderer only - never the gated third-party lyrics-data API.
+  // Always feed the UI from our own resolver. We use the licensed renderer only - never the
+  // gated third-party lyrics-data API.
   if (window.__QZ_SL_FETCH_PATCHED__) return;
   window.__QZ_SL_FETCH_PATCHED__ = true;
   window.fetch = function (input, init) {
@@ -1178,38 +667,33 @@ function ensureButton() {
 // word's StartTime/EndTime. SL's own gradient CSS does the rest, producing the real karaoke glow.
 // Implemented against the actual DOM below.
 var glowRAF = null, glowMap = null;
-// The lyric-vs-audio offset depends on the SOURCE, not a Qobuz buffer (Qobuz plays audio
-// natively with no clock to read - earlier "format/bitrate" theory was wrong). Apple Music
-// and the AMLL TTML DB are professionally/tightly timed and match the audio at 0; community
-// sources (NetEase / LRCLIB) can run late. resolveLyricsRaw tags curLyricSource and we shift
-// per source. Apple is preferred + ISRC-exact, so the vast majority of tracks resolve to it
-// and land at 0 - verified perfect live on a real Apple-sourced track. If ONE source ever
-// drifts, tune that single entry below - never per-song, never a global. (__QZ_SL_DEBUG.
-// setOffset pins a fixed value for dev testing only - never surfaced to users.)
+// The server delivers lyrics already time-aligned, so there is no per-source shift here.
+// __QZ_SL_DEBUG.setOffset pins a fixed value for dev testing only - never surfaced to users.
 var _offOverride = null;
 try { var _o0 = parseInt(localStorage.getItem("qz-lyr-fixed"), 10); if (!isNaN(_o0)) _offOverride = _o0; } catch (e) {}
-var curLyricSource = "apple";
-var SOURCE_OFFSET = { apple: 0, amll: 0, netease: 0, lrclib: 0 }; // ms; positive = lyrics earlier
-function autoOffsetMs() {
-  if (_offOverride != null) return _offOverride;
-  var v = SOURCE_OFFSET[curLyricSource];
-  return v != null ? v : 0;
-}
-// Lyric-server codename shown in the footer next to "Provided by Qobuzify Lyrics" - a
-// tier list of clever names for which source actually served the lyrics (Apple = top,
-// down to the open line-level fallback). Qobuz listeners appreciate the bit.
-var SOURCE_CODENAME = { apple: "Magnum Opus", amll: "Cum Laude", netease: "Vox Populi", lrclib: "Marginalia" };
+// The codename the server returns for the track (already obfuscated upstream-side); shown verbatim
+// in the footer as "Lyric server: <codename>". Null until the first resolve lands.
+var curLyricSource = null;
+function autoOffsetMs() { return _offOverride != null ? _offOverride : 0; }
 function setLyricServerTag() {
   try {
-    var want = "Lyric server: " + (SOURCE_CODENAME[curLyricSource] || curLyricSource || "Unknown");
-    var tag = document.getElementById("qz-lyric-server");
-    if (tag && tag.textContent === want) return; // already current
     var root = document.getElementById("qz-sl-root"); if (!root) return;
+    // The bundled renderer draws its own credit lines from the lyrics metadata: "Written by ...",
+    // "Uploaded by ...", and "Provided by <name>" where the name is mapped from the source id. Those
+    // point straight at the upstream, which the whole codename wall exists to prevent, so hide them.
+    // Keep only our own "Lyric server: <codename>" line (a fixed, obfuscated map) in the same spot.
     var prov = null, all = root.querySelectorAll("*");
-    for (var i = 0; i < all.length; i++) { if (!all[i].children.length && /Provided by/i.test(all[i].textContent || "")) { prov = all[i]; break; } }
-    if (!prov) return;
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i]; if (el.children.length) continue;
+      var txt = el.textContent || "";
+      if (/^\s*(Written by|Uploaded by|Made by)\b/i.test(txt)) { el.style.display = "none"; continue; }
+      if (/^\s*Provided by\b/i.test(txt)) { if (!prov) prov = el; el.style.display = "none"; }
+    }
+    if (!prov) return; // no credits footer yet - nothing to anchor to
+    var want = "Lyric server: <b>" + (curLyricSource || "Unknown") + "</b>";
+    var tag = document.getElementById("qz-lyric-server");
     if (!tag) { tag = document.createElement("div"); tag.id = "qz-lyric-server"; tag.className = "qz-lyric-server"; prov.parentNode.insertBefore(tag, prov.nextSibling); }
-    tag.innerHTML = "Lyric server: <b>" + (SOURCE_CODENAME[curLyricSource] || curLyricSource || "Unknown") + "</b>"; // codenames are a fixed map, safe
+    if (tag.innerHTML !== want) tag.innerHTML = want;
   } catch (e) {}
 }
 // Alt-tab scroll-jump fix. The lyrics live in a SimpleBar/virtualized scroller; when the
@@ -1351,7 +835,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     ensureContainer();
     await ensureFreshToken(); // renew the Spotify token (if logged in) before the bridge picks its path
     if (ST && ST.refresh_token) tokenIv = setInterval(ensureFreshToken, 1500000); // keep it alive (~25 min)
-    installLyricsBridge(); // fresh user token -> SL's synced source natively; else open NetEase/LRCLIB
+    installLyricsBridge(); // route SL's lyric fetch through our resolver
 
     // bridge: react to Qobuz track changes + progress + play/pause
     // Qobuz's onChange doesn't fire for every track change (notably in-album auto-advance),
@@ -1405,7 +889,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       _pos: null,
       _forcePlaying: null,
       setPos: function (ms) { this._pos = ms; emit("onprogress", { data: ms }); },
-      getOffset: function () { return { applied: autoOffsetMs(), source: curLyricSource, auto: _offOverride == null, fixed: _offOverride, sourceMap: SOURCE_OFFSET }; },
+      getOffset: function () { return { applied: autoOffsetMs(), source: curLyricSource, auto: _offOverride == null, fixed: _offOverride }; },
       setOffset: function (ms) { _offOverride = (ms == null ? null : +ms); try { ms == null ? localStorage.removeItem("qz-lyr-fixed") : localStorage.setItem("qz-lyr-fixed", String(_offOverride)); } catch (e) {} return _offOverride; }, // dev only: pin a fixed offset; setOffset(null) restores auto
       clearPos: function () { this._pos = null; },
       setPlaying: function (b) { this._forcePlaying = b; emit("onplaypause", { data: { isPaused: !b } }); },
@@ -1417,39 +901,6 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
         return curMeta;
       },
       resolve: function (meta) { return resolveLyrics(meta || curMeta); },
-      neMatch: function (meta) { var tr = meta || curMeta; if (!tr) return Promise.resolve({ matched: false }); return neteaseSearch(tr).then(function (id) { if (!id) return { matched: false }; return _origFetch("https://music.163.com/api/song/detail?ids=%5B" + id + "%5D", { headers: NE_HDR }).then(function (r) { return r.json(); }).then(function (j) { var s = j && j.songs && j.songs[0]; return { matched: true, id: id, srcTitle: s ? s.name : "?", srcArtist: s ? (s.artists || []).map(function (a) { return a.name; }).join(", ") : "?", srcDurS: s ? Math.round(s.duration / 1000) : 0 }; }).catch(function () { return { matched: true, id: id }; }); }); },
-      dbMatch: function (meta) {
-        var tr = meta || curMeta; if (!tr) return Promise.resolve({ matched: false });
-        var spid = currentSpotifyId();
-        return neteaseSearchIds(tr).then(function (allIds) {
-          var ids = allIds.slice(0, 3), jobs = [];
-          var info = function (key, ly) { var n = 0, duet = false; if (ly && ly.Content) { ly.Content.forEach(function (l) { n += (l.Lead && l.Lead.Syllables && l.Lead.Syllables.length) || 0; if (l.OppositeAligned) duet = true; }); } return { key: key, inDb: !!ly, syllables: n, duet: duet }; };
-          if (spid) jobs.push(amllDbLyrics("spotify-lyrics", spid).then(function (ly) { return info("spotify:" + spid, ly); }));
-          ids.forEach(function (id) { jobs.push(amllDbLyrics("ncm-lyrics", id).then(function (ly) { return info("ncm:" + id, ly); })); });
-          return Promise.all(jobs).then(function (rs) { return { candidates: ids, spotifyId: spid || null, db: rs, anyInDb: rs.some(function (r) { return r.inDb; }) }; });
-        });
-      },
-      ttmlTest: function (folder, id) { return amllDbLyrics(folder || "ncm-lyrics", id).then(function (ly) {
-        if (!ly || !ly.Content) return { ok: false };
-        var syl = 0, bg = 0, sides = {}; ly.Content.forEach(function (l) { syl += (l.Lead && l.Lead.Syllables && l.Lead.Syllables.length) || 0; if (l.Background) bg++; sides[l.OppositeAligned ? "right" : "left"] = (sides[l.OppositeAligned ? "right" : "left"] || 0) + 1; });
-        return { ok: true, type: ly.Type, lines: ly.Content.length, syllables: syl, bgLines: bg, duet: !!sides.right, sides: sides, firstStart: ly.StartTime };
-      }); },
-      appleTest: function (isrc) { return appleLyrics(isrc).then(function (ly) {
-        if (!ly || !ly.Content) return { ok: false, hasCreds: !!(AP && AP.developer_token) };
-        var syl = 0, sides = {};
-        var wordsOf = function (l) { var s = (l.Lead && l.Lead.Syllables) || [], w = [], cur = ""; s.forEach(function (x) { cur += x.Text; if (!x.IsPartOfWord) { w.push(cur); cur = ""; } }); if (cur) w.push(cur); return w.map(function (t) { return t.replace(/[A-Za-z0-9]/g, "x"); }).join(" "); };
-        ly.Content.forEach(function (l) { syl += (l.Lead && l.Lead.Syllables && l.Lead.Syllables.length) || 0; sides[l.OppositeAligned ? "right" : "left"] = (sides[l.OppositeAligned ? "right" : "left"] || 0) + 1; });
-        var longest = ly.Content.slice().sort(function (a, b) { return ((b.Lead && b.Lead.Syllables || []).length) - ((a.Lead && a.Lead.Syllables || []).length); }).slice(0, 5);
-        return { ok: true, lines: ly.Content.length, syllables: syl, duet: !!sides.right, sides: sides, firstStart: ly.StartTime, words: longest.map(wordsOf) };
-      }); },
-      appleSearchTest: function (name, artist, durationMs) { return appleSearchLyrics({ name: name, artist: artist, durationMs: durationMs || 0 }).then(function (ly) {
-        if (!ly || !ly.Content) return { ok: false, hasCreds: !!(AP && AP.developer_token) };
-        var syl = 0;
-        var wordsOf = function (l) { var s = (l.Lead && l.Lead.Syllables) || [], w = [], cur = ""; s.forEach(function (x) { cur += x.Text; if (!x.IsPartOfWord) { w.push(cur); cur = ""; } }); if (cur) w.push(cur); return w.map(function (t) { return t.replace(/[A-Za-z0-9]/g, "x"); }).join(" "); };
-        ly.Content.forEach(function (l) { syl += (l.Lead && l.Lead.Syllables && l.Lead.Syllables.length) || 0; });
-        var longest = ly.Content.slice().sort(function (a, b) { return ((b.Lead && b.Lead.Syllables || []).length) - ((a.Lead && a.Lead.Syllables || []).length); }).slice(0, 6);
-        return { ok: true, lines: ly.Content.length, syllables: syl, firstStart: ly.StartTime, words: longest.map(wordsOf) };
-      }); },
       open: function () { try { window.Spicetify.Platform.History.push({ pathname: "/QzLyrics" }); } catch (e) {} },
       getLyrics: function () { return curLyrics; },
       getMeta: function () { return curMeta; },

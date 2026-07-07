@@ -130,14 +130,15 @@
       <table>
         <thead><tr><th>Param</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td>name</td><td>string <span class="req">required</span></td><td>Track title.</td></tr>
-          <tr><td>artist</td><td>string <span class="req">required</span></td><td>Primary artist.</td></tr>
+          <tr><td>name</td><td>string <span class="req">required*</span></td><td>Track title. *Optional if you pass a spotifyId.</td></tr>
+          <tr><td>artist</td><td>string <span class="req">required*</span></td><td>Primary artist. *Optional if you pass a spotifyId.</td></tr>
           <tr><td>album</td><td>string <span class="opt">optional</span></td><td>Album title, sharpens matching.</td></tr>
           <tr><td>durationMs</td><td>number <span class="opt">optional</span></td><td>Track length in ms. Powers the duration guard that rejects a same-title wrong-song match.</td></tr>
           <tr><td>isrc</td><td>string <span class="opt">optional</span></td><td>Recording ISRC. The strongest key; word-by-word is looked up by ISRC first when present.</td></tr>
           <tr><td>spotifyId</td><td>string <span class="opt">optional</span></td><td>Spotify track id, an extra matching signal.</td></tr>
         </tbody>
       </table>
+      <p class="note" style="margin-top:10px"><b>Pass name + artist, or just a spotifyId.</b> If you send a <span class="inline">spotifyId</span> alone, the server resolves name/artist/isrc from it (cached, so no rate-limited Spotify call on your side). name + artist form the cache key (<code>na:&lt;title&gt;|&lt;artist&gt;</code>), and a spotifyId request resolves to that same key, so both share one cache entry. <span class="inline">isrc</span> sharpens matching and is looked up first for word-by-word.</p>
 
       <div class="lbl">Request</div>
       <pre><code><span class="tok-com"># minimal</span>
@@ -152,10 +153,11 @@ curl <span class="tok-str">"https://api.qobuzify.app/v1/lyrics?name=Instant%20Cr
   <span class="tok-key">"cached"</span>: <span class="tok-str">"d1"</span>,          <span class="tok-com">// false | "d1" (parsed cache) | "r2" (re-parsed from raw archive)</span>
   <span class="tok-key">"hasLyrics"</span>: <span class="tok-num">true</span>,
   <span class="tok-key">"source"</span>: <span class="tok-str">"aurora"</span>,      <span class="tok-com">// a codename, never the real upstream</span>
-  <span class="tok-key">"cacheable"</span>: <span class="tok-num">true</span>,      <span class="tok-com">// whether the client should keep this result</span>
-  <span class="tok-key">"key"</span>: <span class="tok-str">"isrc:USQX91201002"</span>,
+  <span class="tok-key">"cacheable"</span>: <span class="tok-num">true</span>,      <span class="tok-com">// true only when Type is "Syllable" (final). Line-level is false: it</span>
+                          <span class="tok-com">//   may upgrade to word-by-word later, so don't freeze it client-side.</span>
+  <span class="tok-key">"key"</span>: <span class="tok-str">"na:instant crush|daft punk"</span>,   <span class="tok-com">// cache key, derived from name + artist</span>
   <span class="tok-key">"lyrics"</span>: {
-    <span class="tok-key">"Type"</span>: <span class="tok-str">"Syllable"</span>,   <span class="tok-com">// "Syllable" (word-by-word) or "Line" (line-level)</span>
+    <span class="tok-key">"Type"</span>: <span class="tok-str">"Syllable"</span>,   <span class="tok-com">// "Syllable" (word-by-word), "Line" (line-level), or "Static" (unsynced)</span>
     <span class="tok-key">"Content"</span>: [
       {
         <span class="tok-key">"StartTime"</span>: <span class="tok-num">12.41</span>,
@@ -168,13 +170,21 @@ curl <span class="tok-str">"https://api.qobuzify.app/v1/lyrics?name=Instant%20Cr
     ]
   }
 }</code></pre>
-      <p style="margin-top:12px"><span class="inline">lyrics</span> follows the client's synced-lyrics format (the syllable/line objects the player renders). Lyric text above is illustrative, not real lyrics.</p>
+      <p style="margin-top:12px"><span class="inline">lyrics</span> is the parsed Qz Lyrics object your renderer consumes (its <code>.data</code>): a <code>Type</code>, plus a <code>Content</code> array of lines, each carrying a <code>Lead.Syllables</code> list (and a <code>Background</code> list for backing vocals) when word-by-word. <b>All StartTime/EndTime values are in seconds</b> (decimal, e.g. <code>12.41</code>), not milliseconds. This is the <b>decoded</b> nested object, not the dictionary-packed <code>[table, pointers]</code> wire format the Qz Lyrics API itself returns, so feed it straight to the renderer with no decode step. Lyric text above is illustrative, not real lyrics.</p>
+
+      <div class="lbl" style="margin-top:22px">No-lyrics and timeout</div>
+      <pre><code><span class="tok-com"># negative: resolved, nothing anywhere reachable (cached for a TTL so it won't re-sweep every play)</span>
+{ <span class="tok-key">"ok"</span>: <span class="tok-num">true</span>, <span class="tok-key">"cached"</span>: <span class="tok-str">"d1"</span>, <span class="tok-key">"hasLyrics"</span>: <span class="tok-num">false</span>, <span class="tok-key">"source"</span>: <span class="tok-num">null</span>, <span class="tok-key">"lyrics"</span>: <span class="tok-num">null</span> }
+
+<span class="tok-com"># timeout: a slow source ran out the clock. retryable, NOT cached (unlike a negative)</span>
+{ <span class="tok-key">"ok"</span>: <span class="tok-num">true</span>, <span class="tok-key">"cached"</span>: <span class="tok-num">false</span>, <span class="tok-key">"hasLyrics"</span>: <span class="tok-num">false</span>, <span class="tok-key">"lyrics"</span>: <span class="tok-num">null</span>, <span class="tok-key">"timeout"</span>: <span class="tok-num">true</span> }</code></pre>
     </div>
 
     <div class="lbl" style="margin-top:22px">Lyric tiers</div>
     <div class="tiers" style="margin-top:8px">
       <div class="card tier"><h3>Word-by-word</h3><p><code>lyrics.Type === "Syllable"</code>. Every word carries its own start and end time, so the client sweeps a karaoke fill across the line. Preferred whenever a source has it.</p></div>
       <div class="card tier"><h3>Line-level</h3><p><code>lyrics.Type === "Line"</code>. One timestamp per line; the current line highlights as a block. The fallback when no source has word-by-word.</p></div>
+      <div class="card tier"><h3>Unsynced</h3><p><code>lyrics.Type === "Static"</code>. Plain lyrics as a <code>Lines</code> array of text with no timing (only some sources carry this). Render as a non-scrolling block. Handle it: <code>hasLyrics</code> is still <code>true</code>.</p></div>
       <div class="card tier"><h3>None</h3><p><code>hasLyrics === false</code>. No synced lyrics anywhere reachable, cached negatively for a TTL so it doesn't re-sweep every play.</p></div>
     </div>
     <div class="note" style="margin-top:16px"><b>Proxy-first, self-healing.</b> A line-level hit is re-resolved in the background so a later play can upgrade to word-by-word, and a cached lyric whose timing runs 10s past the track's end is treated as a wrong-song match, evicted, and re-resolved.</div>
