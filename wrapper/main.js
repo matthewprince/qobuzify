@@ -22,12 +22,27 @@ const path = require("path");
 // (album art everywhere), and software rendering a big list like the whole library eats memory
 // until the renderer chokes. (The early segfault was the Bash tool's detached context, not the
 // GPU; launched from a real session the GPU is fine.)
-app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+// disable-features is a single Chromium switch, so gather the values and set it once at the end - a
+// second appendSwitch("disable-features", ...) REPLACES the first, which would silently drop the
+// occlusion fix.
+const disableFeatures = ["CalculateNativeWinOcclusion"];
 app.commandLine.appendSwitch("no-sandbox");
-// Some Linux setups (reported on Arch) crash the GPU process on launch or login with the GPU sandbox
-// on. Dropping just the GPU sandbox keeps hardware acceleration but avoids that crash; it's a no-op
-// elsewhere. (`no-sandbox` above covers the renderer/AppImage side.)
-if (process.platform === "linux") app.commandLine.appendSwitch("disable-gpu-sandbox");
+// Two Linux-only crashes reported on Arch, both handled here:
+//  (1) the GPU sandbox crashes the GPU process on launch on some setups - dropping just the GPU sandbox
+//      keeps hardware acceleration and is a no-op elsewhere;
+//  (2) "crashes immediately when trying to log in": on a bleeding-edge kernel a freshly-spawned renderer
+//      can FATAL allocating its compositor shared memory ("Creating shared memory in /dev/shm failed").
+//      Qobuz's sign-in page runs an invisible Google reCAPTCHA in a cross-site iframe, so site isolation
+//      hands it its own renderer, which hits exactly that crash - and since the captcha gates sign-in,
+//      login dies. Keeping cross-site frames in the main renderer (which allocated its shmem fine at
+//      startup) sidesteps it. Only Qobuz and its own embeds ever load in this shell, so turning off site
+//      isolation costs us nothing meaningful.
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("disable-site-isolation-trials");
+  disableFeatures.push("IsolateOrigins", "site-per-process");
+}
+app.commandLine.appendSwitch("disable-features", disableFeatures.join(","));
 
 // The qz-state.json probe loop below is a dev-only verification channel. A shipped build must NOT run
 // a setInterval that calls executeJavaScript on the renderer: if it fires while the window is tearing
