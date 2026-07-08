@@ -1,0 +1,8 @@
+{
+  "id": "block-trash",
+  "name": "Block Artists and Trash Songs",
+  "description": "Two buttons on every track row: a ban icon to block the artist, a trash icon to bin the song. Anything blocked or trashed is greyed in every list and auto-skipped the instant it starts playing. A shield in the player bar lists everything you've blocked so you can undo it. All local.",
+  "icon": "icon-close-circle-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

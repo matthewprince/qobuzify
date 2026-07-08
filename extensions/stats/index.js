@@ -43,10 +43,28 @@ function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function 
 // --- logger ---
 function threshold(dur) { if (!dur) return 30000; if (dur < 30000) return Math.max(4000, dur * 0.9); return Math.min(dur / 2, 240000); }
 var cur = null;
+// Authoritative artist per track, from the track API. The player-bar DOM scrape (playerArtistId) can
+// grab the WRONG /artist/ link - it takes the first artist anchor in .player, which on the web player
+// isn't reliably the track's main performer - so it can log a different artist that happens to share a
+// name, and that wrong id then seeds the generated mixes. track/get's `performer` is the real identity.
+var artistByTrack = {}; // trackId -> { id, name }
 function record(c) {
   var t = Q.player.getTrack(); if (!t || t.id !== c.track.id) t = c.track;
-  var ts = Date.now(), name = t.artist || (t.artists || [])[0] || "";
-  var play = { ts: ts, id: t.id || null, title: t.title || "", artist: name, artistKey: name.toLowerCase(), artistId: c.artistId || playerArtistId() || null, album: t.album || "", albumId: t.albumId || null, durationMs: t.durationMs || 0, listenedMs: Math.round(c.listenedMs), cover: midCover(t.cover), quality: t.quality || null, day: dayKey(ts) };
+  var tid = t.id || null;
+  if (tid && artistByTrack[tid]) return finishRecord(c, t, artistByTrack[tid]);
+  if (tid && Q.api) {
+    Q.api("track/get?track_id=" + tid).then(function (j) {
+      var p = (j && (j.performer || (j.album && j.album.artist))) || null;
+      var ar = { id: (p && p.id != null) ? String(p.id) : (c.artistId || playerArtistId() || null), name: (p && p.name) || t.artist || (t.artists || [])[0] || "" };
+      artistByTrack[tid] = ar; finishRecord(c, t, ar);
+    }, function () { finishRecord(c, t, { id: c.artistId || playerArtistId() || null, name: t.artist || (t.artists || [])[0] || "" }); });
+  } else {
+    finishRecord(c, t, { id: c.artistId || playerArtistId() || null, name: t.artist || (t.artists || [])[0] || "" });
+  }
+}
+function finishRecord(c, t, ar) {
+  var ts = Date.now(), name = (ar && ar.name) || t.artist || (t.artists || [])[0] || "";
+  var play = { ts: ts, id: t.id || null, title: t.title || "", artist: name, artistKey: name.toLowerCase(), artistId: (ar && ar.id) || null, album: t.album || "", albumId: t.albumId || null, durationMs: t.durationMs || 0, listenedMs: Math.round(c.listenedMs), cover: midCover(t.cover), quality: t.quality || null, day: dayKey(ts) };
   putPlay(play); queuePush(play); // queuePush no-ops unless cloud sync is on
 }
 function tick() {
@@ -199,12 +217,12 @@ function getSyncId() {
 function setSyncId(id) { id = (id || "").trim(); if (/^[A-Za-z0-9-]{16,64}$/.test(id)) { try { localStorage.setItem(LS_SYNCID, id); localStorage.setItem(LS_LASTPULL, "0"); } catch (e) {} return true; } return false; }
 function pushPlays(plays) {
   if (!plays.length) return Promise.resolve(0);
-  return fetch(SYNC_API + "/push", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId(), plays: plays }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.inserted) || 0; }).catch(function () { return 0; });
+  return fetch(SYNC_API + "/push?qz=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId(), plays: plays }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.inserted) || 0; }).catch(function () { return 0; });
 }
 function pushAll() { return allPlays().then(function (p) { var chunks = []; for (var i = 0; i < p.length; i += 500) chunks.push(p.slice(i, i + 500)); return chunks.reduce(function (pr, c) { return pr.then(function (acc) { return pushPlays(c).then(function (n) { return acc + n; }); }); }, Promise.resolve(0)); }); }
 function pullMerge() {
   var since = 0; try { since = parseInt(localStorage.getItem(LS_LASTPULL) || "0", 10) || 0; } catch (e) {}
-  return fetch(SYNC_API + "/pull?syncId=" + encodeURIComponent(getSyncId()) + "&since=" + since).then(function (r) { return r.json(); }).then(function (j) {
+  return fetch(SYNC_API + "/pull?qz=1&syncId=" + encodeURIComponent(getSyncId()) + "&since=" + since).then(function (r) { return r.json(); }).then(function (j) {
     var plays = (j && j.plays) || []; if (!plays.length) return 0;
     plays.forEach(function (p) { p.artistKey = (p.artist || "").toLowerCase(); });
     return putMany(plays).then(function () { var mx = plays.reduce(function (m, p) { return Math.max(m, p.ts); }, since); try { localStorage.setItem(LS_LASTPULL, String(mx)); } catch (e) {} return plays.length; });
@@ -215,7 +233,7 @@ function startPull() { if (pullTimer) return; pullMerge(); pullTimer = setInterv
 function stopPull() { if (pullTimer) { clearInterval(pullTimer); pullTimer = null; } }
 function enableCloud() { try { localStorage.setItem(LS_CLOUD, "1"); } catch (e) {} return pushAll().then(function (n) { startPull(); return n; }); }
 function disableCloud() { try { localStorage.setItem(LS_CLOUD, "0"); } catch (e) {} stopPull(); }
-function wipeCloud() { return fetch(SYNC_API + "/wipe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId() }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.deleted) || 0; }).catch(function () { return 0; }); }
+function wipeCloud() { return fetch(SYNC_API + "/wipe?qz=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId() }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.deleted) || 0; }).catch(function () { return 0; }); }
 
 var IC_CLOUD = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19a4.5 4.5 0 0 0 .4-8.98A6 6 0 0 0 6.2 9.5 4 4 0 0 0 7 17.9"/><path d="M7 17.9h10.5"/></svg>';
 function closeCloud() { var m = document.getElementById("qz-cloud-modal"); if (m) m.remove(); }

@@ -466,10 +466,36 @@
     var GAP = 10;
     var pr = prev && prev.getBoundingClientRect();
     var nr = next && next.getBoundingClientRect();
-    var left = document.querySelector(".player__track > .qz-slot-left");
-    if (left && pr) { left.style.display = ""; var lr = left.getBoundingClientRect(); if (lr.width && lr.right > pr.left - GAP) left.style.display = "none"; }
+    // The transport is centred over the whole bar, so on a narrow window our side-zone buttons - which sit at
+    // the INNER edge of each flow section - grow into it and cover the play/next controls (they render on top,
+    // so the transport becomes unclickable). The old guard hid the ENTIRE zone the moment any part overlapped,
+    // which wiped every button on any sub-~1740px window (the reported "Lyrics + Full App Display missing"
+    // bug). Instead: reveal everything, then hide buttons one at a time from the inner edge until the group no
+    // longer reaches the transport - so the outer buttons stay usable and only what genuinely can't fit drops.
     var right = document.querySelector(".player__settings > .qz-slot-right");
-    if (right && nr) { right.style.display = ""; var rr = right.getBoundingClientRect(); if (rr.width && rr.left < nr.right + GAP) right.style.display = "none"; }
+    if (right && nr) {
+      right.style.display = "";
+      var rb = [].slice.call(right.children);
+      rb.forEach(function (b) { b.style.display = ""; });
+      // zone is row-reverse, so the LAST DOM child is the visually-innermost (leftmost) button; drop from
+      // there back toward the outer edge, so the highest-order / least-important buttons go first.
+      for (var i = rb.length - 1; i >= 0; i--) {
+        var rr = right.getBoundingClientRect();
+        if (!rr.width || rr.left >= nr.right + GAP) break;
+        rb[i].style.display = "none";
+      }
+    }
+    var left = document.querySelector(".player__track > .qz-slot-left");
+    if (left && pr) {
+      left.style.display = "";
+      var lb = [].slice.call(left.children);
+      lb.forEach(function (b) { b.style.display = ""; });
+      for (var j = lb.length - 1; j >= 0; j--) { // innermost = rightmost, closest to the transport
+        var lr = left.getBoundingClientRect();
+        if (!lr.width || lr.right <= pr.left - GAP) break;
+        lb[j].style.display = "none";
+      }
+    }
   }
 
   function buildApi() {
@@ -531,6 +557,31 @@
           return QZ_STORE.subscribe(function () {
             try { var ct = QZ_STORE.getState().player.currentTrack; var id = ct && ct.id; if (id !== lastId) { lastId = id; fn(Q.player.getTrack()); } } catch (e) {}
           });
+        },
+        // Remove UPCOMING play-queue items whose trackId matches pred - so a filtered track is skipped
+        // BEFORE it becomes current (never plays at all), rather than being skipped after it starts. Mirrors
+        // the app's own remove-from-queue: recompute the item list and dispatch playqueue/set (a partial
+        // state merge - it only touches the keys we pass). Only ever drops items AFTER currentIndex, so the
+        // playing track and the index are never disturbed. Returns how many items were removed.
+        dropUpcoming: function (pred) {
+          try {
+            var pq = QZ_STORE.getState().playqueue; if (!pq || typeof pred !== "function") return 0;
+            var ci = pq.currentIndex || 0, removed = 0;
+            var keep = function (arr) { return arr.filter(function (it, i) { if (i <= ci) return true; var drop = !!(it && it.trackId != null && pred(String(it.trackId))); if (drop) removed++; return !drop; }); };
+            var payload = { index: ci, dirty: true };
+            // when shuffled the play order is shuffledItems (currentIndex indexes into it); otherwise it's items
+            if (pq.shuffled && Array.isArray(pq.shuffledItems) && pq.shuffledItems.length) payload.shuffledItems = keep(pq.shuffledItems);
+            else if (Array.isArray(pq.items)) payload.items = keep(pq.items);
+            // autoplay continuation (played once the queue runs out) - all of it is upcoming, so drop every
+            // denied entry. Without this, a trashed autoplay track becomes current and the URL-deny hangs it.
+            if (pq.autoplay && Array.isArray(pq.autoplay.items) && pq.autoplay.items.length) {
+              var ai = pq.autoplay.items.filter(function (it) { var drop = !!(it && it.trackId != null && pred(String(it.trackId))); if (drop) removed++; return !drop; });
+              if (ai.length !== pq.autoplay.items.length) payload.autoplayItems = ai;
+            }
+            if (!removed) return 0;
+            QZ_STORE.dispatch({ type: "playqueue/set", payload: payload });
+            return removed;
+          } catch (e) { return 0; }
         }
       },
       onRoute: function (fn) { routeCbs.push(fn); return function () { var i = routeCbs.indexOf(fn); if (i >= 0) routeCbs.splice(i, 1); }; },
@@ -747,7 +798,10 @@
     ".qz-foot{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;border-top:1px solid rgba(255,255,255,.07);font-size:12px;color:#7e8796;}",
     // shared player-bar button slots (Q.playerSlot): auto-spaced zones + a native-sized icon button helper
     ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 0 auto;}",
-    ".qz-slot-right{display:inline-flex;align-items:center;gap:8px;margin-right:14px;flex:0 0 auto;}",
+    // row-reverse so the lowest-order (most important, e.g. Lyrics) button sits at the OUTER edge, away from
+    // the centred transport - so when a narrow window forces buttons to drop, the least-important ones (inner)
+    // go first and the flagship buttons survive longest. fitPlayerSlots hides from the inner edge to match.
+    ".qz-slot-right{display:inline-flex;flex-direction:row-reverse;align-items:center;gap:8px;margin-right:14px;flex:0 0 auto;}",
     ".qz-pbtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;appearance:none;border:0;border-radius:9px;",
       "background:transparent;color:#c2cad6;cursor:pointer;transition:background .15s,color .12s,transform .08s;flex:0 0 auto;padding:0;line-height:1;}",
     ".qz-pbtn:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 18%,transparent);color:var(--qz-accent,#3DA8FE);}",
