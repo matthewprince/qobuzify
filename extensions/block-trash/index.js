@@ -393,11 +393,9 @@ slotBtn.addEventListener("click", function () { var tr = safeTrack(); if (tr && 
 var slot = Q.playerSlot({ id: "qz-bt", zone: "right", order: 11, el: slotBtn }); // right of the lyrics button (order 10)
 function syncSlot() { var tr = safeTrack(); var on = tr && tr.title && songTrashed(tr.title, tr.artist); slotBtn.classList.toggle("on", !!on); slotBtn.title = on ? "Restore the current song" : "Trash the current song"; }
 
-// player-bar manager button: opens the Blocked & Trashed list + cloud-sync opt-in
-var mgrBtn = document.createElement("button");
-mgrBtn.className = "qz-pbtn qz-bt-mgr"; mgrBtn.type = "button"; mgrBtn.title = "Blocked & trashed"; mgrBtn.innerHTML = IC_MGR;
-mgrBtn.addEventListener("click", openManager);
-var mgrSlot = Q.playerSlot({ id: "qz-bt-mgr", zone: "right", order: 12, el: mgrBtn });
+// "Blocked & Trashed" is a row in the Qobuzify settings panel (avatar menu > Qobuzify), not a player-bar
+// button - keeps the transport uncluttered and matches where users expect a manager/settings surface.
+var unregSettings = Q.registerSettings ? Q.registerSettings({ label: "Blocked & Trashed", sub: "Manage blocked artists, trashed songs, and cloud sync.", button: "Open", onClick: openManager }) : null;
 
 // --- auto-skip: sealed engine, so click the native next button. Guard against a runaway if a whole queue
 // is blocked (no more than a handful of skips in a short window). ---
@@ -525,7 +523,7 @@ return function cleanup() {
   if (watchdog) clearInterval(watchdog);
   stopPull(); clearTimeout(syncT); closeManager();
   if (window.fetch === hookedFetch) window.fetch = origFetch; // if a later wrapper owns it, `disposed` keeps us inert
-  if (stopObs) stopObs(); if (offChange) offChange(); if (slot) slot.remove(); if (mgrSlot) mgrSlot.remove();
+  if (stopObs) stopObs(); if (offChange) offChange(); if (slot) slot.remove(); if (unregSettings) unregSettings();
   [].slice.call(document.querySelectorAll(".qz-bt-rowtrash,.qz-bt-artistblock")).forEach(function (n) { n.remove(); });
   [].slice.call(document.querySelectorAll(".qz-bt-hit,.qz-bt-row")).forEach(function (n) { n.classList.remove("qz-bt-hit", "qz-bt-row", "qz-bt-blocked", "qz-bt-trashed"); });
   if (toastEl) { toastEl.remove(); toastEl = null; }

@@ -14,6 +14,16 @@ const EXT_DIR = path.join(ROOT, "extensions");
 const RUNTIME = path.join(ROOT, "runtime", "qobuzify-runtime.js");
 const DEFAULT_THEME = "glass";
 
+// A small state file kept as a SIBLING of the install dir (so the installer's re-extract, which wipes the
+// install dir, leaves it alone). It survives a QOBUZ app-version update too - that update replaces app.html
+// with a fresh copy that no longer has our baked block, so currentSeed()/currentTheme() read null on the next
+// `qobuzify install`; without a saved seed the reinstall would bake a new one and the runtime's boot logic
+// would reset the user's theme + re-enable theming. localStorage itself is a single `file://` bucket and
+// survives the update, so per-extension on/off flags are already safe - only the seed/theme need this.
+const STATE_FILE = path.join(ROOT, "..", ".qobuzify-state.json");
+function readState() { try { const o = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")); return (o && typeof o === "object") ? o : {}; } catch (_) { return {}; } }
+function saveState(patch) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(Object.assign(readState(), patch))); } catch (_) {} }
+
 function version() {
   try { return require(path.join(ROOT, "package.json")).version || "0.1.0"; } catch (_) { return "0.1.0"; }
 }
@@ -84,21 +94,27 @@ async function main() {
         break;
       case "install":
       case "update": {
-        // An explicit theme forces it (fresh seed). No theme = keep what's already there: reuse the
-        // baked theme + seed so re-running the installer to update never resets the user's live choice.
-        // A fresh machine has neither, so it falls back to the default theme with a new seed.
+        // An explicit theme forces it (fresh seed). No theme = keep what's already there: reuse the baked
+        // theme + seed so re-running the installer to update never resets the user's live choice. If a Qobuz
+        // app update wiped the baked block from app.html, fall back to the seed/theme saved in STATE_FILE so
+        // the reinstall still preserves them. Only a truly fresh machine (no baked block, no state) gets a
+        // new seed + the default theme.
         const existingSeed = currentSeed();
-        const def = arg || currentTheme() || DEFAULT_THEME;
-        const seed = arg ? Date.now() : (existingSeed || Date.now());
+        const st = readState();
+        const def = arg || currentTheme() || st.theme || DEFAULT_THEME;
+        const seed = arg ? Date.now() : (existingSeed || st.seed || Date.now());
         const t = installRuntime(def, seed);
-        const verb = existingSeed ? "Updated" : "Installed";
+        saveState({ seed, theme: def });
+        const verb = (existingSeed || st.seed) ? "Updated" : "Installed";
         console.log(`${verb} Qobuzify v${version()} (theme "${t ? t.name : DEFAULT_THEME}").`);
         console.log("In Qobuz: click your avatar (top-right) > Marketplace to browse and switch themes live.");
         break;
       }
       case "apply": {
         if (!arg) throw new Error("Usage: qobuzify apply <theme>  (or: qobuzify install)");
-        const t = installRuntime(arg);
+        const seed = Date.now();
+        const t = installRuntime(arg, seed);
+        saveState({ seed, theme: arg });
         console.log(`Applied "${t ? t.name : arg}" and relaunched Qobuz.`);
         console.log("Switch themes live from the avatar menu > Marketplace.");
         break;

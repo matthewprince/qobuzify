@@ -59,6 +59,8 @@
     { key: "marketplace", label: "Marketplace", icon: "icon-view-grid-filled", open: openMarketplace },
     { key: "qobuzify", label: "Qobuzify", icon: "icon-magic-stars", open: openSettings }
   ];
+  // Extensions can add their own row to the Qobuzify settings panel via Q.registerSettings({label,sub,button,onClick}).
+  var extSettings = [];
   function closeNativeMenu() {
     // nudge the native dropdown shut via an outside-click; avoid dispatching
     // Escape (our own Esc handler would close the overlay we're about to open)
@@ -245,6 +247,13 @@
         '<div><div class="qz-set-label">Restore Qobuz</div><div class="qz-set-sub">Turn theming off and use the stock look.</div></div>' +
         '<button class="qz-btn qz-btn--ghost" data-act="off">Restore default</button>' +
       '</div>' +
+      // extension-registered settings rows (Q.registerSettings)
+      extSettings.map(function (e, i) {
+        return '<div class="qz-set-row">' +
+          '<div><div class="qz-set-label">' + esc(e.label || "") + '</div><div class="qz-set-sub">' + esc(e.sub || "") + '</div></div>' +
+          '<button class="qz-btn" data-extset="' + i + '">' + esc(e.button || "Open") + '</button>' +
+        '</div>';
+      }).join("") +
       '<div class="qz-set-about">Qobuzify v' + VERSION + ' - themes &amp; extensions for the Qobuz desktop app.</div>' +
       '<div class="qz-set-links">' +
         '<a data-act="report">Report a bug</a><span>&middot;</span>' +
@@ -258,6 +267,9 @@
     panel.querySelector('[data-act="toggle"]').addEventListener("click", function () { if (isEnabled()) disableTheming(); else enableTheming(); });
     panel.querySelector('[data-act="browse"]').addEventListener("click", function () { selectTab("themes"); });
     panel.querySelector('[data-act="off"]').addEventListener("click", function () { disableTheming(); });
+    [].slice.call(panel.querySelectorAll('[data-extset]')).forEach(function (btn) {
+      btn.addEventListener("click", function () { var e = extSettings[+btn.getAttribute("data-extset")]; if (e && typeof e.onClick === "function") { hideOverlay(); e.onClick(); } });
+    });
     var rpcBtn = panel.querySelector('[data-act="rpc"]');
     if (rpcBtn) rpcBtn.addEventListener("click", function () {
       // Discord RPC on/off = enable/disable the discord-rpc extension (same key as the Marketplace).
@@ -477,9 +489,9 @@
       right.style.display = "";
       var rb = [].slice.call(right.children);
       rb.forEach(function (b) { b.style.display = ""; });
-      // zone is row-reverse, so the LAST DOM child is the visually-innermost (leftmost) button; drop from
-      // there back toward the outer edge, so the highest-order / least-important buttons go first.
-      for (var i = rb.length - 1; i >= 0; i--) {
+      // innermost = leftmost (lowest order), closest to the centred transport; drop those first so the outer
+      // buttons (Full App Display on the far right, etc.) survive narrow windows.
+      for (var i = 0; i < rb.length; i++) {
         var rr = right.getBoundingClientRect();
         if (!rr.width || rr.left >= nr.right + GAP) break;
         rb[i].style.display = "none";
@@ -585,6 +597,14 @@
         }
       },
       onRoute: function (fn) { routeCbs.push(fn); return function () { var i = routeCbs.indexOf(fn); if (i >= 0) routeCbs.splice(i, 1); }; },
+      // Add a row to the Qobuzify settings panel (avatar menu > Qobuzify). entry = {label, sub, button, onClick}.
+      // Returns an unregister fn. Live-refreshes the panel if it's already open.
+      registerSettings: function (entry) {
+        if (!entry || typeof entry.onClick !== "function") return function () {};
+        extSettings.push(entry);
+        if (overlay && overlay.style.display !== "none") renderSettings();
+        return function () { var i = extSettings.indexOf(entry); if (i >= 0) { extSettings.splice(i, 1); if (overlay && overlay.style.display !== "none") renderSettings(); } };
+      },
       // debounced DOM observer; returns an unsubscribe fn
       observe: function (fn, opts) {
         var pending, ms = (opts && opts.debounce) || 120;
@@ -798,10 +818,10 @@
     ".qz-foot{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;border-top:1px solid rgba(255,255,255,.07);font-size:12px;color:#7e8796;}",
     // shared player-bar button slots (Q.playerSlot): auto-spaced zones + a native-sized icon button helper
     ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 0 auto;}",
-    // row-reverse so the lowest-order (most important, e.g. Lyrics) button sits at the OUTER edge, away from
-    // the centred transport - so when a narrow window forces buttons to drop, the least-important ones (inner)
-    // go first and the flagship buttons survive longest. fitPlayerSlots hides from the inner edge to match.
-    ".qz-slot-right{display:inline-flex;flex-direction:row-reverse;align-items:center;gap:8px;margin-right:14px;flex:0 0 auto;}",
+    // Buttons flow in ascending `order` left-to-right, so the highest-order button (Full App Display = 40)
+    // sits at the OUTER (right) edge and the lowest (Lyrics = 10) nearest the centred transport. fitPlayerSlots
+    // drops from the inner edge on narrow windows, so the outer buttons survive longest.
+    ".qz-slot-right{display:inline-flex;align-items:center;gap:8px;margin-right:14px;flex:0 0 auto;}",
     ".qz-pbtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;appearance:none;border:0;border-radius:9px;",
       "background:transparent;color:#c2cad6;cursor:pointer;transition:background .15s,color .12s,transform .08s;flex:0 0 auto;padding:0;line-height:1;}",
     ".qz-pbtn:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 18%,transparent);color:var(--qz-accent,#3DA8FE);}",
