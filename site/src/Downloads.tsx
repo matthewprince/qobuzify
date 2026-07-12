@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 
-// Pulls the latest release straight from the GitHub API so the buttons track whatever
-// version is current without the site ever being redeployed. Falls back to the releases
-// page if the API is unreachable (rate limit, offline).
+// The single install section. Two honest routes, emphasis driven by the visitor's OS:
+//   Windows -> the installer script patches the Qobuz app you already have (fullest
+//              experience, adds synced lyrics), needs Node.js.
+//   Any OS  -> the standalone app is one download, nothing else needed.
+// Latest version + asset sizes come live from the GitHub releases API so the buttons
+// track whatever is current without redeploying.
 const REPO = "matthewprince/qobuzify";
 const RELEASES = `https://github.com/${REPO}/releases/latest`;
+const INSTALL_CMD = "irm https://qobuzify.app/install.ps1 | iex";
 
 type Asset = { name: string; size: number; url: string };
 type OSId = "mac" | "linux" | "windows";
@@ -27,9 +31,8 @@ function Penguin() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M12 2.2c-2.1 0-3.6 1.7-3.6 3.9 0 .7.1 1.3-.1 1.8-.2.5-.6.9-1.1 1.5C6 10.9 5.2 12.6 5.2 14.8c0 1.6.5 3 1.2 4.1.3.5.5.9.3 1.3-.2.4-.7.7-1.1 1-.3.2-.2.7.2.7.9.1 2-.1 2.7-.6.9.5 2 .7 3.3.7s2.4-.2 3.3-.7c.7.5 1.8.7 2.7.6.4 0 .5-.5.2-.7-.4-.3-.9-.6-1.1-1-.2-.4 0-.8.3-1.3.7-1.1 1.2-2.5 1.2-4.1 0-2.2-.8-3.9-2-5.4-.5-.6-.9-1-1.1-1.5-.2-.5-.1-1.1-.1-1.8 0-2.2-1.5-3.9-3.6-3.9z" />
-      <circle cx="10.2" cy="7.3" r=".9" fill="var(--bg)" />
-      <circle cx="13.8" cy="7.3" r=".9" fill="var(--bg)" />
-      <path d="M12 8.1c.7 0 1.3.5 1.3 1s-.6.6-1.3.6-1.3-.1-1.3-.6.6-1 1.3-1z" fill="var(--accent)" />
+      <circle cx="10.2" cy="7.3" r=".9" fill="var(--pm-bg,#000)" />
+      <circle cx="13.8" cy="7.3" r=".9" fill="var(--pm-bg,#000)" />
     </svg>
   );
 }
@@ -54,6 +57,7 @@ export default function Downloads() {
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [ver, setVer] = useState("");
   const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const mine = detectOS();
 
   useEffect(() => {
@@ -72,69 +76,112 @@ export default function Downloads() {
       .catch(() => setFailed(true));
   }, []);
 
+  const copyCmd = () =>
+    navigator.clipboard?.writeText(INSTALL_CMD).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+
+  const find = (id: OSId) => assets?.find((x) => OSES.find((o) => o.id === id)!.is(x.name));
   const deb = assets?.find((a) => a.name.endsWith(".deb"));
+  const primaryOS = OSES.find((o) => o.id === (mine === "windows" ? "windows" : mine))!;
+  const primaryAsset = find(primaryOS.id);
+  const others = OSES.filter((o) => o.id !== primaryOS.id);
+
+  const winPrimary = mine === "windows";
 
   return (
     <section className="section" id="download">
-      <h2>Mac &amp; Linux app</h2>
+      <div className="eyebrow">Install</div>
+      <h2 className="h-sec">Get Qobuzify</h2>
       <p className="lede">
-        There is no official Qobuz app for macOS or Linux, so Qobuzify now ships as its own: the
-        Qobuz web player wrapped up with all {10} themes and the full extension suite, in one
-        download. {ver ? <>Latest is <strong>{ver}</strong>. </> : null}Synced lyrics stay
-        Windows-only for now.
+        Two ways in, both fully reversible and both needing a paid Qobuz subscription (Qobuzify adds
+        to Qobuz, it is not a way to get it for free). On Windows, the installer patches the Qobuz app
+        you already have. On any OS, the standalone app is one download with nothing else to set up.
+        {ver ? <> Latest release is <strong>{ver}</strong>.</> : null}
       </p>
-      <div className="dl-grid">
-        {OSES.map((os) => {
-          const a = assets?.find((x) => os.is(x.name));
-          const isWin = os.id === "windows";
-          const primary = os.id === mine && !isWin;
-          return (
-            <div
-              key={os.id}
-              className={
-                "card dl-card" +
-                (primary ? " dl-mine" : "") +
-                (isWin ? " dl-backup" : "") +
-                (a || failed ? "" : " dl-off")
-              }
-            >
-              {primary ? <span className="dl-badge">Your system</span> : null}
-              {isWin ? <span className="dl-badge dl-badge-muted">Backup method</span> : null}
-              <div className="dl-icon">
-                <os.Icon />
-              </div>
-              <h3>{os.label}</h3>
-              {a ? (
-                <a className="dl-btn" href={a.url} download>
-                  Download {os.ext}
-                </a>
-              ) : (
-                <a className="dl-btn" href={RELEASES} target="_blank" rel="noopener">
-                  {failed ? "Releases" : "Loading…"}
-                </a>
-              )}
-              <span className="dl-meta">{a ? mb(a.size) : os.ext}</span>
-              {os.id === "linux" && deb ? (
-                <a className="dl-alt" href={deb.url} download>
-                  or .deb ({mb(deb.size)})
-                </a>
-              ) : null}
-              {isWin ? (
-                <span className="dl-alt">
-                  Almost everyone should use the installer up top. This is only a fallback.
-                </span>
-              ) : null}
+
+      <div className="routes">
+        {/* Route A: patch the installed Windows app */}
+        <div className={"route" + (winPrimary ? " route-primary" : "")}>
+          <div className="route-badge">Windows, fullest</div>
+          <h3>Patch your Qobuz app</h3>
+          <p className="route-sub">
+            Adds everything including Windows-only synced lyrics. Patches the Qobuz desktop app you
+            already installed.
+          </p>
+          <button className="cmd cmd-lg" onClick={copyCmd} title="Copy install command">
+            <code>{INSTALL_CMD}</code>
+            <span className="copy">{copied ? "copied" : "copy"}</span>
+          </button>
+          <div className="chips-req">
+            <span className="req">Windows 10 / 11</span>
+            <a className="req req-link" href="https://nodejs.org" target="_blank" rel="noopener">
+              Needs Node.js
+            </a>
+            <span className="req">Qobuz app installed</span>
+          </div>
+          <p className="route-note">
+            Backs up the originals first. Undo anytime with <code>qobuzify restore</code>.
+          </p>
+        </div>
+
+        {/* Route B: standalone app, any OS */}
+        <div className={"route" + (!winPrimary ? " route-primary" : "")}>
+          <div className="route-badge">macOS, Linux, Windows</div>
+          <h3>Standalone app</h3>
+          <p className="route-sub">
+            The Qobuz web player wrapped with all themes and the full extension suite, in one
+            download. Nothing else to install.
+          </p>
+          <div className="dl-main">
+            <div className="dl-os">
+              <span className="dl-os-ico">
+                <primaryOS.Icon />
+              </span>
+              {primaryOS.label}
+              {primaryOS.id === mine ? <span className="dl-you">your system</span> : null}
             </div>
-          );
-        })}
+            {primaryAsset ? (
+              <a className="dl-btn" href={primaryAsset.url} download>
+                Download {primaryOS.ext} <span className="dl-size">{mb(primaryAsset.size)}</span>
+              </a>
+            ) : (
+              <a className="dl-btn" href={RELEASES} target="_blank" rel="noopener">
+                {failed ? "Open releases" : "Loading..."}
+              </a>
+            )}
+          </div>
+          <div className="dl-others">
+            {others.map((o) => {
+              const a = find(o.id);
+              return (
+                <a
+                  key={o.id}
+                  className="dl-other"
+                  href={a ? a.url : RELEASES}
+                  {...(a ? { download: true } : { target: "_blank", rel: "noopener" })}
+                >
+                  <span className="dl-other-ico"><o.Icon /></span>
+                  {o.label} {o.ext}
+                </a>
+              );
+            })}
+            {deb ? (
+              <a className="dl-other" href={deb.url} download>
+                <span className="dl-other-ico"><Penguin /></span>Linux .deb
+              </a>
+            ) : null}
+          </div>
+          <p className="route-note">
+            Unsigned for now: on macOS right-click and choose Open the first time; on Windows click
+            More info then Run anyway.{" "}
+            <a href={RELEASES} target="_blank" rel="noopener" className="req-link">
+              All files
+            </a>
+          </p>
+        </div>
       </div>
-      <p className="install-note">
-        Unsigned for now: on macOS, right-click the app and choose Open the first time; on Windows,
-        click More info then Run anyway.{" "}
-        <a href={RELEASES} target="_blank" rel="noopener" className="dl-alt">
-          All files
-        </a>
-      </p>
     </section>
   );
 }

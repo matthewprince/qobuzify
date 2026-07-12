@@ -14,6 +14,7 @@
 try {
   var net = require("net");
   var http = require("http");
+  var electron = null; try { electron = require("electron"); } catch (_) {}
 
   var CLIENT_ID = "1519198716417020004"; // Qobuzify's built-in Discord app
   var BRIDGE_PORT = 7673;
@@ -105,6 +106,28 @@ try {
     } catch (_) {}
   }, HEARTBEAT_MS);
 
+  // OS window fullscreen: the renderer is sandboxed (no Node/electron), so it POSTs here and we
+  // drive BrowserWindow.setFullScreen from the main process. We hook 'leave-full-screen' ONCE so
+  // that leaving fullscreen by ANY route (our toggle, the OS, a shortcut) tells the renderer to
+  // drop its in-view fullscreen button state.
+  function fsWindow() {
+    try { var BW = electron && electron.BrowserWindow; if (!BW) return null; return BW.getFocusedWindow() || (BW.getAllWindows() || [])[0] || null; } catch (_) { return null; }
+  }
+  var fsLeaveHooked = false;
+  function setFullscreen(on) {
+    var win = fsWindow(); if (!win) return false;
+    try {
+      if (!fsLeaveHooked) {
+        fsLeaveHooked = true;
+        win.on("leave-full-screen", function () {
+          try { win.webContents.executeJavaScript("window.__qzOnLeaveFS&&window.__qzOnLeaveFS()", true).catch(function () {}); } catch (_) {}
+        });
+      }
+      win.setFullScreen(!!on);
+      return true;
+    } catch (_) { return false; }
+  }
+
   // localhost bridge: the renderer POSTs { activity: {...} } or { clear: true }
   var server = http.createServer(function (req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -127,10 +150,31 @@ try {
       });
       return;
     }
+    if (req.method === "POST" && req.url === "/fullscreen") {
+      var fb = ""; req.on("data", function (c) { fb += c; if (fb.length > 1e4) { try { req.destroy(); } catch (_) {} } });
+      req.on("end", function () {
+        var d = null; try { d = JSON.parse(fb); } catch (_) {}
+        var ok = setFullscreen(!!(d && d.on));
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: ok }));
+      });
+      return;
+    }
     res.writeHead(404); res.end();
   });
-  server.on("error", function () {}); // port in use / already running - stay quiet
-  try { server.listen(BRIDGE_PORT, "127.0.0.1"); } catch (_) {}
+  // Bind the localhost bridge. A quick restart can leave the OLD Qobuz process holding 7673 for a few
+  // seconds (slow exit / TIME_WAIT), so a single listen() would EADDRINUSE and the old code gave up
+  // SILENTLY FOREVER = Discord RPC dead until a full restart (the reported "127.0.0.1:7673 connection
+  // refused" bug). Retry with backoff so the bridge recovers once the port frees, and log the outcome so
+  // a persistent failure (another instance / firewall / AV blocking the local server) is diagnosable.
+  var _bindTries = 0;
+  function startBridge() { try { server.listen(BRIDGE_PORT, "127.0.0.1"); } catch (_) { scheduleBind(); } }
+  function scheduleBind() {
+    if (_bindTries++ >= 12) { try { console.error("[Qobuzify RPC] bridge could not bind 127.0.0.1:" + BRIDGE_PORT + " after retries - another instance may hold it, or a firewall/AV is blocking the local server; Discord presence will be off"); } catch (_) {} return; }
+    setTimeout(startBridge, Math.min(1000 * _bindTries, 5000));
+  }
+  server.on("error", function (e) { try { console.error("[Qobuzify RPC] bridge listen error:", (e && e.code) || e); } catch (_) {} scheduleBind(); });
+  server.on("listening", function () { _bindTries = 0; try { console.log("[Qobuzify RPC] bridge listening on 127.0.0.1:" + BRIDGE_PORT); } catch (_) {} });
+  startBridge();
 
   connect(); // start trying Discord immediately; retries forever until it (re)appears
 } catch (_) { /* never break the main process */ }

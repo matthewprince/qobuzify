@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://qobuzify.app/</loc><priority>1.0</priority></url>
+  <url><loc>https://qobuzify.app/docs/</loc><priority>0.7</priority></url>
+  <url><loc>https://qobuzify.app/submit</loc><priority>0.4</priority></url>
+  <url><loc>https://qobuzify.app/issues</loc><priority>0.4</priority></url>
+  <url><loc>https://qobuzify.app/security</loc><priority>0.3</priority></url>
+  <url><loc>https://qobuzify.app/unban</loc><priority>0.3</priority></url>
+</urlset>

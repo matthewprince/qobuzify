@@ -15,6 +15,12 @@ function loadMap(k) { try { var o = JSON.parse(localStorage.getItem(k) || "{}");
 function saveMap(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 var blocked = loadMap(A_KEY);   // { normArtist: "Display Name" }
 var trashed = loadMap(S_KEY);   // { "normTitle|normArtist": "Title — Artist" }
+// Cheap "is anything blocked/trashed at all" flag. When both lists are empty nothing can EVER deny, so the
+// stream-URL gate must not serialize audio behind a track/get round-trip (pure latency, zero benefit). Kept
+// in sync in recomputeDeny(), which afterChange() calls on every toggle/unblock/restore and cloud merge.
+var anyRule = false;
+function recomputeAnyRule() { anyRule = false; for (var k in blocked) { if (blocked.hasOwnProperty(k)) { anyRule = true; return; } } for (var k2 in trashed) { if (trashed.hasOwnProperty(k2)) { anyRule = true; return; } } }
+recomputeAnyRule(); // seed from the loaded localStorage lists
 
 // normalize for matching so row text vs player text vs API name all collapse to one key.
 function norm(s) { return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[‘’'`]/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
@@ -95,7 +101,7 @@ function resolveAhead() {
   } catch (e) {}
 }
 // after a block/trash toggle, re-derive the deny set over everything we've already resolved.
-function recomputeDeny() { deny = {}; for (var id in metaCache) if (metaCache.hasOwnProperty(id) && metaBlocked(metaCache[id])) deny[id] = true; }
+function recomputeDeny() { recomputeAnyRule(); deny = {}; for (var id in metaCache) if (metaCache.hasOwnProperty(id) && metaBlocked(metaCache[id])) deny[id] = true; }
 // Pull any upcoming trashed/blocked tracks OUT of the play queue entirely, so they never become the current
 // track and never make a sound (vs the pause-and-skip path, which can't retract audio already in the output
 // pipeline once a track starts). dropUpcoming only touches items ahead of the current one and no-ops (no
@@ -154,6 +160,7 @@ function hookedFetch(input, init) {
       var id = new URL(url, location.href).searchParams.get("track_id");
       if (id) {
         if (deny[id]) return denyResp();
+        if (!anyRule) return origFetch.apply(this, arguments); // no blocked artists / trashed songs -> nothing can deny; never gate the audio path
         if (!metaCache[id]) {
           // Unclassified: gate the stream URL behind one track/get so a blocked track can NEVER buffer
           // ahead of its verdict. Buffering-before-deny is what leaks the first word at a gapless

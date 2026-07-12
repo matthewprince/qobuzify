@@ -4,6 +4,10 @@ export type Theme = {
   author: string;
   description: string;
   preview: { bg: string; surface: string; accent: string; text: string };
+  // Optional real screenshot. When set, PlayerMock renders it in the frame instead of
+  // the live CSS mock, so dropping public/themes/<slug>.webp files upgrades each slot
+  // to a real capture with zero layout change. Unset = the CSS mock is the final render.
+  image?: string;
 };
 
 // Display metadata for the gallery. The real theme files live in ../../themes/

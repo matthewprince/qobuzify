@@ -1,0 +1,8 @@
+{
+  "id": "playlist-context",
+  "name": "Playlist Context",
+  "description": "Remembers the playlist or album you're playing from, even after shuffle. A 'Playing from' chip in the player bar shows the source and the track's position; click it to jump there and highlight the current track, or right-click to remove that track from the playlist without disturbing playback.",
+  "icon": "icon-view-grid-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

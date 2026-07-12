@@ -34,6 +34,12 @@
   input:focus, textarea:focus, select:focus { border-color: rgba(61,168,254,.6); }
   textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
   select { appearance: none; cursor: pointer; }
+  /* the open option list renders with the OS default (near-black) text unless we set it explicitly */
+  option { background: #0d1320; color: #f0f6fc; }
+  .opt { color: #6f7b8d; font-weight: 400; }
+  .contact-row { display: flex; gap: 8px; }
+  .contact-row select { flex: 0 0 150px; }
+  .contact-row input { flex: 1; min-width: 0; }
   .diag {
     margin: 14px 0 2px; font-size: 11.5px; color: #8b98ad; background: rgba(255,255,255,.03);
     border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 10px 12px;
@@ -76,6 +82,16 @@
       <label for="body">Details</label>
       <textarea id="body" maxlength="8000" placeholder="What did you do, what happened, and what did you expect? Steps to reproduce help a lot."></textarea>
 
+      <label for="contactVia">Contact <span class="opt">(optional &mdash; only if you'd like a reply)</span></label>
+      <div class="contact-row">
+        <select id="contactVia" aria-label="Contact method">
+          <option value="">No reply needed</option>
+          <option value="email">Email</option>
+          <option value="discord">Discord</option>
+        </select>
+        <input id="contact" maxlength="120" placeholder="you@email.com or Discord username" autocomplete="off" />
+      </div>
+
       <div id="diagWrap" style="display:none">
         <label>Diagnostics (sent with your report)</label>
         <div class="diag" id="diag"></div>
@@ -109,6 +125,13 @@
       document.getElementById("diag").textContent = lines.join("\n");
     }
 
+    // adapt the contact placeholder + input type to the chosen method
+    var cVia = document.getElementById("contactVia"), cIn = document.getElementById("contact");
+    cVia.addEventListener("change", function () {
+      cIn.placeholder = cVia.value === "email" ? "you@email.com" : cVia.value === "discord" ? "your Discord username" : "you@email.com or Discord username";
+      cIn.type = cVia.value === "email" ? "email" : "text";
+    });
+
     window.onSolved = function (t) { token = t; btn.disabled = false; };
     window.onExpired = function () { token = null; btn.disabled = true; };
 
@@ -118,10 +141,15 @@
       var title = document.getElementById("title").value.trim();
       var body = document.getElementById("body").value.trim();
       if (!title && !body) { msg("Please add a summary or details.", "err"); return; }
+      var contact = cIn.value.trim();
+      var contactVia = cVia.value || (contact ? (/@/.test(contact) ? "email" : "discord") : "");
+      if (contactVia === "email" && contact && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact)) { msg("That email doesn't look right. Fix it, or switch to Discord.", "err"); return; }
+      var meta = { type: document.getElementById("type").value, v: diag.v, ua: diag.ua, theme: diag.theme, exts: diag.exts };
+      if (contact) { meta.contact = contact; meta.contactVia = contactVia; }
       btn.disabled = true; msg("Sending...", "");
       fetch(API + "/v1/report", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token, title: title, body: body, meta: { type: document.getElementById("type").value, v: diag.v, ua: diag.ua, theme: diag.theme, exts: diag.exts } })
+        body: JSON.stringify({ token: token, title: title, body: body, meta: meta })
       })
         .then(function (r) { return r.json(); })
         .then(function (j) {

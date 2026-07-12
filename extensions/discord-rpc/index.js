@@ -25,9 +25,22 @@ try {
   var _fetch = window.fetch.bind(window); // capture the real fetch (before any bridge patch)
   var lastSig = null, pend = null, iv = null, t0 = null, offChange = null, offSub = null;
   var qualCache = {}, qualInflight = {}; // trackId -> "Hi-Res 24-Bit / 96 kHz" ("" once fetched w/ none)
+  var _bridgeFails = 0, _bridgeWarned = false; // surface a dead bridge instead of failing silently
 
   function post(body) {
-    try { _fetch(BRIDGE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(function () {}); } catch (e) {}
+    try {
+      _fetch(BRIDGE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function () { _bridgeFails = 0; })
+        .catch(function () {
+          // The bridge lives in the main process (rpc-main.js). If it's unreachable the POST just
+          // throws ERR_CONNECTION_REFUSED forever with no user-facing sign - log ONE actionable line
+          // so it's diagnosable (this was exactly how the "Discord not registering" report was found).
+          if (++_bridgeFails === 3 && !_bridgeWarned) {
+            _bridgeWarned = true;
+            try { console.warn("[Qobuzify] Discord RPC: the local bridge at 127.0.0.1:7673 is unreachable, so Discord presence is off. Usually the main-process patch is missing (re-run `qobuzify update`) or a firewall/antivirus is blocking the local bridge."); } catch (_) {}
+          }
+        });
+    } catch (e) {}
   }
   // Port of qobuz_core.quality_str: sr may be Hz (44100) or already kHz (44.1).
   function qualityStr(bd, sr) {
