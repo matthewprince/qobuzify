@@ -1,0 +1,8 @@
+{
+  "id": "genre-filter",
+  "name": "Genre Filter",
+  "description": "Finer genre browsing for Discover. Qobuz's genre chips are coarse (Pop and Rock lumped together); this adds a genre + sub-genre picker next to them and opens a scoped Discover of New Releases, Most Streamed, Press Awards and Playlists for the exact genre you pick.",
+  "icon": "icon-bars",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

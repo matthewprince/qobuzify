@@ -22,10 +22,12 @@ function titleCore(s) { return norm(s).replace(/\((?:feat|with|ft|prod)\.?[^)]*\
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
 function rowInfo(row) {
-  // .ListItem__title is the clean song title. Don't fall back to .ListItem__titleWithArtists as a
-  // sibling in one querySelector - that element is the title's PARENT and its textContent glues the
-  // artist onto the end ("SongThe Beatles"), which poisons the search query.
-  var te = row.querySelector(".ListItem__title");
+  // .ListItem__title is the clean song title on dwp-ui rows; the classic .track-list used in the
+  // Library, search and artist pages puts the title in .track-name (a span whose textContent is just
+  // the title - the artist sits in a separate .track-artist cell, so it isn't glued on). Don't fall
+  // back to .ListItem__titleWithArtists as a sibling in one querySelector - that element is the title's
+  // PARENT and its textContent glues the artist onto the end ("SongThe Beatles"), poisoning the query.
+  var te = row.querySelector(".ListItem__title") || row.querySelector(".track-name");
   var title = te ? te.textContent.trim() : "";
   if (!title) { var alt = row.querySelector(".ListItem__titleWithArtists"); title = alt ? alt.textContent.trim() : ""; }
   var ae = row.querySelector('a[href*="/artist/"]');
@@ -146,10 +148,14 @@ function openPanel(anchor, info) {
 }
 
 // ---- drop the button onto greyed-out (unavailable) rows ----
-// .isDisabled is Qobuz's unavailable marker; .isPast is just already-played queue history, so skip it.
+// Two row systems ship in the desktop app. The dwp-ui .ListItem rows (playlists, albums, queue) mark
+// an unavailable track with .isDisabled (.isPast is just already-played queue history, so skip it).
+// The classic .track-list rows used in the Library (.user-library, i.e. liked songs / favorites),
+// search and artist pages instead put .disable on the .track-item. Query both, or the button never
+// shows on the library's greyed-out rows.
 var ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.2-4.2"></path></svg>';
 function decorate() {
-  var rows = document.querySelectorAll(".ListItem.isDisabled:not(.isPast)");
+  var rows = document.querySelectorAll(".ListItem.isDisabled:not(.isPast), .track-item.disable");
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     if (row.getAttribute("data-qz-fav")) continue;
@@ -173,6 +179,11 @@ Q.css(CSS_ID, [
   "background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 22%,transparent);color:var(--qz-accent,#3DA8FE);",
   "opacity:.9;transition:background .14s,transform .12s,opacity .14s;}",
   ".qz-fav-btn:hover{background:var(--qz-accent,#3DA8FE);color:#06090a;opacity:1;transform:translateY(-50%) scale(1.08);}",
+  // classic .track-item rows (Library / search) are shorter and lay their cells out differently, so
+  // anchor the button over the left play zone - inert on an unavailable row - instead of the .ListItem
+  // right-side actions cluster. .track-list li is already position:relative; mark the item too to be safe.
+  ".track-item.disable[data-qz-fav]{position:relative;}",
+  ".track-item.disable[data-qz-fav] .qz-fav-btn{right:auto;left:10px;width:22px;height:22px;}",
 
   ".qz-fav-panel{position:fixed;z-index:2147483600;width:344px;max-height:340px;overflow:hidden;display:flex;flex-direction:column;",
   "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",

@@ -1,0 +1,8 @@
+{
+  "id": "eq-boost",
+  "name": "EQ (experimental)",
+  "description": "A Web Audio equalizer for the web-player build (the Linux/Mac/Windows Electron wrapper). Prototype: a heavy bass boost to prove the audio tap works. No effect on the Windows desktop app, which plays through a native bit-perfect engine with nothing to tap.",
+  "icon": "icon-view-grid-filled",
+  "version": "0.1.0",
+  "author": "matthewprince"
+}

@@ -1,0 +1,8 @@
+{
+  "id": "playlist-power",
+  "name": "Playlist Power",
+  "description": "Two playlist conveniences. Sort: a control on any playlist page to view its tracks by Recently added, Title A-Z, Duration or Default, and play any track from that order. Context: a 'N / M in <playlist>' pill in the player so shuffle never loses where you are, with a one-click 'Remove from this playlist' from the now-playing bar.",
+  "icon": "icon-view-grid-filled",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

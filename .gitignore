@@ -28,6 +28,12 @@ server/
 dash/
 tools/
 
+# internal reverse-engineering research (Qobuz APK teardown) - kept local, not published
+docs/qobuz-beta-feature-teardown.md
+
+# native Android app: separate deliverable + build artifacts; not part of the desktop/wrapper release
+android/
+
 # logs / os cruft
 *.log
 .DS_Store

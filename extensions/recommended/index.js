@@ -357,14 +357,34 @@ function buildSections(scroll) {
 function readLog(k) { try { return JSON.parse(Q.storage.get("recent:" + k, "[]")) || []; } catch (e) { return []; } }
 function writeLog(k, a) { Q.storage.set("recent:" + k, JSON.stringify(a)); }
 function nowMs() { try { return Date.now(); } catch (e) { return 0; } }
-function curArtistId() { var a = document.querySelector('.player a[href*="/artist/"]'); if (a) { var m = (a.getAttribute("href") || "").match(/\/artist\/(\d+)/); if (m) return m[1]; } return null; }
+// The track's real performer id. The player-bar DOM (.player's first /artist/ link) isn't reliably the
+// track's main performer - on the web player it can point at a featured or a different artist that
+// merely SHARES THE NAME, and that wrong id then seeds the rotation rail, promoting the wrong artist.
+// track/get's `performer` is the authoritative identity, so disambiguate by that id, not a name/DOM guess.
+function authoritativeArtistId(t) {
+  if (!t || !t.id) return Promise.resolve(null);
+  return api("track/get?track_id=" + t.id).then(function (j) {
+    var p = (j && (j.performer || (j.album && j.album.artist))) || null;
+    return (p && p.id != null) ? String(p.id) : null;
+  }, function () { return null; });
+}
 function bump(kind, id) { if (!id) return; var arr = readLog(kind).filter(function (x) { return x.id !== id; }); arr.unshift({ id: id, t: nowMs() }); writeLog(kind, arr.slice(0, 20)); }
 function logTrack(t) {
   if (!t || !t.id) return;
   var arr = readLog("tracks").filter(function (x) { return x.id !== t.id; });
-  arr.unshift({ id: t.id, title: t.title, artist: t.artist, artistId: curArtistId(), albumId: t.albumId, cover: t.cover, trackNumber: t.trackNumber || t.track_number, t: nowMs() });
+  // log the play immediately with no artist id, then patch in the AUTHORITATIVE performer id once the
+  // API resolves. Never seed from the player-bar scrape: a wrong same-named id shown even briefly is
+  // exactly the "wrong artist" bug. null just means the artist card holds off for a beat, then corrects.
+  arr.unshift({ id: t.id, title: t.title, artist: t.artist, artistId: null, albumId: t.albumId, cover: t.cover, trackNumber: t.trackNumber || t.track_number, t: nowMs() });
   writeLog("tracks", arr.slice(0, 40));
   if (active) refreshRotation();
+  authoritativeArtistId(t).then(function (aid) {
+    if (!aid) return;
+    var log = readLog("tracks");
+    for (var i = 0; i < log.length; i++) {
+      if (log[i].id === t.id) { if (log[i].artistId !== aid) { log[i].artistId = aid; writeLog("tracks", log); if (active) refreshRotation(); } break; }
+    }
+  });
 }
 function logRoute(path) {
   var m;

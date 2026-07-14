@@ -1,0 +1,8 @@
+{
+  "id": "library-load",
+  "name": "Full Library Load",
+  "description": "Loads your whole Qobuz favorites library up front (paged 500 at a time, the app's own max) and caches it, so even a 40k-track collection is available to browse, search and mark instantly instead of trickling in.",
+  "icon": "icon-heart",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}

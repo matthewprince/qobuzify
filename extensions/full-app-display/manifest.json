@@ -3,6 +3,6 @@
   "name": "Full App Display",
   "description": "A cinematic fullscreen now-playing view: big album art, title, artist, a live seekable progress bar and transport controls over a blurred backdrop. Open it from the player bar or press F.",
   "icon": "icon-album-filled",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "matthewprince"
 }

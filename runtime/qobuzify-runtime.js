@@ -520,6 +520,10 @@
       getState: function () { return QZ_STORE.getState(); },
       subscribe: function (fn) { return QZ_STORE.subscribe(fn); },
       accent: function () { return (document.documentElement.style.getPropertyValue("--qz-accent") || DEFAULT_ACCENT).trim(); },
+      // Theme API (CATALOG/accentOf/activeSlug/applyTheme are in-closure). Additive; benefits desktop + mobile.
+      themes: function () { try { return (CATALOG || []).map(function (t) { return { slug: t.slug, name: t.name || t.slug, accent: accentOf(t) }; }); } catch (e) { return []; } },
+      activeTheme: function () { try { return activeSlug(); } catch (e) { return null; } },
+      applyTheme: function (slug) { try { applyTheme(slug); return true; } catch (e) { return false; } },
       css: function (id, text) { var e = document.getElementById(id); if (!e) { e = document.createElement("style"); e.id = id; (document.head || document.documentElement).appendChild(e); } e.textContent = text; return e; },
       el: function (html) { var t = document.createElement("template"); t.innerHTML = (html || "").trim(); return t.content.firstElementChild; },
       storage: {

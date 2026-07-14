@@ -8,6 +8,10 @@
 var Q = Qobuzify;
 var CSS_ID = "qz-fad-css";
 var pollIv = null, offTrack = null;
+var durCache = {};        // trackId -> duration in SECONDS (queue-remaining readout)
+var durInflight = {};     // trackId -> 1 while a track/get is in flight
+var lastQSig = "";        // signature of the upcoming queue, so we only re-resolve when it changes
+var optimisticFav = null; // { id, val } - bridges the gap before the native heart reflects a toggle
 
 var IC = {
   play: '<svg viewBox="0 0 24 24" width="30" height="30"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>',
@@ -15,7 +19,10 @@ var IC = {
   prev: '<svg viewBox="0 0 24 24" width="24" height="24"><path d="M7 6h2v12H7zM20 6v12L9 12z" fill="currentColor"/></svg>',
   next: '<svg viewBox="0 0 24 24" width="24" height="24"><path d="M15 6h2v12h-2zM4 6l11 6L4 18z" fill="currentColor"/></svg>',
   expand: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>',
-  close: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  close: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg>',
+  heartFilled: '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/></svg>'
 };
 
 function bigCover(url) { return url ? String(url).replace(/_\d+\.(jpg|jpeg|png|webp)/i, "_600.$1") : ""; }
@@ -34,6 +41,122 @@ function seekToMs(targetMs) {
   var o = { bubbles: true, cancelable: true, view: window, clientX: clientX, clientY: clientY, button: 0 };
   bar.dispatchEvent(new MouseEvent("mousemove", o));
   input.dispatchEvent(new MouseEvent("mouseup", o));
+}
+
+// --- favourite / like ---------------------------------------------------------------------------
+// The player bar's own heart (.player .ButtonFavorite, class ButtonFavorite--isActive when favourited)
+// is Qobuz's live source of truth. Our FAD button mirrors it: clicking ours drives the native heart so
+// Qobuz owns the write (its click performs favorite/create|delete) and the two never desync. If the native
+// heart is somehow absent we fall back to calling favorite/create|delete?type=tracks&track_ids= directly.
+function curId() { try { var t = Q.player.getTrack(); return t && t.id != null ? t.id : null; } catch (e) { return null; } }
+function nativeHeart() { return document.querySelector(".player .ButtonFavorite"); }
+function isFavNow() {
+  var id = curId();
+  if (optimisticFav && optimisticFav.id === id) return optimisticFav.val;
+  var h = nativeHeart();
+  if (h) return h.classList.contains("ButtonFavorite--isActive");
+  return false;
+}
+function renderLike() {
+  var root = document.getElementById("qz-fad-root"); if (!root) return;
+  var btn = root.querySelector(".qz-fad-like"); if (!btn) return;
+  var id = curId();
+  if (optimisticFav && optimisticFav.id !== id) optimisticFav = null;                 // track changed -> drop stale optimism
+  var h = nativeHeart();
+  if (optimisticFav && h && h.classList.contains("ButtonFavorite--isActive") === optimisticFav.val) optimisticFav = null; // native caught up
+  var fav = isFavNow();
+  btn.classList.toggle("qz-fad-liked", fav);
+  btn.setAttribute("aria-pressed", fav ? "true" : "false");
+  btn.title = fav ? "Remove from favourites" : "Add to favourites";
+  var ic = btn.querySelector(".qz-fad-like-ic"); if (ic) ic.innerHTML = fav ? IC.heartFilled : IC.heart;
+  btn.disabled = id == null;
+}
+function toggleLike() {
+  var id = curId(); if (id == null) return;
+  var want = !isFavNow();
+  optimisticFav = { id: id, val: want };
+  renderLike();
+  var h = nativeHeart();
+  if (h) h.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  else Q.api("favorite/" + (want ? "create" : "delete") + "?type=tracks&track_ids=" + id).catch(function () {});
+}
+
+// --- queue remaining time -----------------------------------------------------------------------
+// Sum the durations of the play-queue items after currentIndex (+ the current track's remaining time) and
+// show "1h 23m left". Durations come from the store's dictionnary.tracks.data[id] when present (free), else
+// a cached track/get. Qobuz's track/get duration is in SECONDS; the dictionnary field can be either, so a
+// per-value heuristic (> 10h => milliseconds) normalises both.
+function normSec(d) { d = Number(d) || 0; if (d > 36000) d = d / 1000; return d; }
+function dictDur(id) {
+  try {
+    var data = Q.getState().dictionnary && Q.getState().dictionnary.tracks && Q.getState().dictionnary.tracks.data;
+    if (!data) return null;
+    var t = data[id]; if (t == null) t = data[String(id)];
+    if (t && t.duration != null) return normSec(t.duration);
+  } catch (e) {}
+  return null;
+}
+function durOf(id) { // seconds, or null if not known yet
+  if (id == null) return null;
+  if (durCache[id] != null) return durCache[id];
+  var d = dictDur(id); if (d != null) { durCache[id] = d; return d; }
+  return null;
+}
+function upcomingIds() {
+  try {
+    var pq = Q.getState().playqueue; if (!pq) return [];
+    var order = (pq.shuffled && pq.shuffledItems && pq.shuffledItems.length) ? pq.shuffledItems : (pq.items || []);
+    var ci = (typeof pq.currentIndex === "number" && pq.currentIndex >= 0) ? pq.currentIndex : 0;
+    var out = [], i;
+    for (i = ci + 1; i < order.length; i++) { var it = order[i]; if (it && it.trackId != null) out.push(it.trackId); }
+    return out;
+  } catch (e) { return []; }
+}
+function fmtLeft(sec) {
+  sec = Math.max(0, Math.round(sec));
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return h + "h " + (m < 10 ? "0" : "") + m + "m left";
+  if (m > 0) return m + "m left";
+  return sec + "s left";
+}
+function resolveDurations(ids) {
+  var CAP = 120, CONC = 4, list = [], i;
+  for (i = 0; i < ids.length && list.length < CAP; i++) {
+    var id = ids[i];
+    if (id == null || durCache[id] != null || durInflight[id] || dictDur(id) != null) continue;
+    list.push(id);
+  }
+  if (!list.length) return;
+  var idx = 0, active = 0;
+  function step() {
+    while (active < CONC && idx < list.length) {
+      var id = list[idx++]; durInflight[id] = 1; active++;
+      (function (id) {
+        Q.api("track/get?track_id=" + id).then(function (tr) { if (tr && tr.duration != null) durCache[id] = normSec(tr.duration); })
+          .catch(function () {}).then(function () { delete durInflight[id]; active--; paintQueue(); step(); });
+      })(id);
+    }
+  }
+  step();
+}
+function paintQueue() {
+  var root = document.getElementById("qz-fad-root"); if (!root) return;
+  var pill = root.querySelector(".qz-fad-queue"); if (!pill) return;
+  var ids = upcomingIds(), sum = 0, unresolved = 0, i;
+  for (i = 0; i < ids.length; i++) { var d = durOf(ids[i]); if (d == null) unresolved++; else sum += d; }
+  var curRem = 0;
+  try { var t = Q.player.getTrack() || {}; curRem = Math.max(0, (t.durationMs || 0) - Q.player.getPositionMs()) / 1000; } catch (e) {}
+  var total = sum + curRem;
+  if (!ids.length && curRem < 1) { pill.hidden = true; return; }
+  pill.hidden = false;
+  pill.querySelector(".qz-fad-q-txt").textContent = (unresolved > 0 ? "~" : "") + fmtLeft(total);
+  pill.title = ids.length + " track" + (ids.length === 1 ? "" : "s") + " left in queue";
+}
+function syncQueue() { // re-resolve durations only when the upcoming set actually changed, then paint
+  var ids = upcomingIds();
+  var sig = ids.length + "|" + ids[0] + "|" + ids[ids.length - 1];
+  if (sig !== lastQSig) { lastQSig = sig; resolveDurations(ids); }
+  paintQueue();
 }
 
 function isOpen() { return !!document.getElementById("qz-fad-root"); }
@@ -69,18 +192,22 @@ function open() {
   root.innerHTML =
     '<div class="qz-fad-bg"></div><div class="qz-fad-scrim"></div>' +
     '<button class="qz-fad-close" aria-label="Close">' + IC.close + "</button>" +
+    '<div class="qz-fad-queue" hidden>' + IC.clock + '<span class="qz-fad-q-txt"></span></div>' +
     '<div class="qz-fad-stage">' +
       '<div class="qz-fad-art"><img alt="" draggable="false"></div>' +
       '<div class="qz-fad-meta"><div class="qz-fad-title"></div><div class="qz-fad-artist"></div><div class="qz-fad-album"></div></div>' +
       '<div class="qz-fad-seek"><span class="qz-fad-cur">0:00</span><div class="qz-fad-bar"><div class="qz-fad-fill"></div></div><span class="qz-fad-dur">0:00</span></div>' +
       '<div class="qz-fad-controls">' +
+        '<button class="qz-fad-ctl qz-fad-like" aria-label="Favourite" aria-pressed="false"><span class="qz-fad-like-ic">' + IC.heart + "</span></button>" +
         '<button class="qz-fad-ctl qz-fad-prev" aria-label="Previous">' + IC.prev + "</button>" +
         '<button class="qz-fad-ctl qz-fad-pp" aria-label="Play/pause"></button>' +
         '<button class="qz-fad-ctl qz-fad-next" aria-label="Next">' + IC.next + "</button>" +
+        '<span class="qz-fad-spacer" aria-hidden="true"></span>' +
       "</div>" +
     "</div>";
   document.body.appendChild(root);
   root.querySelector(".qz-fad-close").addEventListener("click", close);
+  root.querySelector(".qz-fad-like").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); toggleLike(); });
   root.querySelector(".qz-fad-prev").addEventListener("click", function () { clickEl(".pct-player-prev"); });
   root.querySelector(".qz-fad-next").addEventListener("click", function () { clickEl(".pct-player-next"); });
   root.querySelector(".qz-fad-pp").addEventListener("click", function () { clickEl(".player__action-pause, .player__action-play"); setTimeout(paintProgress, 120); });
@@ -89,10 +216,11 @@ function open() {
     var input = playerInput(); var dur = input ? (parseInt(input.max, 10) || 0) : ((Q.player.getTrack() || {}).durationMs || 0);
     if (dur) seekToMs(frac * dur); setTimeout(paintProgress, 120);
   });
-  paintTrack(); paintProgress();
+  lastQSig = "";
+  paintTrack(); paintProgress(); renderLike(); syncQueue();
   requestAnimationFrame(function () { root.classList.add("qz-fad-show"); });
-  pollIv = setInterval(paintProgress, 250);
-  offTrack = Q.player.onChange(function () { paintTrack(); paintProgress(); });
+  pollIv = setInterval(function () { paintProgress(); renderLike(); syncQueue(); }, 250);
+  offTrack = Q.player.onChange(function () { optimisticFav = null; paintTrack(); paintProgress(); renderLike(); syncQueue(); });
   document.addEventListener("keydown", onEsc, true);
 }
 function close() {
@@ -131,7 +259,22 @@ Q.css(CSS_ID, [
   ".qz-fad-ctl{appearance:none;border:0;background:transparent;color:#e7ecf3;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .12s,color .12s;}",
   ".qz-fad-ctl:hover{color:#fff;transform:scale(1.1);}",
   ".qz-fad-pp{width:70px;height:70px;border-radius:50%;background:var(--qz-accent,#3DA8FE);color:#06090a;box-shadow:0 10px 34px -8px var(--qz-accent,#3DA8FE);}",
-  ".qz-fad-pp:hover{color:#06090a;filter:brightness(1.07);}"
+  ".qz-fad-pp:hover{color:#06090a;filter:brightness(1.07);}",
+  ".qz-fad-like-ic{display:flex;align-items:center;justify-content:center;}",
+  ".qz-fad-like.qz-fad-liked{color:var(--qz-accent,#3DA8FE);}",
+  ".qz-fad-like[disabled]{opacity:.35;pointer-events:none;}",
+  ".qz-fad-spacer{width:26px;height:26px;flex:0 0 auto;pointer-events:none;}",
+  ".qz-fad-queue{position:absolute;top:22px;right:24px;z-index:2;display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:20px;",
+  "background:rgba(255,255,255,.08);color:#c8d0dc;font-size:13px;font-weight:600;letter-spacing:.2px;white-space:nowrap;}",
+  ".qz-fad-queue[hidden]{display:none;}",
+  ".qz-fad-queue svg{display:block;flex:0 0 auto;opacity:.85;}",
+  // --- shared player-bar controls row: horizontal-scroll instead of dropping buttons at narrow widths ---
+  // The runtime hides slot buttons (inline display:none) once a zone reaches the centred transport; that is
+  // the reported "Lyrics / Full App Display vanish" bug. We make each zone a hidden-scrollbar horizontal
+  // scroller so buttons overflow-scroll rather than disappear; fitScroll() (JS below) caps each zone's width
+  // to stop just short of the transport, which also keeps the runtime's guard from ever needing to hide one.
+  ".player__settings>.qz-slot-right,.player__track>.qz-slot-left{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;scrollbar-width:none;overscroll-behavior-x:contain;}",
+  ".player__settings>.qz-slot-right::-webkit-scrollbar,.player__track>.qz-slot-left::-webkit-scrollbar{width:0;height:0;display:none;}"
 ].join(""));
 
 var b = document.createElement("button");
@@ -143,9 +286,46 @@ var slot = Q.playerSlot({ id: "full-app-display", zone: "right", order: 40, el: 
 function onToggleEvt() { toggle(); }
 window.addEventListener("qz-fad-toggle", onToggleEvt);
 
+// --- shared controls-row overflow fix (see the CSS block above) ---------------------------------
+// Cap each slot zone's width so its inner edge stops GAP px short of the centred transport, then the
+// CSS makes the overflow scroll instead of the runtime dropping buttons. We measure the SAME transport
+// nodes the runtime's guard reads (.pct-player-prev/.pct-player-next); shrinking a right-anchored zone
+// by its overlap moves its inner edge exactly clear, so the runtime's guard then finds nothing to hide.
+// These are style-only writes, which don't trip the runtime's childList observers, so there's no loop.
+var GAP = 12, fitT = null, offFit = null;
+function revealAll(group) { var c = group.children, i; for (i = 0; i < c.length; i++) if (c[i].style.display === "none") c[i].style.display = ""; }
+function fitScroll() {
+  try {
+    var next = document.querySelector(".pct-player-next"), prev = document.querySelector(".pct-player-prev");
+    var right = document.querySelector(".player__settings > .qz-slot-right");
+    var left = document.querySelector(".player__track > .qz-slot-left");
+    if (right && next) {
+      right.style.maxWidth = ""; revealAll(right);
+      var g = right.getBoundingClientRect(), n = next.getBoundingClientRect();
+      var over = (n.right + GAP) - g.left;                              // >0: zone's left edge intrudes on transport
+      if (over > 0 && g.width) right.style.maxWidth = Math.max(0, Math.floor(g.width - over)) + "px";
+    }
+    if (left && prev) {
+      left.style.maxWidth = ""; revealAll(left);
+      var lg = left.getBoundingClientRect(), p = prev.getBoundingClientRect();
+      var lover = lg.right - (p.left - GAP);                            // >0: zone's right edge intrudes on transport
+      if (lover > 0 && lg.width) left.style.maxWidth = Math.max(0, Math.floor(lg.width - lover)) + "px";
+    }
+  } catch (e) {}
+}
+function scheduleFit() { if (fitT) return; fitT = setTimeout(function () { fitT = null; fitScroll(); }, 100); }
+window.addEventListener("resize", scheduleFit);
+offFit = Q.observe ? Q.observe(function () { fitScroll(); }, { debounce: 250 }) : null;
+scheduleFit();
+
 return function cleanup() {
   if (slot) slot.remove();
   window.removeEventListener("qz-fad-toggle", onToggleEvt);
+  window.removeEventListener("resize", scheduleFit);
+  if (fitT) { clearTimeout(fitT); fitT = null; }
+  if (offFit) offFit();
+  var r = document.querySelector(".player__settings > .qz-slot-right"); if (r) { r.style.maxWidth = ""; revealAll(r); }
+  var l = document.querySelector(".player__track > .qz-slot-left"); if (l) { l.style.maxWidth = ""; revealAll(l); }
   close();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
