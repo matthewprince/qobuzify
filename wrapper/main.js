@@ -12,7 +12,7 @@
 //      (the desktop copies it into the app's dist dir; here we intercept and serve it).
 //   3. Sets backgroundThrottling:false + disables native-window-occlusion so the lyrics
 //      render loop never freezes when the window is hidden (a free fix vs the desktop hack).
-const { app, BrowserWindow, session, shell } = require("electron");
+const { app, BrowserWindow, session, shell, nativeImage } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -115,6 +115,55 @@ const PROBE = `(function(){
   } catch(e){ return { err: String(e) }; }
 })()`;
 
+// --- Windows taskbar thumbnail toolbar: Previous / Play-Pause / Next on the taskbar-icon hover preview
+// (parity with the native Qobuz desktop app). Windows-only. Drives the renderer's transport by clicking
+// Qobuz's own player buttons. Icons are drawn as bitmaps (white glyph + alpha, so RGBA/BGRA order doesn't
+// matter) - no asset files. A 2s poll keeps the middle button's icon in sync with play/pause. All guarded.
+const _thumb = { icons: null, playing: null, winId: null, timer: null };
+function thumbGlyph(kind) {
+  const W = 32, H = 32, buf = Buffer.alloc(W * H * 4);
+  const px = (x, y) => { if (x < 0 || y < 0 || x >= W || y >= H) return; const o = (y * W + x) * 4; buf[o] = 255; buf[o + 1] = 255; buf[o + 2] = 255; buf[o + 3] = 255; };
+  const rect = (x0, y0, x1, y1) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) px(x, y); };
+  const triR = (x0, x1, ym, half) => { for (let x = x0; x <= x1; x++) { const h = Math.round(half * (1 - (x - x0) / (x1 - x0))); for (let y = ym - h; y <= ym + h; y++) px(x, y); } };
+  const triL = (x0, x1, ym, half) => { for (let x = x1; x >= x0; x--) { const h = Math.round(half * (1 - (x1 - x) / (x1 - x0))); for (let y = ym - h; y <= ym + h; y++) px(x, y); } };
+  if (kind === "play") triR(10, 25, 16, 9);
+  else if (kind === "pause") { rect(9, 7, 15, 25); rect(18, 7, 24, 25); }
+  else if (kind === "next") { triR(7, 21, 16, 8); rect(22, 7, 25, 25); }
+  else { triL(11, 25, 16, 8); rect(7, 7, 10, 25); } // prev
+  return nativeImage.createFromBitmap(buf, { width: W, height: H });
+}
+function thumbClick(which) {
+  if (!win || win.isDestroyed()) return;
+  const sel = which === "prev" ? ".pct-player-prev, .player__action-previous" : which === "next" ? ".pct-player-next, .player__action-next" : ".player__action-pause, .player__action-play";
+  try { win.webContents.executeJavaScript(`(function(){try{var b=document.querySelector(${JSON.stringify(sel)});if(b)b.click();}catch(e){}})()`, true).catch(() => {}); } catch (_) {}
+}
+function applyThumbar(playing) {
+  if (!win || win.isDestroyed()) return;
+  if (!_thumb.icons) { try { _thumb.icons = { prev: thumbGlyph("prev"), play: thumbGlyph("play"), pause: thumbGlyph("pause"), next: thumbGlyph("next") }; } catch (_) { return; } }
+  const ic = _thumb.icons;
+  try {
+    win.setThumbarButtons([
+      { tooltip: "Previous", icon: ic.prev, click: () => thumbClick("prev") },
+      { tooltip: playing ? "Pause" : "Play", icon: playing ? ic.pause : ic.play, click: () => thumbClick("play") },
+      { tooltip: "Next", icon: ic.next, click: () => thumbClick("next") },
+    ]);
+    _thumb.playing = playing;
+  } catch (_) {}
+}
+function setupThumbar() {
+  if (process.platform !== "win32" || _thumb.timer) return;
+  _thumb.timer = setInterval(() => {
+    try {
+      if (!win || win.isDestroyed()) return;
+      win.webContents.executeJavaScript("(function(){try{return !!document.querySelector('.player__action-pause');}catch(e){return null;}})()", true)
+        .then((playing) => {
+          if (playing === null || playing === undefined) return;
+          if (win.id !== _thumb.winId || !!playing !== _thumb.playing) { _thumb.winId = win.id; applyThumbar(!!playing); }
+        }).catch(() => {});
+    } catch (_) {}
+  }, 2000);
+}
+
 async function createWindow() {
   const ses = session.fromPartition(PARTITION);
 
@@ -158,6 +207,8 @@ async function createWindow() {
   // Clean lifecycle: clear the (dev-only) probe interval and drop the window reference when it closes,
   // so nothing runs against a destroyed webContents during teardown.
   win.on("closed", () => { if (probeTimer) { clearInterval(probeTimer); probeTimer = null; } win = null; });
+
+  setupThumbar(); // Windows taskbar prev/play-pause/next buttons (no-op off win32)
 
   // Recover if the app ever restores a dead route: /foryou is a fake overlay route (the For You
   // nav opens an overlay, it never really navigates there), so a persisted /foryou lands on

@@ -12,7 +12,12 @@
 
   var DATA = window.__QOBUZIFY__ || { catalog: [], def: null, version: "0.1" };
   var CATALOG = DATA.catalog || [];
-  var VERSION = DATA.version || "0.1";
+  // Android runs the same baked payload as desktop, so DATA.version is the DESKTOP package version. The
+  // native shell (MainActivity) exposes the real app versionName as window.__QZ_ANDROID_VERSION__, and
+  // window.QZAndroidMedia is the reliable Android signal (the UA is spoofed desktop on both platforms).
+  var IS_ANDROID = !!window.QZAndroidMedia;
+  var PLATFORM = IS_ANDROID ? "android" : "desktop";
+  var VERSION = (IS_ANDROID && window.__QZ_ANDROID_VERSION__) || DATA.version || "0.1";
   var LS_THEME = "qobuzify:theme";
   var LS_ENABLED = "qobuzify:enabled";
   var DEFAULT_ACCENT = "#3DA8FE";
@@ -299,7 +304,7 @@
   }
   function checkForUpdate() {
     try {
-      fetch(API_BASE + "/v1/version", { cache: "no-store" })
+      fetch(API_BASE + "/v1/version?platform=" + encodeURIComponent(PLATFORM), { cache: "no-store" })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (!j || !j.latest || !verNewer(j.latest, VERSION)) return;
@@ -330,7 +335,12 @@
   }
   // the reliable, universal update: re-run the web installer (now non-destructive - it keeps the
   // user's theme and local creds). copy it to the clipboard and open the site where it's the headline.
-  function doUpdate() { copyText(INSTALL_CMD); openExternal("https://qobuzify.app/"); }
+  function doUpdate() {
+    // Android has no PowerShell installer - send it to the Android download page instead of copying a
+    // Windows command. Desktop keeps the copy-the-installer flow.
+    if (IS_ANDROID) { openExternal((updateInfo && updateInfo.url) || "https://qobuzify.app/android"); return; }
+    copyText(INSTALL_CMD); openExternal("https://qobuzify.app/");
+  }
 
   var updateToast = null;
   function showUpdateToast(j) {

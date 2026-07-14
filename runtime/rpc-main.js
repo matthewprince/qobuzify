@@ -176,6 +176,60 @@ try {
   server.on("listening", function () { _bindTries = 0; try { console.log("[Qobuzify RPC] bridge listening on 127.0.0.1:" + BRIDGE_PORT); } catch (_) {} });
   startBridge();
 
+  // --- Windows taskbar thumbnail toolbar: Previous / Play-Pause / Next on the taskbar-icon hover preview
+  // (parity with the native Qobuz app). Windows-only. The renderer is sandboxed, so the buttons live here
+  // and drive playback by clicking Qobuz's own transport in the renderer via executeJavaScript. The middle
+  // button's icon tracks play/pause via a light 2s poll. Icons are drawn as bitmaps (white glyph + alpha),
+  // so no asset files are needed and the RGBA-vs-BGRA channel order is irrelevant. Fully wrapped so it can
+  // never break the main process.
+  try {
+    if (process.platform === "win32" && electron && electron.nativeImage) {
+      var _ni = electron.nativeImage;
+      var _icons = null, _thumbPlaying = null, _thumbWinId = null;
+      var _glyph = function (kind) {
+        var W = 32, H = 32, buf = Buffer.alloc(W * H * 4); // transparent (all 0)
+        var px = function (x, y) { if (x < 0 || y < 0 || x >= W || y >= H) return; var o = (y * W + x) * 4; buf[o] = 255; buf[o + 1] = 255; buf[o + 2] = 255; buf[o + 3] = 255; };
+        var rect = function (x0, y0, x1, y1) { for (var y = y0; y < y1; y++) for (var x = x0; x < x1; x++) px(x, y); };
+        var triR = function (x0, x1, ym, half) { for (var x = x0; x <= x1; x++) { var h = Math.round(half * (1 - (x - x0) / (x1 - x0))); for (var y = ym - h; y <= ym + h; y++) px(x, y); } };
+        var triL = function (x0, x1, ym, half) { for (var x = x1; x >= x0; x--) { var h = Math.round(half * (1 - (x1 - x) / (x1 - x0))); for (var y = ym - h; y <= ym + h; y++) px(x, y); } };
+        if (kind === "play") triR(10, 25, 16, 9);
+        else if (kind === "pause") { rect(9, 7, 15, 25); rect(18, 7, 24, 25); }
+        else if (kind === "next") { triR(7, 21, 16, 8); rect(22, 7, 25, 25); }
+        else { triL(11, 25, 16, 8); rect(7, 7, 10, 25); } // prev
+        return _ni.createFromBitmap(buf, { width: W, height: H });
+      };
+      var _thumbIcons = function () { if (!_icons) { try { _icons = { prev: _glyph("prev"), play: _glyph("play"), pause: _glyph("pause"), next: _glyph("next") }; } catch (_) {} } return _icons; };
+      var _thumbClick = function (which) {
+        var win = fsWindow(); if (!win) return;
+        var sel = which === "prev" ? ".pct-player-prev, .player__action-previous" : which === "next" ? ".pct-player-next, .player__action-next" : ".player__action-pause, .player__action-play";
+        try { win.webContents.executeJavaScript("(function(){try{var b=document.querySelector(" + JSON.stringify(sel) + ");if(b)b.click();}catch(e){}})()", true).catch(function () {}); } catch (_) {}
+      };
+      var _setThumb = function (win, playing) {
+        var ic = _thumbIcons(); if (!ic || !win) return;
+        try {
+          win.setThumbarButtons([
+            { tooltip: "Previous", icon: ic.prev, click: function () { _thumbClick("prev"); } },
+            { tooltip: playing ? "Pause" : "Play", icon: playing ? ic.pause : ic.play, click: function () { _thumbClick("play"); } },
+            { tooltip: "Next", icon: ic.next, click: function () { _thumbClick("next"); } }
+          ]);
+          _thumbPlaying = playing;
+        } catch (_) {}
+      };
+      // .player__action-pause is present only while playing (it shows the Pause control); poll it to keep the
+      // middle button's icon in sync and to (re)apply on a new window.
+      setInterval(function () {
+        try {
+          var win = fsWindow(); if (!win) return;
+          win.webContents.executeJavaScript("(function(){try{return !!document.querySelector('.player__action-pause');}catch(e){return null;}})()", true)
+            .then(function (playing) {
+              if (playing === null || playing === undefined) return;
+              if (win.id !== _thumbWinId || !!playing !== _thumbPlaying) { _thumbWinId = win.id; _setThumb(win, !!playing); }
+            }).catch(function () {});
+        } catch (_) {}
+      }, 2000);
+    }
+  } catch (_) { /* never break the main process */ }
+
   connect(); // start trying Discord immediately; retries forever until it (re)appears
 } catch (_) { /* never break the main process */ }
 })();
