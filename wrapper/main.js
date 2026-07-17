@@ -176,7 +176,7 @@ function setupThumbar() {
 const net = require("net");
 const { spawn } = require("child_process");
 const qzbp = { proc: null, sock: null, buf: "", reqId: 0, mode: "off", enabled: false, socketPath: null, restarts: 0, restartAt: 0, wantPlaying: false, curUrl: null,
-  srv: null, port: 0, feed: null, token: 0 };
+  srv: null, port: 0, feed: null, token: 0, device: null };
 
 // The web player never hands out a plain stream URL: /file/url returns a segment template whose media
 // segments are encrypted, and the page decrypts them in JS before pushing them into MSE. So the only
@@ -234,6 +234,93 @@ function mpvBinary() {
   return path.join(base, "mpv", "AppRun"); // linux: the self-contained mpv AppImage's entry point
 }
 // Byte-exact output flags per platform. exclusivity: linux from selecting hw:, mac/win from --audio-exclusive.
+// --- Linux: find the real DAC, and get everything else off it ---------------------------------------
+// Two things stand between us and a byte-exact path, and both are invisible if you don't look:
+//  1. With PipeWire/Pulse installed, ALSA's "default" is their plug. mpv plays into it happily and the
+//     server resamples to whatever the graph runs at, so the audio is NOT bit-perfect while the badge
+//     insists it is. We have to name the hw: device ourselves.
+//  2. The muted web <audio> still keeps the server parked on that card, so an exclusive open returns
+//     "Device or resource busy". Park OUR streams on a throwaway null sink instead: the real sink goes
+//     idle, the server suspends it, and the device frees up. The web clock keeps running on the null sink,
+//     which is all the timeline needs.
+const pw = { module: null, moved: [], timer: null };
+function pactl(args) {
+  try { return require("child_process").execFileSync("pactl", args, { timeout: 4000, encoding: "utf8" }); }
+  catch (_) { return null; }
+}
+function pactlJson(args) { try { return JSON.parse(pactl(["-f", "json"].concat(args)) || "null"); } catch (_) { return null; } }
+
+function alsaDeviceForDefaultSink() {
+  if (process.platform !== "linux") return null;
+  if (process.env.QZ_BP_DEVICE) return process.env.QZ_BP_DEVICE; // explicit override wins (diagnostics)
+  const def = (pactl(["get-default-sink"]) || "").trim();
+  const sinks = pactlJson(["list", "sinks"]);
+  if (sinks && sinks.length) {
+    const pick = sinks.find((s) => s.name === def && (s.properties || {})["alsa.card"] != null)
+      || sinks.find((s) => (s.properties || {})["alsa.card"] != null);
+    if (pick) {
+      const p = pick.properties || {};
+      return "alsa/hw:" + p["alsa.card"] + "," + (p["alsa.device"] == null ? 0 : p["alsa.device"]);
+    }
+  }
+  // No pactl (bare ALSA): take the first real card. Loopback/Dummy are virtual and never the DAC.
+  try {
+    const cards = fs.readFileSync("/proc/asound/cards", "utf8").split("\n");
+    for (const line of cards) {
+      const m = /^\s*(\d+)\s+\[(\S+)/.exec(line);
+      if (m && !/loopback|dummy/i.test(m[2])) return "alsa/hw:" + m[1] + ",0";
+    }
+  } catch (_) {}
+  return null;
+}
+
+// Move this app's own streams to a null sink so the DAC goes idle and mpv can take it exclusively.
+function pwIsolate() {
+  if (process.platform !== "linux" || pw.module) return;
+  const id = (pactl(["load-module", "module-null-sink", "sink_name=qobuzify_silent",
+    "sink_properties=device.description=Qobuzify_Bitperfect_Silent"]) || "").trim();
+  if (!/^\d+$/.test(id)) return; // no pactl, or the server refused: mpv falls back to shared and says so
+  pw.module = id;
+  const mine = new RegExp(path.basename(process.execPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "|qobuzify", "i");
+  const inputs = pactlJson(["list", "sink-inputs"]) || [];
+  for (const si of inputs) {
+    const p = si.properties || {};
+    const who = String(p["application.name"] || "") + " " + String(p["application.process.binary"] || "");
+    if (!mine.test(who)) continue; // never touch other apps' audio
+    const from = si.sink != null ? String(si.sink) : null;
+    if (pactl(["move-sink-input", String(si.index), "qobuzify_silent"]) !== null) pw.moved.push({ index: si.index, from });
+  }
+}
+// Enable happens at boot, before the web player has ever made a sound, so there is usually nothing to move
+// yet: Chromium creates its stream when playback starts and it lands on the real sink, which mpv is holding
+// exclusively. Keep sweeping while enabled so that stream gets parked as soon as it appears. Async on
+// purpose, this runs on a timer and must never block the main process.
+function pwSweep() {
+  if (process.platform !== "linux" || !pw.module || !qzbp.enabled) return;
+  const mine = new RegExp(path.basename(process.execPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "|qobuzify", "i");
+  require("child_process").execFile("pactl", ["-f", "json", "list", "sink-inputs"], { timeout: 4000 }, (err, out) => {
+    if (err || !qzbp.enabled || !pw.module) return;
+    let inputs; try { inputs = JSON.parse(out); } catch (_) { return; }
+    for (const si of inputs || []) {
+      const p = si.properties || {};
+      const who = String(p["application.name"] || "") + " " + String(p["application.process.binary"] || "");
+      if (!mine.test(who)) continue;                       // never touch other apps' audio
+      if (String(p["node.target"] || "") === "qobuzify_silent") continue;
+      if (pw.moved.some((m) => m.index === si.index)) continue;
+      const from = si.sink != null ? String(si.sink) : null;
+      require("child_process").execFile("pactl", ["move-sink-input", String(si.index), "qobuzify_silent"],
+        { timeout: 4000 }, (e2) => { if (!e2) pw.moved.push({ index: si.index, from }); });
+    }
+  });
+}
+function pwRestore() {
+  if (process.platform !== "linux") return;
+  if (pw.timer) { clearInterval(pw.timer); pw.timer = null; }
+  for (const m of pw.moved) { if (m.from) pactl(["move-sink-input", String(m.index), m.from]); }
+  pw.moved = [];
+  if (pw.module) { pactl(["unload-module", pw.module]); pw.module = null; }
+}
+
 function mpvArgs(sockPath, shared) {
   const a = ["--idle=yes", "--no-video", "--no-terminal", "--no-config", "--keep-open=yes",
     "--input-ipc-server=" + sockPath, "--gapless-audio=weak", "--replaygain=no",
@@ -248,10 +335,10 @@ function mpvArgs(sockPath, shared) {
     else a.push("--ao=wasapi");
     return a;
   }
-  // QZ_BP_DEVICE forces a specific mpv audio device (e.g. alsa/hw:1,0). Dev/diagnostic only: normal use
-  // auto-picks, since a device knob is exactly the kind of tuning this app shouldn't ask users to do.
-  if (process.env.QZ_BP_DEVICE) a.push("--audio-device=" + process.env.QZ_BP_DEVICE);
-  if (process.platform === "linux") a.push("--ao=alsa", "--audio-exclusive=yes"); // hw device auto-picked; see fallback
+  // Name the hw: device explicitly. Left to itself mpv opens ALSA "default", which on any PipeWire/Pulse
+  // desktop is their plug: it accepts every rate and resamples, so we would claim bit-perfect and not be.
+  if (process.platform === "linux" && qzbp.device) a.push("--audio-device=" + qzbp.device);
+  if (process.platform === "linux") a.push("--ao=alsa", "--audio-exclusive=yes");
   else if (process.platform === "darwin") a.push("--ao=coreaudio", "--audio-exclusive=yes");
   else a.push("--ao=wasapi", "--audio-exclusive=yes");
   return a;
@@ -336,6 +423,7 @@ function qzbpStop() {
   try { if (qzbp.sock) qzbp.sock.end(); } catch (_) {}
   try { if (qzbp.proc) qzbp.proc.kill(); } catch (_) {}
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
+  pwRestore(); // put our streams back on the real sink; never leave a user's audio parked on our null sink
   if (qzbp.feed && qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} }
   qzbp.feed = null;
   try { if (qzbp.srv) qzbp.srv.close(); } catch (_) {}
@@ -344,7 +432,17 @@ function qzbpStop() {
 function qzbpCommand(msg) {
   if (!msg || typeof msg !== "object") return;
   switch (msg.type) {
-    case "enable": if (!qzbp.enabled) { qzbp.enabled = true; qzbp.restarts = 0; qzbpSpawn(false); } break;
+    case "enable":
+      if (!qzbp.enabled) {
+        qzbp.enabled = true; qzbp.restarts = 0;
+        // Resolve the DAC BEFORE isolating: once the null sink exists it may become the default, and we
+        // would then "auto-pick" the very sink we created.
+        qzbp.device = alsaDeviceForDefaultSink();
+        pwIsolate();
+        if (process.platform === "linux" && !pw.timer) pw.timer = setInterval(pwSweep, 2000);
+        qzbpSpawn(false);
+      }
+      break;
     case "disable": qzbpStop(); qzbpEvt({ type: "disabled" }); break;
     case "newtrack": qzbp.wantPlaying = true; qzbpFeedStart(); break;
     case "feed": qzbpFeedChunk(msg.data); break;
