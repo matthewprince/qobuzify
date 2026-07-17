@@ -12,7 +12,7 @@
 //      (the desktop copies it into the app's dist dir; here we intercept and serve it).
 //   3. Sets backgroundThrottling:false + disables native-window-occlusion so the lyrics
 //      render loop never freezes when the window is hidden (a free fix vs the desktop hack).
-const { app, BrowserWindow, session, shell, nativeImage } = require("electron");
+const { app, BrowserWindow, session, shell, nativeImage, ipcMain } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -164,6 +164,201 @@ function setupThumbar() {
   }, 2000);
 }
 
+// ===================================================================================================
+// Bit-perfect audio sidecar. The web player's <audio>/MSE path goes through Chromium's resampler +
+// the shared OS mixer, so it can't be bit-perfect. Instead we spawn a bundled mpv, hand it the signed
+// FLAC URL the renderer captures, and it plays it byte-exact through ALSA hw: exclusive (Linux) /
+// CoreAudio hog mode (mac) / WASAPI exclusive (win) - native rate per track, no resample/mix/volume.
+// The renderer mutes its <audio> element so only mpv reaches the DAC. This process spawns/supervises mpv
+// and relays: renderer command (qzbp:cmd) -> mpv JSON IPC, and mpv property events -> renderer (qzbp:evt).
+// PROVEN in isolation (byte-exact decode + the full load/pause/seek/observe IPC loop); the on-a-real-
+// -desktop integration (exclusive acquisition, muted-element sync) is the remaining verification.
+const net = require("net");
+const { spawn } = require("child_process");
+const qzbp = { proc: null, sock: null, buf: "", reqId: 0, mode: "off", enabled: false, socketPath: null, restarts: 0, restartAt: 0, wantPlaying: false, curUrl: null,
+  srv: null, port: 0, feed: null, token: 0 };
+
+// The web player never hands out a plain stream URL: /file/url returns a segment template whose media
+// segments are encrypted, and the page decrypts them in JS before pushing them into MSE. So the only
+// plaintext FLAC in the process is what reaches SourceBuffer.appendBuffer. The renderer forwards those
+// bytes here and we re-serve them to mpv over loopback HTTP: no Content-Length, so mpv keeps reading
+// until we end the response instead of stopping at whatever had arrived when it opened the stream.
+function qzbpFeedServer() {
+  if (qzbp.srv) return Promise.resolve(qzbp.port);
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      const m = /^\/s\/(\d+)/.exec(req.url || "");
+      const f = qzbp.feed;
+      if (!m || !f || String(f.token) !== m[1]) { res.writeHead(404); res.end(); return; }
+      if (f.res) { try { f.res.end(); } catch (_) {} } // mpv reconnected; drop the stale one
+      res.writeHead(200, { "Content-Type": "audio/mp4", "Cache-Control": "no-store", "Connection": "close" });
+      f.chunks.forEach((c) => { try { res.write(c); } catch (_) {} });
+      f.res = res;
+      if (f.done) { try { res.end(); } catch (_) {} }
+      req.on("close", () => { if (f.res === res) f.res = null; });
+    });
+    srv.on("error", () => resolve(0));
+    srv.listen(0, "127.0.0.1", () => { qzbp.srv = srv; qzbp.port = srv.address().port; resolve(qzbp.port); });
+  });
+}
+// A new stream starts at the init segment ('ftyp'); everything after it is that track's media until the
+// next one. Keeping the bytes lets a late-connecting mpv replay the track from the beginning.
+async function qzbpFeedStart() {
+  const port = await qzbpFeedServer();
+  if (!port) { qzbpEvt({ type: "error", what: "serve" }); return; }
+  const prev = qzbp.feed;
+  if (prev && prev.res) { try { prev.res.end(); } catch (_) {} }
+  qzbp.token += 1;
+  qzbp.feed = { token: qzbp.token, chunks: [], res: null, done: false, bytes: 0 };
+  qzbp.curUrl = "http://127.0.0.1:" + port + "/s/" + qzbp.token;
+  mpvSend(["loadfile", qzbp.curUrl, "replace"]);
+  mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
+}
+function qzbpFeedChunk(buf) {
+  const f = qzbp.feed;
+  if (!f || f.done || !buf || !buf.length) return;
+  const b = Buffer.from(buf);
+  f.chunks.push(b); f.bytes += b.length;
+  // A whole hi-res track is tens of MB; hold one track's worth so mpv can restart mid-track, no more.
+  if (f.bytes > 320 * 1024 * 1024) { const d = f.chunks.shift(); if (d) f.bytes -= d.length; }
+  if (f.res) { try { f.res.write(b); } catch (_) {} }
+}
+
+function mpvBinary() {
+  // dev override, else the bundled binary under resources (electron-builder extraResources)
+  if (process.env.QZ_MPV) return process.env.QZ_MPV;
+  const p = process.platform;
+  const base = process.resourcesPath || path.join(__dirname, "resources");
+  if (p === "win32") return path.join(base, "mpv", "mpv.exe");
+  if (p === "darwin") return path.join(base, "mpv", "mpv");
+  return path.join(base, "mpv", "AppRun"); // linux: the self-contained mpv AppImage's entry point
+}
+// Byte-exact output flags per platform. exclusivity: linux from selecting hw:, mac/win from --audio-exclusive.
+function mpvArgs(sockPath, shared) {
+  const a = ["--idle=yes", "--no-video", "--no-terminal", "--no-config", "--keep-open=yes",
+    "--input-ipc-server=" + sockPath, "--gapless-audio=weak", "--replaygain=no",
+    "--af=", "--volume=100", "--volume-max=100", "--audio-samplerate=0", "--audio-channels=stereo",
+    // The feed is a chunked HTTP body with no Content-Length, so the stream itself can't Range-seek.
+    // A demuxer cache big enough for a whole hi-res track is what makes scrubbing work at all.
+    "--cache=yes", "--demuxer-max-bytes=768MiB", "--demuxer-max-back-bytes=768MiB",
+    "--user-agent=Mozilla/5.0"];
+  if (shared) { // fallback: NOT bit-perfect (shared graph resamples), used only when exclusive fails
+    if (process.platform === "linux") a.push("--ao=pipewire,pulse,alsa");
+    else if (process.platform === "darwin") a.push("--ao=coreaudio");
+    else a.push("--ao=wasapi");
+    return a;
+  }
+  // QZ_BP_DEVICE forces a specific mpv audio device (e.g. alsa/hw:1,0). Dev/diagnostic only: normal use
+  // auto-picks, since a device knob is exactly the kind of tuning this app shouldn't ask users to do.
+  if (process.env.QZ_BP_DEVICE) a.push("--audio-device=" + process.env.QZ_BP_DEVICE);
+  if (process.platform === "linux") a.push("--ao=alsa", "--audio-exclusive=yes"); // hw device auto-picked; see fallback
+  else if (process.platform === "darwin") a.push("--ao=coreaudio", "--audio-exclusive=yes");
+  else a.push("--ao=wasapi", "--audio-exclusive=yes");
+  return a;
+}
+function qzbpEvt(m) { try { if (win && !win.isDestroyed()) win.webContents.send("qzbp:evt", m); } catch (_) {} }
+function qzbpSocketPath() {
+  if (process.platform === "win32") return "\\\\.\\pipe\\qobuzify-mpv-" + process.pid;
+  return path.join(process.env.XDG_RUNTIME_DIR || require("os").tmpdir(), "qobuzify-mpv-" + process.pid + ".sock");
+}
+function mpvSend(cmd) {
+  if (!qzbp.sock) return;
+  qzbp.reqId += 1;
+  try { qzbp.sock.write(JSON.stringify({ command: cmd, request_id: qzbp.reqId }) + "\n"); } catch (_) {}
+}
+function qzbpConnect() {
+  const s = net.connect(qzbp.socketPath);
+  qzbp.sock = s;
+  s.on("connect", () => {
+    // observe the properties that drive the UI badge + gapless/scrobble reconciliation
+    mpvSend(["observe_property", 1, "time-pos"]);
+    mpvSend(["observe_property", 2, "audio-params"]);
+    mpvSend(["observe_property", 3, "eof-reached"]);
+    mpvSend(["observe_property", 4, "core-idle"]);
+    qzbpEvt({ type: "ready", mode: qzbp.mode });
+  });
+  s.on("data", (d) => {
+    qzbp.buf += d.toString("utf8");
+    let i;
+    while ((i = qzbp.buf.indexOf("\n")) >= 0) {
+      const line = qzbp.buf.slice(0, i); qzbp.buf = qzbp.buf.slice(i + 1);
+      if (!line.trim()) continue;
+      let m; try { m = JSON.parse(line); } catch (_) { continue; }
+      if (m.event === "property-change") {
+        if (m.name === "time-pos" && m.data != null) qzbpEvt({ type: "position", ms: Math.round(m.data * 1000) });
+        else if (m.name === "audio-params" && m.data) qzbpEvt({ type: "params", rate: m.data.samplerate, format: m.data.format, channels: m.data["channel-count"], mode: qzbp.mode });
+        else if (m.name === "eof-reached" && m.data === true) qzbpEvt({ type: "ended" });
+      } else if (m.event === "end-file" && m.reason === "error") {
+        qzbpEvt({ type: "error", what: "load" });
+      }
+    }
+  });
+  s.on("error", () => {});
+  s.on("close", () => { qzbp.sock = null; });
+}
+function qzbpSpawn(shared) {
+  const bin = mpvBinary();
+  qzbp.mode = shared ? "shared" : "exclusive";
+  qzbp.socketPath = qzbpSocketPath();
+  try { if (process.platform !== "win32" && fs.existsSync(qzbp.socketPath)) fs.unlinkSync(qzbp.socketPath); } catch (_) {}
+  let proc;
+  try { proc = spawn(bin, mpvArgs(qzbp.socketPath, shared), { stdio: ["ignore", "ignore", "pipe"] }); }
+  catch (e) { qzbpEvt({ type: "error", what: "spawn", msg: String(e && e.message) }); return; }
+  qzbp.proc = proc;
+  // Watch stderr for an ALSA/exclusive open failure; if the exclusive attempt can't grab the device
+  // (another client holds it, or the DAC rejects the rate), fall back to the shared graph and badge it.
+  let sawOpenFail = false;
+  if (proc.stderr) proc.stderr.on("data", (d) => {
+    const t = d.toString();
+    if (!shared && /Failed to open|cannot open|Device or resource busy|EBUSY|could not open|Could not open/i.test(t)) sawOpenFail = true;
+  });
+  proc.on("exit", (code) => {
+    qzbp.sock = null; qzbp.proc = null;
+    if (!qzbp.enabled) return; // intentional stop
+    if (!shared && sawOpenFail) { qzbpEvt({ type: "mode", mode: "shared" }); qzbpSpawn(true); return; } // graceful degrade
+    // crash: respawn a few times, then give up and tell the renderer to unmute so audio never fully drops
+    const now = Date.now();
+    if (now - qzbp.restartAt > 20000) qzbp.restarts = 0;
+    if (qzbp.restarts++ < 4) { qzbp.restartAt = now; qzbpSpawn(shared); }
+    else { qzbp.enabled = false; qzbpEvt({ type: "fatal" }); }
+  });
+  // connect once the socket exists
+  let tries = 0;
+  const iv = setInterval(() => {
+    tries += 1;
+    const ready = process.platform === "win32" ? true : (() => { try { return fs.existsSync(qzbp.socketPath); } catch (_) { return false; } })();
+    if (ready) { clearInterval(iv); qzbpConnect(); if (qzbp.curUrl) { mpvSend(["loadfile", qzbp.curUrl, "replace"]); mpvSend(["set_property", "pause", !qzbp.wantPlaying]); } }
+    else if (tries > 50) clearInterval(iv);
+  }, 100);
+}
+function qzbpStop() {
+  qzbp.enabled = false;
+  try { if (qzbp.sock) qzbp.sock.end(); } catch (_) {}
+  try { if (qzbp.proc) qzbp.proc.kill(); } catch (_) {}
+  qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
+  if (qzbp.feed && qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} }
+  qzbp.feed = null;
+  try { if (qzbp.srv) qzbp.srv.close(); } catch (_) {}
+  qzbp.srv = null; qzbp.port = 0;
+}
+function qzbpCommand(msg) {
+  if (!msg || typeof msg !== "object") return;
+  switch (msg.type) {
+    case "enable": if (!qzbp.enabled) { qzbp.enabled = true; qzbp.restarts = 0; qzbpSpawn(false); } break;
+    case "disable": qzbpStop(); qzbpEvt({ type: "disabled" }); break;
+    case "newtrack": qzbp.wantPlaying = true; qzbpFeedStart(); break;
+    case "feed": qzbpFeedChunk(msg.data); break;
+    case "endfeed": if (qzbp.feed) { qzbp.feed.done = true; if (qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} } } break;
+    case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;
+    case "pause": qzbp.wantPlaying = false; mpvSend(["set_property", "pause", true]); break;
+    case "seek": mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;
+    case "stop": mpvSend(["stop"]); qzbp.curUrl = null; qzbp.feed = null; break;
+    // volume intentionally NOT mapped to mpv software volume (would break bit-perfect); the renderer greys
+    // the slider and volume lives on the DAC/amp. Hardware-mixer mapping is a later refinement.
+    default: break;
+  }
+}
+
 async function createWindow() {
   const ses = session.fromPartition(PARTITION);
 
@@ -271,7 +466,10 @@ async function createWindow() {
 app.whenReady().then(async () => {
   await startVendorServer();
   saveState({ stage: "vendor-up", vendorPort });
+  ipcMain.on("qzbp:cmd", (_e, msg) => { try { qzbpCommand(msg); } catch (_) {} }); // bit-perfect sidecar control
+  ipcMain.on("qzbp:feed", (_e, bytes) => { try { qzbpFeedChunk(bytes); } catch (_) {} }); // decrypted FLAC from MSE
   await createWindow();
 });
 
-app.on("window-all-closed", () => app.quit());
+app.on("before-quit", () => { try { qzbpStop(); } catch (_) {} }); // never leave an orphan mpv
+app.on("window-all-closed", () => { try { qzbpStop(); } catch (_) {} app.quit(); });

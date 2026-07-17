@@ -21,13 +21,11 @@ function version() {
 // The source injected before the page boots. No </script> escaping needed (this is raw JS
 // handed to the debugger, not embedded in HTML). Lyrics are proxy-first via api.qobuzify.app,
 // so the local Spotify/Apple creds stay null in the prototype.
-// Extensions to leave OUT of the wrapper (web-player) build. Qobuzify Lyrics' Qz Lyrics renderer
-// doesn't mount in the web env yet (data + bundle load, but #QzLyricsPage never builds), so ship
-// without it rather than show a lyrics button that opens an empty view. Block Artists / Trash Songs was
-// built and tested against the NATIVE desktop app's internals (its stream-gate + play-queue removal hook
-// the desktop player), and isn't verified against play.qobuz.com, so hold it back from the web build too.
-// The DESKTOP bake keeps both; this filter is wrapper-only. Re-enable an id once its web path is solved.
-const EXCLUDE = new Set(["qobuzify-lyrics", "block-trash"]);
+// The wrapper ships the SAME extension set as the desktop bake: Linux is Windows plus bit-perfect, and
+// nothing less. Nothing is filtered out here. (Held back historically: Qobuzify Lyrics, whose vendored
+// renderer never built #QzLyricsPage on the web player, and Block Artists / Trash Songs, which was
+// only ever verified against the native app's stream gate. Both are wired for the web player now.)
+const EXCLUDE = new Set([]);
 
 function buildPayloadSource(def) {
   const catalog = buildCatalog(THEMES_DIR);

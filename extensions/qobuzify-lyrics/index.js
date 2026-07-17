@@ -37,7 +37,7 @@ function ensureFreshToken() {
 var cur = null; // mapped current track (Spotify-shaped item)
 var curMeta = null; // clean Qobuz metadata {name, artist, album, durationMs} for lyric lookup
 var curLyrics = null; // the resolved SL lyrics object (Syllable/Line/Static) for our own animator
-// The Qz Lyrics vendor is the renderer. Our own experimental renderer (QZLyricsRenderer, still prepended
+// The vendored bundle is the renderer. Our own experimental renderer (QZLyricsRenderer, still prepended
 // at build) is HARD-DISABLED here - do not read the localStorage toggle, so a previously-set "qz-own-renderer"
 // flag can't silently re-enable it. Flip this to a localStorage read again only to resume work on ours.
 var OWN_RENDERER = false;
@@ -74,7 +74,7 @@ function isrcToSpotifyId(isrc, name) {
   }).then(function (r) { return r.json(); }).then(function (j) {
     var t = j.tracks && j.tracks.items && j.tracks.items[0];
     // a wrong or reused ISRC (common on nightcore/bootleg uploads) points at an unrelated recording;
-    // only trust the hit if its title matches, or we key Qz Lyrics off the wrong song
+    // only trust the hit if its title matches, or we key the renderer off the wrong song
     var id = (t && (!name || titleMatch(name, t.name))) ? t.id : null;
     _isrc[isrc] = id; return id;
   }).catch(function () { return null; });
@@ -111,7 +111,7 @@ function mapTrack(qt) {
   }).catch(function () {});
 }
 
-// Click-to-seek. Qz Lyrics' lyric-word click resolves the line's StartTime and
+// Click-to-seek. The renderer's lyric-word click resolves the line's StartTime and
 // calls Spicetify.Player.origin.seekTo(ms) (vendor: Seek:e=>...origin.seekTo(e)),
 // which the shim below routes here. Qobuz's progress bar is the lone native
 // <input type=range> inside .player__progressbar; its component (legacy React 16,
@@ -1110,11 +1110,21 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       // the runtime served at "/" only exposes Qobuz's own assets, so load the
       // copied bundle by its absolute file:// path (derived from the app.html URL)
       if (!OWN_RENDERER) { // our own renderer replaces the vendor entirely, so don't load the 1.3MB bundle
-        var base = location.href.replace(/\/app\.html.*$/, "");
-        var s = document.createElement("script");
-        s.src = base + "/node_modules/@qobuz/qobuz-dwp-ui/dist/qobuzify-ext-qobuzify-lyrics.js";
-        s.onerror = function () { try { console.error("[QobuzifyLyrics] failed to load bundle: " + s.src); } catch (_) {} };
-        (document.head || document.documentElement).appendChild(s);
+        // The wrapper hands the bundle over inline (see wrapper/preload.js): the page is https and a
+        // <script src> to the local bundle can't be reached from it. Desktop keeps the file:// <script src>.
+        var inlined = null;
+        try { inlined = window.__QZ_VENDOR__ && window.__QZ_VENDOR__["qobuzify-lyrics"]; } catch (e) {}
+        if (inlined) {
+          var si = document.createElement("script"); // inline, so it still runs in page scope like the real bundle
+          si.textContent = inlined;
+          (document.head || document.documentElement).appendChild(si);
+        } else {
+          var base = location.href.replace(/\/app\.html.*$/, "");
+          var s = document.createElement("script");
+          s.src = base + "/node_modules/@qobuz/qobuz-dwp-ui/dist/qobuzify-ext-qobuzify-lyrics.js";
+          s.onerror = function () { try { console.error("[QobuzifyLyrics] failed to load bundle: " + s.src); } catch (_) {} };
+          (document.head || document.documentElement).appendChild(s);
+        }
       }
     }
 
