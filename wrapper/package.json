@@ -31,6 +31,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "rpc-main.js",
       "qz-payload.js",
       "qz-vendors.json",
       "vendor/**/*",
