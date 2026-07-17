@@ -337,11 +337,35 @@ function installLyricsBridge() {
   // gated third-party lyrics-data API.
   if (window.__QZ_SL_FETCH_PATCHED__) return;
   window.__QZ_SL_FETCH_PATCHED__ = true;
+
+  // Belt and braces on top of the API denial above: the renderer opens upstream URLs directly via
+  // window.open (its update card's buttons, and a "your uid" link to their site). Denying the version
+  // check should mean none of those are ever reachable, but a stray one would put upstream's identity in
+  // front of our users, so drop those opens outright rather than trust that.
+  if (!window.__QZ_SL_OPEN_PATCHED__) {
+    window.__QZ_SL_OPEN_PATCHED__ = true;
+    var _origOpen = window.open;
+    window.open = function (u) {
+      try { if (typeof u === "string" && /qzlyrics\.org|qz\.org|github\.com\/Qz|discord\.(gg|com)/i.test(u)) return null; } catch (e) {}
+      return _origOpen.apply(window, arguments);
+    };
+  }
   _lyricsFetch = function (input, init) {
     try {
       var url = typeof input === "string" ? input : (input && input.url) || "";
-      if (/api\.qzlyrics\.org\/query/.test(url)) {
+      if (/api\.qzlyrics\.org/.test(url)) {
         var op = null; try { var b = JSON.parse(init && init.body); op = b.queries && b.queries[0] && b.queries[0].operation; } catch (e) {}
+        if (op !== "lyrics") {
+          // Nothing but lyrics goes upstream. The bundle also asks this API for "ext_version", and on a
+          // newer answer it renders its own update card - upstream's release page and chat invite, inside
+          // our app, for a bundle the user cannot update on its own. Answering non-200 makes its
+          // GetLatestVersion() return undefined, so IsOutdated() is false and the card never renders.
+          // Denying the whole host (not just /query) also keeps any future endpoint of theirs from
+          // reaching out from a user's machine.
+          return Promise.resolve(new Response(
+            JSON.stringify({ queries: [{ operation: op || "unknown", operationId: "0", result: { data: null, httpStatus: 404, format: "json" } }] }),
+            { status: 200, headers: { "content-type": "application/json" } }));
+        }
         if (op === "lyrics") {
           // Read the LIVE track at fetch time (not the possibly-stale curMeta) so a
           // track-change race can't tie one song's lyrics to another.
@@ -587,6 +611,11 @@ function ensureContainer() {
   // normal playback keeps every ease. (the karaoke word-fill is JS-driven via --gradient-position, so
   // it renders right either way.)
   Q.css("qz-sl-refocus", "#QzLyricsPage.qz-refocus .LyricsContent{opacity:1!important;transition:none!important;animation:none!important;}#QzLyricsPage.qz-refocus .LyricsContainer .LyricsContent .line{transition:none!important;animation:none!important;}");
+  // Last line of defence on the renderer's update card (see the API denial in the fetch patch). It should
+  // never be built now, but if upstream ever changes how it decides to nag, this keeps their release link
+  // and chat invite off our users' screens instead of letting a regression ship it.
+  Q.css("qz-sl-noupdate", ".update-card-wrapper,.uc-title,.uc-ver,.uc-arrow,.btn-discord{display:none!important;}" +
+    "sl-generic-modal.QzLyricsModal:has(.update-card-wrapper){display:none!important;pointer-events:none!important;}");
   // MID-SONG WHITE FLASH FIX. The bundle's virtualizer periodically tears down + recreates its rows on scroll
   // (verified via CDP). A freshly recreated row has NO state class yet (Active/Sung/NotSung), and a classless
   // .line defaults to opacity:1 + scale:1 = BRIGHT + FLAT - so for the frame before the bundle re-applies the

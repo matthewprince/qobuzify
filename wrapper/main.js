@@ -346,9 +346,14 @@ function pactl(args) {
 }
 function pactlJson(args) { try { return JSON.parse(pactl(["-f", "json"].concat(args)) || "null"); } catch (_) { return null; } }
 
+function wpctl(args) {
+  try { return require("child_process").execFileSync("wpctl", args, { timeout: 4000, encoding: "utf8" }); }
+  catch (_) { return null; }
+}
 function alsaDeviceForDefaultSink() {
   if (process.platform !== "linux") return null;
   if (process.env.QZ_BP_DEVICE) return process.env.QZ_BP_DEVICE; // explicit override wins (diagnostics)
+  // 1. PulseAudio / pipewire-pulse.
   const def = (pactl(["get-default-sink"]) || "").trim();
   const sinks = pactlJson(["list", "sinks"]);
   if (sinks && sinks.length) {
@@ -359,12 +364,30 @@ function alsaDeviceForDefaultSink() {
       return "alsa/hw:" + p["alsa.card"] + "," + (p["alsa.device"] == null ? 0 : p["alsa.device"]);
     }
   }
-  // No pactl (bare ALSA): take the first real card. Loopback/Dummy are virtual and never the DAC.
+  // 2. Bare PipeWire. pactl comes from pulseaudio-utils, which plenty of PipeWire desktops don't install
+  //    (Zorin/Ubuntu ship wpctl instead), and without this we would fall through to guessing a card.
+  const insp = wpctl(["inspect", "@DEFAULT_AUDIO_SINK@"]);
+  if (insp) {
+    const c = /alsa\.card = "(\d+)"/.exec(insp), d = /alsa\.device = "(\d+)"/.exec(insp);
+    if (c) return "alsa/hw:" + c[1] + "," + (d ? d[1] : 0);
+    // The default sink exists but is virtual - a DSP chain (EasyEffects and friends insert a
+    // support.null-audio-sink) or some other software node, so it has no card behind it. Do NOT go
+    // hunting for a card here: the user deliberately routed their audio through that chain, and the
+    // "first card we find" is as likely to be an HDMI monitor as their actual headphones. Bit-perfect
+    // through a DSP is a contradiction anyway, so return nothing and let the caller degrade to shared
+    // and say so, rather than quietly bypassing their routing or playing out the wrong device.
+    return null;
+  }
+  // 3. Bare ALSA, with no sound server to ask about a default. Only guess here, where there is no
+  //    routing to contradict. /proc/asound/pcm lists the card-device pairs that actually exist
+  //    ("01-00: USB Audio : playback 1"); the card list alone doesn't, and assuming device 0 is wrong on
+  //    plenty of hardware (an NVidia HDMI card's devices start at 3, so hw:0,0 opens nothing at all).
   try {
-    const cards = fs.readFileSync("/proc/asound/cards", "utf8").split("\n");
-    for (const line of cards) {
-      const m = /^\s*(\d+)\s+\[(\S+)/.exec(line);
-      if (m && !/loopback|dummy/i.test(m[2])) return "alsa/hw:" + m[1] + ",0";
+    const pcm = fs.readFileSync("/proc/asound/pcm", "utf8").split("\n");
+    for (const line of pcm) {
+      const m = /^(\d+)-(\d+):\s*(.*)$/.exec(line.trim());
+      if (!m || !/playback/i.test(m[3]) || /loopback|dummy/i.test(m[3])) continue;
+      return "alsa/hw:" + parseInt(m[1], 10) + "," + parseInt(m[2], 10);
     }
   } catch (_) {}
   return null;
@@ -534,9 +557,15 @@ function qzbpCommand(msg) {
         // Resolve the DAC BEFORE isolating: once the null sink exists it may become the default, and we
         // would then "auto-pick" the very sink we created.
         qzbp.device = alsaDeviceForDefaultSink();
-        pwIsolate();
-        if (process.platform === "linux" && !pw.timer) pw.timer = setInterval(pwSweep, 2000);
-        qzbpSpawn(false);
+        // No hw: device we can name means no bit-perfect path. Left alone mpv would open ALSA "default",
+        // which on any PipeWire/Pulse desktop is their plug: it accepts the stream, resamples it, and we
+        // would sit there showing a Bit-perfect badge over resampled audio. Go shared instead, so the
+        // badge says Shared and tells the truth.
+        const noDevice = process.platform === "linux" && !qzbp.device;
+        if (noDevice) qzbpEvt({ type: "mode", mode: "shared" });
+        else pwIsolate();
+        if (process.platform === "linux" && !noDevice && !pw.timer) pw.timer = setInterval(pwSweep, 2000);
+        qzbpSpawn(noDevice);
       }
       break;
     case "disable": qzbpStop(); qzbpEvt({ type: "disabled" }); break;
