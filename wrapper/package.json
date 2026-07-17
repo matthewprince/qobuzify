@@ -24,7 +24,10 @@
     "productName": "Qobuzify",
     "copyright": "Qobuzify",
     "artifactName": "Qobuzify-${version}-${os}-${arch}.${ext}",
-    "directories": { "output": "dist", "buildResources": "build" },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "main.js",
       "preload.js",
@@ -39,14 +42,23 @@
       "!dist/**/*"
     ],
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
       "maintainer": "Qobuzify <hello@qobuzify.app>",
-      "desktop": { "Name": "Qobuzify", "Comment": "Qobuz web player with Qobuzify themes + extensions" }
+      "desktop": {
+        "Name": "Qobuzify",
+        "Comment": "Qobuz web player with Qobuzify themes + extensions"
+      }
     },
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -56,11 +68,36 @@
       "shortcutName": "Qobuzify"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.music",
       "icon": "build/icon.png",
       "identity": null
     },
-    "dmg": { "title": "Qobuzify ${version}" }
+    "dmg": {
+      "title": "Qobuzify ${version}"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0",
+        "mpv",
+        "pulseaudio-utils"
+      ]
+    },
+    "rpm": {
+      "depends": [
+        "mpv",
+        "pulseaudio-utils"
+      ]
+    }
   }
 }
