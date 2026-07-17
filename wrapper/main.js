@@ -12,8 +12,9 @@
 //      (the desktop copies it into the app's dist dir; here we intercept and serve it).
 //   3. Sets backgroundThrottling:false + disables native-window-occlusion so the lyrics
 //      render loop never freezes when the window is hidden (a free fix vs the desktop hack).
-const { app, BrowserWindow, session, shell, nativeImage, ipcMain } = require("electron");
+const { app, BrowserWindow, session, shell, nativeImage, ipcMain, Notification } = require("electron");
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 
@@ -72,6 +73,97 @@ function saveState(patch) {
 let vendorPort = 0;
 let win = null;        // module-scoped so the lifecycle handlers can null it out on close
 let probeTimer = null; // dev-only diagnostics interval; cleared on window close so it can't outlive it
+
+// --- update check ---------------------------------------------------------------------------------
+// Builds ship through GitHub Releases and nothing here ever looked for a newer one, so a user's only route
+// to an update was noticing by hand. Ask the releases API directly: one request, no updater dependency, and
+// it behaves the same for AppImage, deb, rpm, nsis and mac. We only ever TELL: deb/rpm installs belong to the
+// package manager, and silently swapping an AppImage under someone is not ours to do.
+const RELEASES_API = "https://api.github.com/repos/matthewprince/qobuzify/releases/latest";
+const RELEASES_PAGE = "https://github.com/matthewprince/qobuzify/releases/latest";
+const UPDATE_EVERY_MS = 24 * 60 * 60 * 1000;
+let updateTimer = null, notifiedTag = null;
+
+function semver(v) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(v || ""));
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+function isNewer(remote, local) {
+  const r = semver(remote), l = semver(local);
+  if (!r || !l) return false; // an unparseable tag is not an excuse to nag
+  for (let i = 0; i < 3; i++) { if (r[i] !== l[i]) return r[i] > l[i]; }
+  return false;
+}
+function tellAboutUpdate(tag, url) {
+  const cur = app.getVersion();
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: "Qobuzify " + tag + " is available",
+        body: "You have " + cur + ". Click to open the download page.",
+      });
+      n.on("click", () => { try { shell.openExternal(url); } catch (_) {} });
+      n.show();
+    }
+  } catch (_) {}
+  // A desktop notification needs a daemon, which plenty of Linux setups do not run, so also say it in the
+  // window where the user is definitely looking. The runtime has no toast API, so inject a small
+  // self-contained banner (a link + a dismiss). Guarded: an executeJavaScript into a dying renderer can
+  // take the process down on Linux.
+  try {
+    if (!win || win.isDestroyed()) return;
+    const label = "Qobuzify " + tag + " is available. You have " + cur + ".";
+    win.webContents.executeJavaScript(
+      "(function(){try{" +
+      "if(document.getElementById('qz-update-banner'))return;" +
+      "var openUrl=" + JSON.stringify(url) + ";" +
+      "var b=document.createElement('div');b.id='qz-update-banner';" +
+      "b.style.cssText='position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:2147483647;" +
+      "display:flex;gap:12px;align-items:center;padding:10px 14px;border-radius:10px;" +
+      "background:#141c2e;color:#f0f6fc;font:600 13px system-ui,sans-serif;" +
+      "box-shadow:0 6px 24px rgba(0,0,0,.5),0 0 0 1px rgba(61,168,254,.35);';" +
+      "var t=document.createElement('span');t.textContent=" + JSON.stringify(label) + ";" +
+      "var a=document.createElement('a');a.textContent='Download';a.href='#';" +
+      "a.style.cssText='color:#3da8fe;cursor:pointer;text-decoration:none;font-weight:700;';" +
+      // window.open routes through setWindowOpenHandler -> shell.openExternal, so the release page opens in
+      // the real browser instead of navigating the Qobuz app away from itself.
+      "a.onclick=function(e){e.preventDefault();window.open(openUrl,'_blank');b.remove();};" +
+      "var x=document.createElement('span');x.textContent='\\u2715';x.title='Dismiss';" +
+      "x.style.cssText='cursor:pointer;opacity:.6;padding:0 2px;';" +
+      "x.onclick=function(){b.remove();};" +
+      "b.appendChild(t);b.appendChild(a);b.appendChild(x);" +
+      "(document.body||document.documentElement).appendChild(b);" +
+      "}catch(e){}})()"
+    ).catch(() => {});
+  } catch (_) {}
+}
+function checkForUpdate() {
+  if (process.env.QZ_NO_UPDATE_CHECK) return; // dev/offline escape hatch
+  let req;
+  try {
+    req = https.get(RELEASES_API, {
+      headers: { "User-Agent": "Qobuzify/" + app.getVersion(), "Accept": "application/vnd.github+json" },
+      timeout: 10000,
+    }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return; } // rate limited or offline: try again tomorrow
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (d) => { body += d; if (body.length > 1024 * 1024) { try { req.destroy(); } catch (_) {} } });
+      res.on("end", () => {
+        try {
+          const j = JSON.parse(body);
+          if (j.draft || j.prerelease) return;
+          const tag = j.tag_name || j.name;
+          if (!isNewer(tag, app.getVersion()) || notifiedTag === tag) return;
+          notifiedTag = tag; // one mention per version per run, not once a day forever
+          tellAboutUpdate(tag, j.html_url || RELEASES_PAGE);
+        } catch (_) {}
+      });
+    });
+  } catch (_) { return; }
+  req.on("error", () => {});
+  req.on("timeout", () => { try { req.destroy(); } catch (_) {} });
+}
 
 // A tiny loopback server for the extension vendor bundles. http://127.0.0.1 is treated as a
 // trustworthy origin, so an https page can load these without a mixed-content block.
@@ -503,7 +595,11 @@ async function createWindow() {
 
   // Clean lifecycle: clear the (dev-only) probe interval and drop the window reference when it closes,
   // so nothing runs against a destroyed webContents during teardown.
-  win.on("closed", () => { if (probeTimer) { clearInterval(probeTimer); probeTimer = null; } win = null; });
+  win.on("closed", () => {
+    if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
+    if (updateTimer) { clearInterval(updateTimer); updateTimer = null; } // never outlive the window
+    win = null;
+  });
 
   setupThumbar(); // Windows taskbar prev/play-pause/next buttons (no-op off win32)
 
@@ -514,6 +610,12 @@ async function createWindow() {
   win.webContents.on("did-finish-load", () => {
     const u = win.webContents.getURL();
     saveState({ stage: "loaded", url: u.slice(0, 60) });
+    // Look for a newer build once the app has settled, then once a day. Late enough not to compete with
+    // the page load, and it only ever runs while a window is alive.
+    if (!updateTimer) {
+      setTimeout(checkForUpdate, 25000);
+      updateTimer = setInterval(checkForUpdate, UPDATE_EVERY_MS);
+    }
     if (!recovered && /\/error\/404|\/foryou(\/|$)/.test(u)) {
       recovered = true;
       win.webContents.executeJavaScript(
