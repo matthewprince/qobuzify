@@ -30,9 +30,55 @@ function rowInfo(row) {
   var te = row.querySelector(".ListItem__title") || row.querySelector(".track-name");
   var title = te ? te.textContent.trim() : "";
   if (!title) { var alt = row.querySelector(".ListItem__titleWithArtists"); title = alt ? alt.textContent.trim() : ""; }
+  // The web player's library rows (.ui-module-track-row) keep the song title in the first typo-main text
+  // block; the artist is the /artist/ link (also a typo-main block, so read the link, not "block #2").
+  if (!title) { var t2 = row.querySelector(".typo-main-default-m") || row.querySelector('[class*="typo-main-default"]'); title = t2 ? t2.textContent.trim() : ""; }
   var ae = row.querySelector('a[href*="/artist/"]');
   var artist = ae ? ae.textContent.trim() : "";
   return { title: title, artist: artist };
+}
+
+// ---- availability, from the app store rather than the DOM ----
+// The web player's library (.ui-module-track-row) does NOT grey an unavailable track in the DOM: the row
+// looks identical whether or not it streams, and only fails when you try to play it. But the app renders
+// rows from a normalised track dictionary (state.dictionnary.tracks.data), keyed by track id, and each
+// track carries rights.streamable. The row DOM exposes no track id, so we match a row to its track by
+// title + main artist and read rights.streamable there. (The classic list still flags unavailable rows
+// with a .disable class - that path is handled directly in decorate.)
+function availKey(title, artist) { return titleCore(title) + "|" + norm(artist); }
+function storeTracks() { try { return Qobuzify.getState().dictionnary.tracks.data || {}; } catch (e) { return {}; } }
+function trackArtist(t) {
+  try {
+    var it = t.interpreters;
+    if (typeof it === "string") it = JSON.parse(it);
+    if (it && it.length) {
+      var main = it.filter(function (x) { return x.roles && x.roles.indexOf("main-artist") >= 0; })[0] || it[0];
+      var nm = main && main.name;
+      return (nm && (nm.display || nm)) || "";
+    }
+  } catch (e) {}
+  return (t.performer && t.performer.name) || (t.artist && t.artist.name) || "";
+}
+function isStreamable(t) {
+  if (!t) return null;
+  if (t.rights && typeof t.rights.streamable === "boolean") return t.rights.streamable; // dwp-ui store shape
+  if (typeof t.streamable === "boolean") return t.streamable;                            // classic/API shape
+  return null;
+}
+// title+artist -> streamable, rebuilt from the store (cheap; the dictionary grows as you scroll so a short
+// cache keeps repeated decorate() passes light without going stale).
+var availMap = null, availAt = 0;
+function availability() {
+  var now = Date.now();
+  if (availMap && now - availAt < 1500) return availMap;
+  var d = storeTracks(), m = {};
+  for (var id in d) {
+    var t = d[id]; if (!t || !t.title) continue;
+    var s = isStreamable(t); if (s == null) continue;
+    var k = availKey(t.title, trackArtist(t));
+    if (s === false || m[k] == null) m[k] = s; // false wins: any region-locked pressing offers the finder
+  }
+  availMap = m; availAt = now; return m;
 }
 
 // score a search hit against the dead track's title+artist. Returns <=0 to drop it entirely.
@@ -84,6 +130,7 @@ function playTrack(it) {
     tries++;
     var onPage = ((Q.getState().router.location.pathname) || "").indexOf(path) >= 0;
     if (onPage) {
+      // classic/dwp album page: click the matched row's play control.
       var rows = [].slice.call(document.querySelectorAll(".ListItem")).filter(function (r) { return r.querySelector(".ListItem__title") && r.querySelector(".ListItem__player"); });
       var best = null, bestS = -1;
       rows.forEach(function (r) {
@@ -92,6 +139,15 @@ function playTrack(it) {
         if (s > bestS) { bestS = s; best = r; }
       });
       if (best && bestS > 0) { var p = best.querySelector(".ListItem__player"); if (p) { p.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); return; } }
+      // web player: the album's tracks are .ui-module-track-row and don't expose a click-to-play control
+      // (playback is driven internally), so start the album from its main Play button - the user lands on
+      // the right album playing the right version, which is the win. Falls through to that once rows exist.
+      var uiRows = document.querySelectorAll(".ui-module-track-row");
+      if (uiRows.length) {
+        var playBtn = document.querySelector('button[aria-label="Play"].ButtonRoundPrimary--large') || document.querySelector('button[aria-label="Play"]');
+        if (playBtn) { playBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
+        clearInterval(iv); return;
+      }
     }
     if (tries > 40) clearInterval(iv); // ~6s, then give up rather than spin forever
   }, 150);
@@ -147,27 +203,70 @@ function openPanel(anchor, info) {
   });
 }
 
-// ---- drop the button onto greyed-out (unavailable) rows ----
-// Two row systems ship in the desktop app. The dwp-ui .ListItem rows (playlists, albums, queue) mark
-// an unavailable track with .isDisabled (.isPast is just already-played queue history, so skip it).
-// The classic .track-list rows used in the Library (.user-library, i.e. liked songs / favorites),
-// search and artist pages instead put .disable on the .track-item. Query both, or the button never
-// shows on the library's greyed-out rows.
+// ---- drop the button onto unavailable rows ----
+// Three row systems appear across the desktop app and the web player. Two flag unavailability with a CSS
+// class: the dwp .ListItem rows (playlists/albums/queue) use .isDisabled (.isPast is just played queue
+// history, skip it), and the classic .track-item rows use .disable. The web player's library rows
+// (.ui-module-track-row) flag nothing in the DOM, so those come from the store (rights.streamable) and get
+// a body-pinned button. See availability() and decorate().
 var ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.2-4.2"></path></svg>';
+function makeBtn(row) {
+  var b = document.createElement("button");
+  b.className = BTN; b.type = "button"; b.title = "Find a playable version of this track";
+  b.innerHTML = ICON;
+  b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPanel(b, rowInfo(row)); });
+  return b;
+}
+
+// The web player wraps every library row in a stacking context (an ancestor with z-index:0) and paints a
+// full-height content layer (.qz-fy-inner) over the list, so a button placed INSIDE the row is trapped
+// beneath that layer and can't be clicked. These buttons therefore live at document.body level, fixed, and
+// are positioned to track their row each frame - free of the row's stacking context entirely.
+var pinned = [];        // { row, btn } for .ui-module-track-row rows
+var pinRaf = 0;
+function positionPinned() {
+  pinRaf = 0;
+  for (var i = pinned.length - 1; i >= 0; i--) {
+    var pin = pinned[i];
+    if (!document.body.contains(pin.row)) { pin.btn.remove(); pinned.splice(i, 1); continue; }
+    var r = pin.row.getBoundingClientRect();
+    if (r.width < 1 || r.bottom < 48 || r.top > window.innerHeight - 8) { pin.btn.style.display = "none"; continue; }
+    pin.btn.style.display = "flex";
+    pin.btn.style.top = Math.round(r.top + r.height / 2) + "px";
+    pin.btn.style.left = Math.round(r.left + 22) + "px";
+  }
+}
+function schedulePin() { if (!pinRaf) pinRaf = requestAnimationFrame(positionPinned); }
+
 function decorate() {
-  var rows = document.querySelectorAll(".ListItem.isDisabled:not(.isPast), .track-item.disable");
+  // classic/dwp rows advertise unavailability with a class and get the button appended in-row (no overlay
+  // traps them there). The web-player library rows (.ui-module-track-row) are picked from the store and use
+  // the body-pinned button above.
+  var rows = [].slice.call(document.querySelectorAll(".ListItem.isDisabled:not(.isPast), .track-item.disable"));
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     if (row.getAttribute("data-qz-fav")) continue;
-    if (!rowInfo(row).title) continue; // nothing to search on
+    if (!rowInfo(row).title) continue;
     row.setAttribute("data-qz-fav", "1");
-    var b = document.createElement("button");
-    b.className = BTN; b.type = "button"; b.title = "Find a playable version of this track";
-    b.innerHTML = ICON;
-    (function (rowEl, btn) {
-      btn.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPanel(btn, rowInfo(rowEl)); });
-    })(row, b);
-    row.appendChild(b);
+    row.appendChild(makeBtn(row));
+  }
+  var uiRows = document.querySelectorAll(".ui-module-track-row");
+  if (uiRows.length) {
+    var avail = availability();
+    var added = false;
+    for (var u = 0; u < uiRows.length; u++) {
+      var ur = uiRows[u];
+      if (ur.getAttribute("data-qz-fav")) continue;
+      var inf = rowInfo(ur);
+      if (!inf.title || avail[availKey(inf.title, inf.artist)] !== false) continue;
+      ur.setAttribute("data-qz-fav", "1");
+      var pb = makeBtn(ur);
+      pb.className = BTN + " qz-fav-pinned";
+      document.body.appendChild(pb);
+      pinned.push({ row: ur, btn: pb });
+      added = true;
+    }
+    if (added) schedulePin();
   }
 }
 
@@ -184,6 +283,11 @@ Q.css(CSS_ID, [
   // right-side actions cluster. .track-list li is already position:relative; mark the item too to be safe.
   ".track-item.disable[data-qz-fav]{position:relative;}",
   ".track-item.disable[data-qz-fav] .qz-fav-btn{right:auto;left:10px;width:22px;height:22px;}",
+  // web-player library button: pinned at body level (fixed), positioned over the album-art corner by JS so
+  // it escapes the row's z-index:0 stacking trap and the .qz-fy-inner overlay, staying clickable.
+  ".qz-fav-pinned{position:fixed!important;right:auto;transform:translateY(-50%);width:24px;height:24px;z-index:2147483000;",
+  "background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 34%,rgba(6,9,10,.82));box-shadow:0 1px 7px rgba(0,0,0,.55);}",
+  ".qz-fav-pinned:hover{transform:translateY(-50%) scale(1.1);}",
 
   ".qz-fav-panel{position:fixed;z-index:2147483600;width:344px;max-height:340px;overflow:hidden;display:flex;flex-direction:column;",
   "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
@@ -208,9 +312,18 @@ Q.css(CSS_ID, [
 ].join(""));
 
 var stopObs = Q.observe(decorate, { debounce: 200 });
+// keep the pinned buttons glued to their rows as the library scrolls / the window resizes (capture=true so
+// it catches scrolling inside the app's own scroll container, not just the window).
+function onScrollResize() { if (pinned.length) schedulePin(); }
+window.addEventListener("scroll", onScrollResize, true);
+window.addEventListener("resize", onScrollResize);
 
 return function cleanup() {
   if (stopObs) stopObs();
+  window.removeEventListener("scroll", onScrollResize, true);
+  window.removeEventListener("resize", onScrollResize);
+  if (pinRaf) { cancelAnimationFrame(pinRaf); pinRaf = 0; }
+  pinned.forEach(function (p) { p.btn.remove(); }); pinned = [];
   closePanel();
   var btns = document.querySelectorAll("." + BTN); for (var i = 0; i < btns.length; i++) btns[i].remove();
   var marked = document.querySelectorAll("[data-qz-fav]"); for (var j = 0; j < marked.length; j++) marked[j].removeAttribute("data-qz-fav");
