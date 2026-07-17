@@ -229,9 +229,13 @@ function mpvBinary() {
   if (process.env.QZ_MPV) return process.env.QZ_MPV;
   const p = process.platform;
   const base = process.resourcesPath || path.join(__dirname, "resources");
-  if (p === "win32") return path.join(base, "mpv", "mpv.exe");
-  if (p === "darwin") return path.join(base, "mpv", "mpv");
-  return path.join(base, "mpv", "AppRun"); // linux: the self-contained mpv AppImage's entry point
+  const bundled = p === "win32" ? path.join(base, "mpv", "mpv.exe")
+    : p === "darwin" ? path.join(base, "mpv", "mpv")
+    : path.join(base, "mpv", "AppRun"); // linux: the self-contained mpv AppImage's entry point
+  try { if (fs.existsSync(bundled)) return bundled; } catch (_) {}
+  // Nothing bundled (the deb/rpm declare mpv as a dependency instead of shipping a second copy of it,
+  // and a dev checkout has no resources dir at all). A system mpv plays the same bytes the same way.
+  return p === "win32" ? "mpv.exe" : "mpv";
 }
 // Byte-exact output flags per platform. exclusivity: linux from selecting hw:, mac/win from --audio-exclusive.
 // --- Linux: find the real DAC, and get everything else off it ---------------------------------------
