@@ -49,6 +49,32 @@ jobs:
         working-directory: wrapper
         run: npm run prebuild
 
+      # Bundle a portable mpv into the Linux build so the AppImage is self-contained (deb keeps pactl as a
+      # dep; mpv is bundled for both). The wrapper spawns mpv as a subprocess for bit-perfect output, so a
+      # process-boundary bundle is mere aggregation - unmodified upstream mpv, GPL honored, no libmpv link.
+      # anylinux == portable across distros. Extracted tree lands at wrapper/resources/mpv (extraResources).
+      - name: Bundle mpv (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: wrapper
+        run: |
+          set -euo pipefail
+          URL=$(curl -sL https://api.github.com/repos/pkgforge-dev/mpv-AppImage/releases/latest \
+            | grep -oE '"browser_download_url": *"[^"]*anylinux-x86_64\.AppImage"' \
+            | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')
+          echo "mpv AppImage: $URL"
+          test -n "$URL"
+          curl -sL -o mpv.AppImage "$URL"
+          chmod +x mpv.AppImage
+          ./mpv.AppImage --appimage-extract >/dev/null
+          rm -rf resources/mpv && mkdir -p resources
+          # extract yields squashfs-root (a real dir or a symlink to AppDir); -L follows either.
+          cp -aL squashfs-root resources/mpv
+          chmod +x resources/mpv/AppRun || true
+          [ -x resources/mpv/bin/mpv ] || chmod +x resources/mpv/bin/mpv || true
+          test -x resources/mpv/AppRun
+          resources/mpv/AppRun --version | head -1
+          rm -rf mpv.AppImage squashfs-root
+
       - name: Build installers
         working-directory: wrapper
         env:
