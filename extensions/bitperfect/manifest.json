@@ -1,0 +1,8 @@
+{
+  "id": "bitperfect",
+  "name": "Bit-perfect audio",
+  "description": "Play Qobuz FLAC byte-exact to your DAC in exclusive mode, bypassing the browser's mixer and resampler. Native sample rate per track, no software volume. Linux/macOS only - the Windows app already does this natively. Falls back to shared mode with an honest badge if exclusive access isn't available.",
+  "icon": "icon-quality-hires",
+  "version": "1.0.0",
+  "author": "matthewprince"
+}
