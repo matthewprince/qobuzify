@@ -25,5 +25,15 @@ for (const id of Object.keys(vendors)) {
 }
 fs.writeFileSync(path.join(OUT, "qz-vendors.json"), JSON.stringify(manifest));
 
+// The localhost bridge (127.0.0.1:7673) that Discord presence and the lyrics "true fullscreen" button
+// POST to. On the Windows bake lib/apply.js appends runtime/rpc-main.js to the native main process; the
+// wrapper has its own main process, so copy the module in and require it from main.js instead. Without
+// this the toggle appears on but every POST is refused and the feature silently does nothing on Linux/mac.
+let rpc = "not found";
+try {
+  fs.copyFileSync(path.join(__dirname, "..", "runtime", "rpc-main.js"), path.join(OUT, "rpc-main.js"));
+  rpc = "ok";
+} catch (e) { rpc = "FAILED: " + (e && e.message); }
+
 const sz = fs.statSync(path.join(OUT, "qz-payload.js")).size;
-console.log("baked qz-payload.js (" + Math.round(sz / 1024) + " KB) + " + Object.keys(manifest).length + " vendor(s)");
+console.log("baked qz-payload.js (" + Math.round(sz / 1024) + " KB) + " + Object.keys(manifest).length + " vendor(s) + rpc-main " + rpc);

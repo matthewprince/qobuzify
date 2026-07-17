@@ -672,6 +672,10 @@ app.whenReady().then(async () => {
   saveState({ stage: "vendor-up", vendorPort });
   ipcMain.on("qzbp:cmd", (_e, msg) => { try { qzbpCommand(msg); } catch (_) {} }); // bit-perfect sidecar control
   ipcMain.on("qzbp:feed", (_e, bytes) => { try { qzbpFeedChunk(bytes); } catch (_) {} }); // decrypted FLAC from MSE
+  // The 127.0.0.1:7673 bridge for Discord presence and the lyrics true-fullscreen button. The Windows bake
+  // appends this to the native main process; the wrapper requires the same module (copied in by prebuild).
+  // It is a fully-wrapped self-starting IIFE, so a require is all it takes, and it can never throw here.
+  try { require("./rpc-main.js"); } catch (_) {}
   await createWindow();
 });
 
