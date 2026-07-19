@@ -1,7 +1,7 @@
 {
   "name": "qobuzify",
   "productName": "Qobuzify",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Qobuzify for Linux and macOS - the Qobuz web player with Qobuzify themes and extensions.",
   "author": "Qobuzify",
@@ -17,7 +17,8 @@
   },
   "devDependencies": {
     "electron": "^32.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.1"
   },
   "build": {
     "appId": "app.qobuzify.desktop",
@@ -32,10 +33,13 @@
       "main.js",
       "preload.js",
       "rpc-main.js",
+      "mpris-main.js",
+      "mpris-bundle.js",
       "qz-payload.js",
       "qz-vendors.json",
       "vendor/**/*",
       "package.json",
+      "node_modules/**/*",
       "!payload.js",
       "!prebuild.js",
       "!qz-state.json",
@@ -104,5 +108,10 @@
         "pulseaudio-utils"
       ]
     }
+  },
+  "dependencies": {
+    "call-bind-apply-helpers": "^1.0.2",
+    "mpris-service": "^2.1.2",
+    "xmlbuilder": "^15.1.1"
   }
 }

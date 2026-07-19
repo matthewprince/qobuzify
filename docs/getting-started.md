@@ -54,9 +54,9 @@ Qobuz found:
 
 ## Optional: lyrics sources
 
-The Qobuzify Lyrics extension works out of the box using open sources (NetEase and LRCLIB). Two optional setups improve it:
+The Qobuzify Lyrics extension works out of the box using open community sources. Two optional setups improve it:
 
-- **Spotify login** (`qobuzify spotify-login`) unlocks the Qz Lyrics backend for more word-by-word coverage. It is a one-time OAuth flow; the token then auto-renews. You need a Spotify app client ID in `.spotify-creds.json`.
+- **Spotify login** (`qobuzify spotify-login`) maps tracks by ISRC to unlock an additional word-by-word backend for more coverage. It is a one-time OAuth flow; the token then auto-renews. You need a Spotify app client ID in `.spotify-creds.json`.
 - **Apple Music credentials** (a developer token and media-user token in `.apple-creds.json`) unlock Apple's syllable-timed TTML, the highest-quality source. When present, the installer also patches the main process to set the `Origin` header Apple's API requires.
 
 Neither is required. All of this is local; credentials live in gitignored files next to the CLI and are passed into the runtime payload, never sent anywhere except the source they authenticate.

@@ -1195,7 +1195,16 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
 var _fsOn = false, _fsBtn = null, _fsObs = null;
 var FS_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>';
 var FS_ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg>';
-function fsBridge(on) { try { fetch("http://127.0.0.1:7673/fullscreen", { method: "POST", body: JSON.stringify({ on: !!on }) }).catch(function () {}); } catch (e) {} }
+// IPC first: contextBridge -> ipcMain -> win.setFullScreen, the exact call F11 makes. Nothing goes over
+// the network, so there is nothing left to block. The loopback POST below is why this button was the ONLY
+// broken fullscreen path: this page is https and the request to http://127.0.0.1 never left the renderer,
+// while the .catch swallowed the failure and fsEnter had already flipped the icon to "collapse" - so the
+// view claimed it was fullscreen and the window never moved. Keep the POST as a fallback for the Windows
+// bake, where rpc-main.js is appended to the native main process and __QZFS__ does not exist.
+function fsBridge(on) {
+  try { if (window.__QZFS__ && window.__QZFS__.set) { window.__QZFS__.set(!!on); return; } } catch (e) {}
+  try { fetch("http://127.0.0.1:7673/fullscreen", { method: "POST", body: JSON.stringify({ on: !!on }) }).catch(function () {}); } catch (e) {}
+}
 function fsSyncBtn() { if (!_fsBtn) return; _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn); }
 function _fsEsc(e) { if (e.key === "Escape" && _fsOn) { e.stopPropagation(); e.preventDefault(); fsExit(); } }
 function fsEnter() {
@@ -1227,6 +1236,20 @@ window.__qzOnLeaveFS = function () {
   document.removeEventListener("keydown", _fsEsc, true);
   if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
 };
+// Reverse sync over IPC: the window can enter OR leave fullscreen with no click on our button (F11, the
+// window manager), and the icon would keep claiming whatever the button last did. Mirror the real state.
+// Never call fsBridge from in here - the window has already changed, so re-sending would toggle it back.
+try {
+  if (window.__QZFS__ && window.__QZFS__.onChange) {
+    window.__QZFS__.onChange(function (fs) {
+      if (!!fs === _fsOn) return;
+      _fsOn = !!fs; fsSyncBtn();
+      if (_fsOn) { document.addEventListener("keydown", _fsEsc, true); return; }
+      document.removeEventListener("keydown", _fsEsc, true);
+      if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
+    });
+  }
+} catch (e) {}
 function ensureFsButton() {
   var root = document.getElementById("qz-sl-root"); if (!root) return;
   var existing = document.getElementById("qz-lyrics-fs-btn");

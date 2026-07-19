@@ -27,6 +27,7 @@ The catch that shapes the whole project: **the audio engine is sealed.** Qobuz p
 
 - **[lyrics-server.md](lyrics-server.md)**: the lyrics cache-proxy (a Cloudflare Worker + D1 + R2) behind the Qobuzify Lyrics extension
 - **[dev-workflow.md](dev-workflow.md)**: the Chrome DevTools Protocol loop used to build and verify all of this against a live Qobuz
+- **[releasing.md](releasing.md)**: the per-platform release channels and versioning scheme (designed, not yet implemented)
 
 ## What ships
 
@@ -36,4 +37,9 @@ The catch that shapes the whole project: **the audio engine is sealed.** Qobuz p
 - 10 themes under `themes/`
 - A lyrics cache-proxy Worker under `server/`
 
-Windows only for now. macOS is planned. Qobuz has no Linux desktop app, so there is nothing to patch there.
+There are two ways this reaches a machine, and they are different products:
+
+- **The bake** patches a natively installed Qobuz desktop app in place (`bin/qobuzify.js`, `lib/apply.js`, `site/public/install.ps1`). Windows only, because that is where the unpacked-Electron app exists.
+- **The desktop app** wraps `play.qobuz.com` in our own Electron shell (`wrapper/`) and ships the same runtime, extensions and themes on top. This is what covers Linux, where Qobuz has no desktop app to patch at all. Built for Linux (AppImage, deb), Windows (nsis, portable) and macOS (dmg, zip).
+
+They share the runtime and every extension, but they install, update and version separately. See [releasing.md](releasing.md).

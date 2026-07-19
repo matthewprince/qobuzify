@@ -20,6 +20,51 @@ try {
   });
 } catch (_) {}
 
+// Bridge for OS window fullscreen. The lyrics view's fullscreen button used to POST to the loopback
+// bridge (127.0.0.1:7673), but this page is https and a request to http loopback dies here - the same
+// cross-origin https->http problem that forced the vendor bundle to be inlined below. The fetch was
+// fire-and-forget, so the failure was swallowed and only the button's icon flipped while the window
+// stayed windowed: fullscreen worked everywhere EXCEPT the lyrics view, which is the one place that
+// went over the network. This goes over IPC to the same win.setFullScreen() call F11 makes, so there
+// is no request to block. onChange keeps the button's icon honest when fullscreen is toggled by F11
+// or the window manager instead of by the button.
+try {
+  contextBridge.exposeInMainWorld("__QZFS__", {
+    set: (on) => { try { ipcRenderer.send("qz:fullscreen", !!on); } catch (_) {} },
+    onChange: (cb) => { try { ipcRenderer.on("qz:fullscreen-changed", (_e, v) => { try { cb(!!v); } catch (_) {} }); } catch (_) {} },
+  });
+} catch (_) {}
+
+// Bridge for Discord Rich Presence, for the same reason as __QZFS__ above. The discord-rpc extension
+// POSTs the current track to the loopback bridge at 127.0.0.1:7673, which this https page cannot reach
+// (cross-origin https->http, and its JSON content-type needs a preflight on top), so presence silently
+// never worked in this wrapper. rpc-main.js takes the identical payload over this channel instead.
+try {
+  contextBridge.exposeInMainWorld("__QZRPC__", {
+    send: (payload) => { try { ipcRenderer.send("qz:rpc", payload); } catch (_) {} },
+  });
+} catch (_) {}
+
+// Bridge for Linux system media controls (MPRIS). The media-session extension already computes the
+// exact metadata and transport state the desktop wants, and already knows how to drive the sealed
+// player - it just had no way to reach D-Bus, which lives in the main process. `send` publishes state,
+// `seeked` corrects the desktop's scrubber after a jump, and `onCmd` receives the keyboard's keys.
+try {
+  contextBridge.exposeInMainWorld("__QZMPRIS__", {
+    send: (state) => { try { ipcRenderer.send("qz:mpris", state); } catch (_) {} },
+    seeked: (ms) => { try { ipcRenderer.send("qz:mpris-seeked", ms); } catch (_) {} },
+    onCmd: (cb) => { try { ipcRenderer.on("qz:mpris-cmd", (_e, m) => { try { cb(m); } catch (_) {} }); } catch (_) {} },
+  });
+} catch (_) {}
+
+// Identify this shell to the runtime. Without it the runtime reports platform=desktop, which is the
+// BAKE's channel, so wrapper users get the bake's release info (a different product with its own version
+// line). Map to the OS channel names the update endpoint serves.
+try {
+  const OS = process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux";
+  contextBridge.exposeInMainWorld("__QZWRAP__", { os: OS });
+} catch (_) {}
+
 let payload = "";
 try { payload = fs.readFileSync(path.join(__dirname, "qz-payload.js"), "utf8"); } // baked by prebuild.js
 catch (e) { payload = "console.error('[Qobuzify] payload missing: " + (e && e.message) + "');"; }

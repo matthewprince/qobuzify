@@ -1,0 +1,8 @@
+{
+  "id": "mobile-app",
+  "name": "Mobile App",
+  "description": "On a narrow screen, replaces Qobuz's desktop web player with a purpose-built mobile app: our own Home / Search / Library / Now Playing UI, bottom tab bar, and mini player. Qobuz stays underneath as the engine (auth + API + audio). Completely inert on desktop and wide windows.",
+  "icon": "icon-view-grid-filled",
+  "version": "1.0.0",
+  "author": "ethan"
+}

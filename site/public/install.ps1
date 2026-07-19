@@ -1,64 +1,86 @@
 # Qobuzify one-line installer for Windows.
 #   irm https://qobuzify.app/install.ps1 | iex
-# Downloads Qobuzify, installs it into the Qobuz desktop app, and relaunches Qobuz.
-# Zero dependencies beyond Node.js. Fully reversible (qobuzify restore).
+# Installs Qobuzify into the official Qobuz desktop app and relaunches Qobuz.
+# ZERO dependencies: a portable Node runtime is bundled inside the download, so a system
+# Node.js is NOT required. Fully reversible (qobuzify restore).
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # the IWR progress bar throttles downloads 10-50x; off = much faster
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+
+# SHA-256 of the qobuzify.zip this script is paired with. Embedded HERE (inside the TLS-delivered
+# irm|iex script) rather than fetched as a sibling file, so it is a real tamper anchor: an attacker who
+# swaps the zip on the origin cannot also swap this hash without breaking the signed TLS delivery.
+# build-zip.ps1 rewrites this line on every build.
+$ExpectedZipSha = "85F30A124661460933185CD877580DAABECFF3E8063DDE9951FB4E6027F061D6"
 
 Write-Host ""
 Write-Host "  Qobuzify " -ForegroundColor Cyan -NoNewline
 Write-Host "- Spicetify, but for Qobuz" -ForegroundColor DarkGray
 Write-Host ""
 
-# Node.js is the only requirement. A just-installed Node usually isn't on the PATH of an
-# already-open PowerShell yet, so if the first check misses, reload PATH from the registry
-# (and probe the default install dir) before giving up - saves people the confusing
-# "not found" right after they installed it.
-function Test-Node {
-  if (Get-Command node -ErrorAction SilentlyContinue) { return $true }
-  try {
-    $m = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $u = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = (@($m, $u) | Where-Object { $_ }) -join ";"
-  } catch {}
-  if (Get-Command node -ErrorAction SilentlyContinue) { return $true }
-  foreach ($b in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-    if ($b) {
-      $d = Join-Path $b "nodejs"
-      if (Test-Path (Join-Path $d "node.exe")) { $env:Path = "$d;$env:Path"; return $true }
+# --- Pre-flight: the official Qobuz DESKTOP app must be present (we patch it in place) ---------------
+# Do this BEFORE downloading anything, so a missing prerequisite fails fast with a clear fix instead of
+# a cryptic error after the download.
+function Find-QobuzDesktop {
+  $root = Join-Path $env:LOCALAPPDATA "Qobuz"
+  if (Test-Path $root) {
+    $app = Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -like "app-*" } |
+           Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $launcher = Join-Path $root "Qobuz.exe"
+    if ($app -and (Test-Path $launcher) -and (Test-Path (Join-Path $app.FullName "resources\app\app.html"))) {
+      return @{ Ok = $true; Version = ($app.Name -replace '^app-', ''); Root = $root }
     }
   }
-  return $false
+  return @{ Ok = $false }
 }
 
-if (-not (Test-Node)) {
-  Write-Host "Node.js (v16 or newer) is required and was not found." -ForegroundColor Yellow
+$qz = Find-QobuzDesktop
+if (-not $qz.Ok) {
+  # Distinguish the un-patchable Microsoft Store / MSIX build from "not installed at all".
+  $store = $null
+  try { $store = Get-AppxPackage -Name "*Qobuz*" -ErrorAction SilentlyContinue | Select-Object -First 1 } catch {}
+  Write-Host "The official Qobuz DESKTOP app wasn't found, and Qobuzify works by patching it." -ForegroundColor Yellow
   Write-Host ""
-  Write-Host "  1. Install the LTS build from https://nodejs.org" -ForegroundColor Yellow
-  Write-Host "  2. Close this window, open a NEW PowerShell, and run the command again." -ForegroundColor Yellow
+  if ($store) {
+    Write-Host "You have the Microsoft Store version of Qobuz, which is sealed and cannot be patched." -ForegroundColor Yellow
+    Write-Host "Uninstall it and install the desktop build from https://www.qobuz.com/download instead." -ForegroundColor Yellow
+  } else {
+    Write-Host "Install the Qobuz desktop app first:" -ForegroundColor Yellow
+    Write-Host "  1. Get it from https://www.qobuz.com/download  (the desktop app, NOT the Store version)" -ForegroundColor Yellow
+    Write-Host "  2. Launch Qobuz once so it finishes installing, then re-run this command." -ForegroundColor Yellow
+    $ans = Read-Host "Open the Qobuz download page now? (y/N)"
+    if ($ans -match '^(y|yes)$') { Start-Process "https://www.qobuz.com/download" }
+  }
   Write-Host ""
-  Write-Host "If you just installed Node and still see this, a fresh window is the fix:" -ForegroundColor DarkGray
-  Write-Host "an already-open terminal doesn't pick up Node until it's reopened." -ForegroundColor DarkGray
   return
 }
+Write-Host ("Found Qobuz desktop " + $qz.Version + ".") -ForegroundColor DarkGray
 
-# Guard against an ancient Node that would only fail later with a cryptic error.
-$nv = ""
-try { $nv = (& node -v) } catch {}
-if ($nv -match "v(\d+)" -and [int]$matches[1] -lt 16) {
-  Write-Host "Found Node $nv, but Qobuzify needs v16 or newer. Update it from https://nodejs.org." -ForegroundColor Yellow
-  return
+# --- Notice if Qobuz is running (the patch step closes + relaunches it) ------------------------------
+if (Get-Process -Name "Qobuz" -ErrorAction SilentlyContinue) {
+  Write-Host "Qobuz is open - it will be closed and relaunched to apply the changes." -ForegroundColor DarkGray
 }
 
+# --- Download + integrity-verify ---------------------------------------------------------------------
 $dir = Join-Path $env:LOCALAPPDATA "Qobuzify"
 $zip = Join-Path $env:TEMP ("qobuzify-" + [guid]::NewGuid().ToString().Substring(0, 8) + ".zip")
 
 Write-Host "Downloading Qobuzify..." -ForegroundColor DarkGray
 Invoke-WebRequest -Uri "https://qobuzify.app/qobuzify.zip" -OutFile $zip -UseBasicParsing
 
+if ($ExpectedZipSha -notmatch '^0+$') {
+  $got = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+  if ($got -ne $ExpectedZipSha) {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    throw "Download integrity check FAILED (sha256 mismatch). Expected $ExpectedZipSha, got $got. Aborting - do not run a tampered download."
+  }
+  Write-Host "Integrity verified." -ForegroundColor DarkGray
+}
+
+# --- Install (keep local-only lyric creds across an update) ------------------------------------------
 Write-Host "Installing to $dir" -ForegroundColor DarkGray
-# On an update (dir already there), keep the local-only lyric credentials the extract would wipe.
 $keep = @(".spotify-creds.json", ".spotify-user-token.json", ".apple-creds.json")
 $stash = $null
 if (Test-Path $dir) {
@@ -74,12 +96,32 @@ if ($stash) {
   Remove-Item $stash -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# Patch the Qobuz app and relaunch it.
+# --- Node runtime: prefer the bundled portable node.exe (zero-dependency); fall back to a system Node -
+function Resolve-Node($installDir) {
+  $bundled = Join-Path $installDir "runtime\node\node.exe"
+  if (Test-Path $bundled) { return $bundled }
+  # Legacy fallback: a system Node (only reached if the bundle is somehow absent).
+  if (Get-Command node -ErrorAction SilentlyContinue) { return "node" }
+  try {
+    $m = [Environment]::GetEnvironmentVariable("Path", "Machine"); $u = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = (@($m, $u) | Where-Object { $_ }) -join ";"
+  } catch {}
+  if (Get-Command node -ErrorAction SilentlyContinue) { return "node" }
+  return $null
+}
+$node = Resolve-Node $dir
+if (-not $node) {
+  Write-Host "The bundled Node runtime is missing and no system Node was found - the download may be incomplete." -ForegroundColor Yellow
+  Write-Host "Re-run the installer; if it persists, install Node LTS from https://nodejs.org and try again." -ForegroundColor Yellow
+  return
+}
+
+# --- Patch the Qobuz app and relaunch it -------------------------------------------------------------
 Push-Location $dir
-try { & node "bin/qobuzify.js" install } finally { Pop-Location }
+try { & $node "bin/qobuzify.js" install } finally { Pop-Location }
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
 Write-Host "In Qobuz: click your avatar (top-right) then Marketplace to switch themes and toggle extensions." -ForegroundColor Gray
-Write-Host ("To undo it all later:  node `"" + (Join-Path $dir 'bin\qobuzify.js') + "`" restore") -ForegroundColor DarkGray
+Write-Host ("To undo it all later:  & `"" + (Join-Path $dir 'runtime\node\node.exe') + "`" `"" + (Join-Path $dir 'bin\qobuzify.js') + "`" restore") -ForegroundColor DarkGray
 Write-Host ""

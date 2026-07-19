@@ -10,13 +10,43 @@
   if (window.__QOBUZIFY_RUNTIME__) return; // guard against a double inject
   window.__QOBUZIFY_RUNTIME__ = true;
 
+  // Some documents the preload injects into deny storage outright (a transient about:blank during
+  // navigation, a sandboxed frame). Touching localStorage there throws SecurityError, and because the
+  // guard above is ALREADY set, the runtime dies half-initialised and is never retried - the whole mod
+  // silently does not exist in that tab. Probe once and bail out of documents that are not the app,
+  // releasing the guard so the real document can still inject.
+  try { window.localStorage.getItem("qobuzify:probe"); }
+  catch (e) { try { window.__QOBUZIFY_RUNTIME__ = false; } catch (_) {} return; }
+
+  // --- interface language override -----------------------------------------------------------
+  // Qobuz derives its UI language from the BROWSER, not from any account setting: at boot it runs
+  // setLanguage(navigator.language), and again after login setLanguage(navigator.languages[0]). So a
+  // user in a German region gets German (with gendered terms like "Kuenstler:in") and there is no
+  // opt-out anywhere in Qobuz's own settings. Nothing can undo it from inside the app once booted -
+  // but this script is injected BEFORE bundle.js, which makes it the only place an override can stick.
+  // Reported as issue #11. Off unless the user picks something: with no stored preference, untouched.
+  var LS_LANG = "qobuzify:lang";
+  try {
+    var _pref = localStorage.getItem(LS_LANG);
+    if (_pref) {
+      var _base = _pref.slice(0, 2);
+      var _list = _base === _pref ? [_pref] : [_pref, _base];
+      Object.defineProperty(navigator, "language", { configurable: true, get: function () { return _pref; } });
+      Object.defineProperty(navigator, "languages", { configurable: true, get: function () { return _list; } });
+    }
+  } catch (e) {}
+
   var DATA = window.__QOBUZIFY__ || { catalog: [], def: null, version: "0.1" };
   var CATALOG = DATA.catalog || [];
   // Android runs the same baked payload as desktop, so DATA.version is the DESKTOP package version. The
   // native shell (MainActivity) exposes the real app versionName as window.__QZ_ANDROID_VERSION__, and
   // window.QZAndroidMedia is the reliable Android signal (the UA is spoofed desktop on both platforms).
   var IS_ANDROID = !!window.QZAndroidMedia;
-  var PLATFORM = IS_ANDROID ? "android" : "desktop";
+  // The Electron wrapper and the patched desktop app are DIFFERENT PRODUCTS on separate version lines,
+  // and each wrapper OS ships independently. Reporting plain "desktop" from the wrapper made it ask for
+  // the bake's channel. Bake clients still send exactly "desktop", so their behaviour is unchanged.
+  var WRAP = (typeof window !== "undefined" && window.__QZWRAP__) || null;
+  var PLATFORM = IS_ANDROID ? "android" : (WRAP ? ("wrapper-" + (WRAP.os || "linux")) : "desktop");
   var VERSION = (IS_ANDROID && window.__QZ_ANDROID_VERSION__) || DATA.version || "0.1";
   var LS_THEME = "qobuzify:theme";
   var LS_ENABLED = "qobuzify:enabled";
@@ -249,6 +279,10 @@
         '<button class="qz-btn" data-act="browse">Browse themes</button>' +
       '</div>' +
       '<div class="qz-set-row">' +
+        '<div><div class="qz-set-label">Interface language</div><div class="qz-set-sub">Qobuz follows your system and region. Override it here.</div></div>' +
+        '<select class="qz-select" data-act="lang">' + langOptions() + '</select>' +
+      '</div>' +
+      '<div class="qz-set-row">' +
         '<div><div class="qz-set-label">Restore Qobuz</div><div class="qz-set-sub">Turn theming off and use the stock look.</div></div>' +
         '<button class="qz-btn qz-btn--ghost" data-act="off">Restore default</button>' +
       '</div>' +
@@ -272,6 +306,16 @@
     panel.querySelector('[data-act="toggle"]').addEventListener("click", function () { if (isEnabled()) disableTheming(); else enableTheming(); });
     panel.querySelector('[data-act="browse"]').addEventListener("click", function () { selectTab("themes"); });
     panel.querySelector('[data-act="off"]').addEventListener("click", function () { disableTheming(); });
+    var langSel = panel.querySelector('[data-act="lang"]');
+    if (langSel) langSel.addEventListener("change", function () {
+      try {
+        if (this.value) localStorage.setItem(LS_LANG, this.value);
+        else localStorage.removeItem(LS_LANG);
+      } catch (e) {}
+      // The language is read once, at boot, by code we cannot reach afterwards, so a reload is the
+      // honest way to apply it rather than pretending a live switch happened.
+      location.reload();
+    });
     [].slice.call(panel.querySelectorAll('[data-extset]')).forEach(function (btn) {
       btn.addEventListener("click", function () { var e = extSettings[+btn.getAttribute("data-extset")]; if (e && typeof e.onClick === "function") { hideOverlay(); e.onClick(); } });
     });
@@ -283,6 +327,16 @@
       else { localStorage.setItem("qobuzify:ext:discord-rpc", "1"); var ex = (DATA.extensions || []).filter(function (x) { return x.id === "discord-rpc"; })[0]; if (ex) loadExtension(ex); }
       this.classList.toggle("qz-switch--on");
     });
+  }
+  // Only locales the Qobuz bundle actually ships, one entry per language so the list stays usable.
+  var LANGS = [["", "System default"], ["en-US", "English (US)"], ["en-GB", "English (UK)"],
+    ["de-DE", "Deutsch"], ["fr-FR", "Francais"], ["es-ES", "Espanol"], ["it-IT", "Italiano"],
+    ["pt-BR", "Portugues (BR)"], ["ja-JP", "Nihongo"]];
+  function langOptions() {
+    var cur = ""; try { cur = localStorage.getItem(LS_LANG) || ""; } catch (e) {}
+    return LANGS.map(function (l) {
+      return '<option value="' + l[0] + '"' + (l[0] === cur ? " selected" : "") + ">" + esc(l[1]) + "</option>";
+    }).join("");
   }
   function refreshSettings() { if (overlay && currentTab === "settings") renderSettings(); }
 
@@ -787,6 +841,8 @@
     ".qz-soon-ico{color:var(--qz-accent);font-size:30px;}",
     ".qz-soon-title{font-weight:700;font-size:16px;}",
     ".qz-soon-sub{font-size:13px;color:#9aa3b2;margin-top:3px;max-width:560px;line-height:1.45;}",
+    ".qz-select{background:rgba(255,255,255,.06);color:inherit;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:8px 10px;font:inherit;cursor:pointer;}",
+    ".qz-select option{background:#14161c;color:#e7ecf3;}",
     ".qz-set-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 4px;border-bottom:1px solid rgba(255,255,255,.06);}",
     ".qz-set-label{font-weight:650;font-size:14px;}",
     ".qz-set-sub{font-size:12.5px;color:#9aa3b2;margin-top:3px;}",

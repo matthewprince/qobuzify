@@ -41,7 +41,7 @@ The `window.__QOBUZIFY__` payload is the data the runtime reads at boot: the the
 - **Discord Rich Presence** (always). The main-process half of the Discord RPC lives here (`runtime/rpc-main.js`, appended). It owns the Discord IPC pipe and a localhost bridge the renderer posts track changes to. The renderer is sandboxed and can't do Discord IPC itself.
 - **Apple Music header rewrite** (only if you've added Apple credentials). Apple's `amp-api` validates the `Origin` header and a renderer fetch can't set it, so lyric requests would 401. A main-process `onBeforeSendHeaders` listener stamps `Origin`/`Referer` on `amp-api.music.apple.com` requests.
 
-Big prebuilt bundles (the Qz Lyrics renderer) ship as a sibling `vendor.js` and get copied into the `dist` directory so the extension can load them with `<script src="/qobuzify-ext-<id>.js">`. Inlining a 1.3 MB bundle into the payload would break it.
+Big prebuilt bundles (the vendored lyrics renderer) ship as a sibling `vendor.js` and get copied into the `dist` directory so the extension can load them with `<script src="/qobuzify-ext-<id>.js">`. Inlining a 1.3 MB bundle into the payload would break it.
 
 Originals are backed up once as `*.qobuzify-bak`. `restore` copies them back and relaunches. A Qobuz update installs a new `app-<version>` folder, so you re-run `apply` after updating.
 
