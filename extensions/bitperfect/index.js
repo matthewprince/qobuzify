@@ -31,7 +31,11 @@ function bpEnabled() { try { return enabled || !!G.enabled; } catch (e) { return
 function setBpEnabled(v) { enabled = !!v; try { G.enabled = !!v; } catch (e) {} }
 var mode = "off", curRate = 0, curFmt = "";
 var hwRate = 0;      // rate the DAC is actually clocked at, straight from the kernel
-var bpTrue = false;  // decoded rate == hardware rate, i.e. nothing resampled us
+var bpTrue = false;  // every condition below holds, i.e. the DAC gets the file's own samples
+var bpWhy = null;    // which condition failed: "rate" | "gain" | "gain-unknown" | "convert"
+var bpGain = 1;      // linear gain the output applies to our samples (1 = untouched)
+var bpPro = false;   // sink is on a Pro Audio profile (explains a SOFTWARE volume multiply)
+var bpSrcRate = 0;   // decoder-side rate, to show what a player-side conversion converted FROM
 var lastTrackId = null, lastPlaying = null, lastWebMs = 0, lastWall = 0;
 var sourceBuffers = [];   // live audio SourceBuffers, for forcing a re-feed on mid-track enable
 var lastInit = null;      // most recent init segment ('ftyp'), replayed when enabling mid-track
@@ -248,8 +252,15 @@ function syncTick() {
 // Deliberately says nothing about quality: the Hi-Res logo is quality-badges' job, drawn with Qobuz's own
 // hires.png. This must never duplicate or stand in for it. While bit-perfect is off the slot renders
 // nothing at all, so the player bar is identical to the Windows app, which has no such extension.
+// The old tooltip asserted "Volume is on your DAC/system while active", which is not true on every setup:
+// under a Pro Audio profile the app's slider drives the DAC's own ALSA control while the desktop's slider
+// moves a SOFTWARE gain in the audio server, so they are two different controls and only one of them keeps
+// the samples intact. The badge now describes the state it actually measured, per track, rather than
+// promising a behaviour up front.
+var TIP_WAIT = "Bit-perfect sends audio straight to your DAC instead of through the browser's mixer. "
+  + "The badge reports what was actually measured for the current track.";
 var badge = document.createElement("div");
-badge.className = "qz-bp-badge"; badge.title = "Bit-perfect: audio bypasses the browser mixer to your DAC at native rate. Volume is on your DAC/system while active.";
+badge.className = "qz-bp-badge"; badge.title = TIP_WAIT;
 function fmtRate(r) { return r ? (r % 1000 === 0 ? (r / 1000) + "kHz" : (r / 1000).toFixed(1) + "kHz") : ""; }
 // The claim is driven by the measured rates the main process reports, never by which output path we happen
 // to be on. Exclusive and passthrough are both bit-perfect when the converter is clocked at the track's
@@ -258,14 +269,41 @@ function fmtRate(r) { return r ? (r % 1000 === 0 ? (r / 1000) + "kHz" : (r / 100
 function renderBadge() {
   if (!enabled) { badge.className = "qz-bp-badge off"; badge.textContent = ""; badge.style.display = "none"; return; }
   badge.style.display = "";
-  if (!curRate) { badge.className = "qz-bp-badge wait"; badge.textContent = "Bit-perfect…"; return; }
-  if (bpTrue) { badge.className = "qz-bp-badge bp"; badge.textContent = "Bit-perfect · " + fmtRate(curRate); return; }
+  if (!curRate) { badge.className = "qz-bp-badge wait"; badge.textContent = "Bit-perfect…"; badge.title = TIP_WAIT; return; }
+  if (bpTrue) {
+    badge.className = "qz-bp-badge bp"; badge.textContent = "Bit-perfect · " + fmtRate(curRate);
+    badge.title = "Bit-perfect: this track decodes at " + fmtRate(curRate) + ", your converter is clocked at "
+      + fmtRate(hwRate) + ", and the output volume is at unity, so the samples reaching the DAC are the samples in the file.";
+    return;
+  }
   badge.className = "qz-bp-badge shared";
-  // Name both ends of the conversion. "Shared" told the user nothing actionable; "44.1 → 96kHz" tells them
-  // their graph is pinned to a rate this track isn't, which is the one thing they can actually change.
-  badge.textContent = hwRate && hwRate !== curRate
-    ? fmtRate(curRate) + " → " + fmtRate(hwRate)
-    : "Shared · " + fmtRate(curRate);
+  // Say WHICH condition failed. "Shared" told the user nothing they could act on, and a rate-only message
+  // was worse than nothing once we learned a below-unity sink volume silently multiplies every sample:
+  // the badge read "44.1 → 96kHz" as though rate were the only problem while gain was also breaking it.
+  if (bpWhy === "gain") {
+    badge.textContent = "Volume " + Math.round(bpGain * 100) + "%";
+    badge.title = "Not bit-perfect: your output volume is at " + Math.round(bpGain * 100) + "%, so every sample is "
+      + "being multiplied before it reaches the DAC."
+      + (bpPro ? " Under a Pro Audio profile that happens in software, because the profile exposes no hardware volume control for the server to use."
+               : "")
+      + " Set the system volume for this output to 100% and use your DAC's own volume control instead.";
+  } else if (bpWhy === "gain-unknown") {
+    badge.textContent = "Volume ?";
+    badge.title = "Cannot confirm bit-perfect: the output volume could not be read, so it is not possible to say "
+      + "whether the samples are being scaled. Claiming bit-perfect here would be a guess.";
+  } else if (bpWhy === "convert") {
+    badge.textContent = fmtRate(bpSrcRate) + " → " + fmtRate(curRate);
+    badge.title = "Not bit-perfect: the player had to convert this track before output (the audio device would not "
+      + "accept it as decoded), so these are no longer the original samples.";
+  } else if (hwRate && hwRate !== curRate) {
+    badge.textContent = fmtRate(curRate) + " → " + fmtRate(hwRate);
+    badge.title = "Not bit-perfect: this track is " + fmtRate(curRate) + " but your converter is clocked at "
+      + fmtRate(hwRate) + ", so it is being resampled. This happens when the audio graph is pinned to one rate, "
+      + "or when your hardware does not support the track's rate at all.";
+  } else {
+    badge.textContent = "Shared · " + fmtRate(curRate);
+    badge.title = TIP_WAIT;
+  }
 }
 var slot = Q.playerSlot ? Q.playerSlot({ id: "qz-bp", zone: "right", order: 12, el: badge }) : null;
 
@@ -275,6 +313,8 @@ BP.on(function (m) {
   else if (m.type === "params") {
     curRate = m.rate || curRate; curFmt = m.format || curFmt; if (m.mode) mode = m.mode;
     hwRate = m.hwRate || 0; bpTrue = !!m.bitperfect;
+    bpWhy = m.why || null; bpPro = !!m.pro; bpSrcRate = m.srcRate || 0;
+    bpGain = (typeof m.gain === "number") ? m.gain : 1;
     renderBadge();
   }
   // A mode change means the main process is respawning mpv on a different output, so the loaded track is
@@ -348,7 +388,11 @@ var offChange = Q.player.onChange ? Q.player.onChange(function () { if (enabled)
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
 var unregSettings = Q.registerSettings ? Q.registerSettings({
-  label: "Bit-perfect audio", sub: "Play FLAC byte-exact to your DAC (exclusive mode), bypassing the browser mixer. Native rate per track. Volume moves to your DAC/system while on.",
+  // Deliberately promises less than it used to. "(exclusive mode)" described a path most Linux setups can
+  // never take: where the sound server holds the device open by policy, an exclusive open is refused for as
+  // long as that profile is selected, so the app plays through the server instead. Whether the result is
+  // byte-exact then depends on the track's rate and the output volume, which is what the badge reports.
+  label: "Bit-perfect audio", sub: "Send FLAC straight to your DAC at its native rate, bypassing the browser mixer. The badge shows whether the current track really is byte-exact, and what is in the way when it is not.",
   button: (on() ? "Turn off" : "Turn on"), onClick: toggle
 }) : null;
 

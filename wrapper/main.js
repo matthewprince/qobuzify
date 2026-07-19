@@ -436,6 +436,86 @@ function hwRateOf(device) {
   try { const m = /^rate:\s*(\d+)/m.exec(fs.readFileSync(p, "utf8")); return m ? parseInt(m[1], 10) : 0; }
   catch (_) { return 0; }
 }
+// What the sound server is doing to our samples, read straight from the graph.
+//
+// Bit-perfect is not only a rate question. A sink whose volume is below unity multiplies every sample,
+// and the badge used to ignore that entirely - it reported "Bit-perfect" while the graph scaled by ~0.59.
+// The trap that produced that bug is worth writing down, because the properties actively mislead:
+// `softVolumes` reading [1.0, 1.0] looks like "the software volume stage is identity", and it is NOT.
+// It is a never-written default. A Pro Audio profile synthesizes its mappings from PCM enumeration and
+// never builds a mixer path, so there is no hardware element to delegate volume to; `have_soft_volume`
+// is therefore never latched, and `set_volume()` falls back to applying `channelVolumes` in software via
+// channelmix. Under a normal profile with no hardware volume the server writes softVolumes explicitly and
+// the two agree. So: trust `channelVolumes`, which is the gain that reaches the samples either way, and
+// never infer unity from softVolumes.
+function pwDumpJson() {
+  try {
+    const out = require("child_process").execFileSync("pw-dump", [], { timeout: 5000, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    return JSON.parse(out);
+  } catch (_) { return null; }
+}
+// { gain, pro } for the current default sink. gain is the linear multiplier applied to our samples;
+// null means "could not determine", which callers must treat as "cannot claim bit-perfect" rather than
+// as unity. Cached briefly because params events fire per track and pw-dump is not cheap.
+function sinkState() {
+  const now = Date.now();
+  if (qzbp.sinkCache && now - qzbp.sinkCache.at < 1000) return qzbp.sinkCache.val;
+  let val = { gain: null, pro: false };
+  const d = pwDumpJson();
+  if (d && d.length) {
+    // Metadata objects carry their props at the TOP level, not under .info like nodes do. Reading only
+    // .info.props finds nothing, which silently drops us to "whichever sink is listed first" - and that
+    // read the gain of a completely different device than the one being played to.
+    let defName = null;
+    for (const n of d) {
+      const p = n.props || (n.info || {}).props || {};
+      if (p["metadata.name"] !== "default") continue;
+      for (const it of n.metadata || []) {
+        if (it.key === "default.audio.sink" && it.value) defName = it.value.name || it.value;
+      }
+    }
+    let node = null;
+    if (defName) {
+      for (const n of d) {
+        const p = (n.info || {}).props || {};
+        if (p["media.class"] === "Audio/Sink" && p["node.name"] === defName) { node = n; break; }
+      }
+    }
+    // No guessing. If the default sink cannot be identified, the gain stays null and the caller withholds
+    // the bit-perfect claim. Picking an arbitrary sink here would produce a confident number about the
+    // wrong device, which is worse than admitting we do not know.
+    if (node) {
+      const p = (node.info || {}).props || {};
+      val.pro = String(p["device.profile.pro"]) === "true";
+      for (const pr of ((node.info || {}).params || {}).Props || []) {
+        if (Array.isArray(pr.channelVolumes) && pr.channelVolumes.length) {
+          val.gain = Math.max.apply(null, pr.channelVolumes);
+        }
+        if (pr.mute === true) val.gain = 0;
+      }
+    }
+  }
+  // Fallback when pw-dump is unavailable. NOTE wpctl prints the CUBE ROOT of the linear volume, so it
+  // has to be cubed back: a wpctl reading of 0.35 is a linear gain of ~0.0429, not 0.35. Reading that
+  // scale wrong is how a heavily attenuated sink can look close to unity.
+  if (val.gain == null) {
+    const t = wpctl(["get-volume", "@DEFAULT_AUDIO_SINK@"]);
+    const m = t && /Volume:\s*([0-9.]+)/.exec(t);
+    if (m) val.gain = Math.pow(parseFloat(m[1]), 3);
+    if (t && /\[MUTED\]/.test(t)) val.gain = 0;
+  }
+  qzbp.sinkCache = { at: now, val };
+  return val;
+}
+// Bits actually carried by an mpv format name ("s16", "s32", "s24", "float", "double").
+function fmtBits(f) {
+  const s = String(f || "");
+  if (/^floatp?$/.test(s)) return 24;   // f32 carries a 24-bit significand exactly
+  if (/^doublep?$/.test(s)) return 53;
+  const m = /(\d+)/.exec(s);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 function soundServerPresent() {
   if (process.platform !== "linux") return false;
   try { if (fs.existsSync(path.join(process.env.XDG_RUNTIME_DIR || "/run/user/1000", "pipewire-0"))) return true; } catch (_) {}
@@ -625,6 +705,51 @@ function mpvSend(cmd) {
   qzbp.reqId += 1;
   try { qzbp.sock.write(JSON.stringify({ command: cmd, request_id: qzbp.reqId }) + "\n"); } catch (_) {}
 }
+// Decide, and report, whether the samples reaching the converter are the samples in the file. Every term
+// here exists because its absence produced a wrong badge: the predicate used to be `decodedRate == hwRate`
+// alone, which claims bit-perfect while the graph applies a gain, while mpv silently converts internally,
+// or while pointing at a card the audio no longer goes to.
+function qzbpReportParams() {
+  const src = qzbp.srcParams, out = qzbp.outParams || qzbp.srcParams;
+  if (!out) return;
+
+  // Re-resolve the device every time in passthrough. mpv is given NO --audio-device there so it follows
+  // the default sink, but this used to verify against whatever sink was default at enable time. Move the
+  // default (or unplug the DAC) and it reads hw_params from a card the audio is not going to any more.
+  if (qzbp.mode === "passthrough") {
+    const dev = alsaDeviceForDefaultSink();
+    if (dev) qzbp.device = dev;
+  }
+  const rate = out.samplerate || 0;
+  const hw = qzbp.mode === "shared" ? 0 : hwRateOf(qzbp.device);
+
+  // In exclusive mode mpv holds the PCM itself, so no server gain sits in the path. In passthrough the
+  // server's sink gain multiplies our samples, and an unknown gain must NOT be optimistically treated as
+  // unity: unverified is a reason to withhold the claim, not to make it.
+  const st = qzbp.mode === "passthrough" ? sinkState() : { gain: 1, pro: false };
+  const gain = st.gain;
+
+  // mpv converting between the decoder and the output is invisible in audio-params. If the rates differ,
+  // mpv resampled; if the output carries fewer bits than the decode, mpv narrowed.
+  const converted = !!(src && out && (src.samplerate !== out.samplerate || fmtBits(out.format) < fmtBits(src.format)));
+
+  const rateOk = !!(rate && hw && rate === hw);
+  const gainOk = gain === 1;
+  const bitperfect = rateOk && gainOk && !converted;
+
+  let why = null;
+  if (!bitperfect) {
+    if (converted) why = "convert";
+    else if (!rateOk) why = "rate";
+    else if (gain == null) why = "gain-unknown";
+    else why = "gain";
+  }
+  qzbpEvt({
+    type: "params", rate, format: out.format, channels: out["channel-count"],
+    mode: qzbp.mode, hwRate: hw, bitperfect, why, gain, pro: st.pro,
+    srcRate: src ? src.samplerate : rate,
+  });
+}
 function qzbpConnect() {
   const s = net.connect(qzbp.socketPath);
   qzbp.sock = s;
@@ -634,6 +759,11 @@ function qzbpConnect() {
     mpvSend(["observe_property", 2, "audio-params"]);
     mpvSend(["observe_property", 3, "eof-reached"]);
     mpvSend(["observe_property", 4, "core-idle"]);
+    // audio-params is the DECODER side. audio-out-params is what the audio output actually negotiated.
+    // Comparing the decoder against the hardware (which is what this did) can report bit-perfect straight
+    // across a conversion mpv did itself: if the output refuses a rate or format, mpv silently converts and
+    // audio-params never mentions it. Watch both and require them to agree.
+    mpvSend(["observe_property", 5, "audio-out-params"]);
     qzbpEvt({ type: "ready", mode: qzbp.mode });
   });
   s.on("data", (d) => {
@@ -645,16 +775,9 @@ function qzbpConnect() {
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
       if (m.event === "property-change") {
         if (m.name === "time-pos" && m.data != null) qzbpEvt({ type: "position", ms: Math.round(m.data * 1000) });
-        else if (m.name === "audio-params" && m.data) {
-          // Report what the hardware is doing, not what mode we asked for. Bit-perfect is the property
-          // "the decoded rate is the rate the converter is clocked at" - checkable against the kernel, and
-          // the only claim worth putting on a badge. In exclusive mode mpv set that rate itself; in
-          // passthrough the server decides, and it agrees with us exactly when its graph already runs at
-          // the track's rate. Anything else resampled, and the badge has to say so.
-          const src = m.data.samplerate || 0;
-          const hw = qzbp.mode === "shared" ? 0 : hwRateOf(qzbp.device);
-          qzbpEvt({ type: "params", rate: src, format: m.data.format, channels: m.data["channel-count"],
-            mode: qzbp.mode, hwRate: hw, bitperfect: !!(src && hw && src === hw) });
+        else if ((m.name === "audio-params" || m.name === "audio-out-params") && m.data) {
+          if (m.name === "audio-params") qzbp.srcParams = m.data; else qzbp.outParams = m.data;
+          qzbpReportParams();
         }
         else if (m.name === "eof-reached" && m.data === true) qzbpEvt({ type: "ended" });
       } else if (m.event === "end-file" && m.reason === "error") {
@@ -731,6 +854,9 @@ function qzbpStop() {
   try { if (qzbp.sock) qzbp.sock.end(); } catch (_) {}
   try { if (qzbp.proc) qzbp.proc.kill(); } catch (_) {}
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
+  // Stale negotiated params outlive the sidecar that reported them, and a badge computed from the last
+  // session's numbers is exactly the kind of quiet wrongness this whole change is removing.
+  qzbp.srcParams = null; qzbp.outParams = null; qzbp.sinkCache = null;
   if (qzbp.feed && qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} }
   qzbp.feed = null;
   try { if (qzbp.srv) qzbp.srv.close(); } catch (_) {}
