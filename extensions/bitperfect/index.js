@@ -37,6 +37,7 @@ var bpGain = 1;      // linear gain the output applies to our samples (1 = untou
 var bpPro = false;   // sink is on a Pro Audio profile (explains a SOFTWARE volume multiply)
 var bpSrcRate = 0;   // decoder-side rate, to show what a player-side conversion converted FROM
 var lastTrackId = null, lastPlaying = null, lastWebMs = 0, lastWall = 0;
+var reassert = 0;   // tick counter for the periodic transport re-send (see syncTick)
 var sourceBuffers = [];   // live audio SourceBuffers, for forcing a re-feed on mid-track enable
 var lastInit = null;      // most recent init segment ('ftyp'), replayed when enabling mid-track
 
@@ -60,7 +61,11 @@ function onSegment(u8) {
   var en = bpEnabled();
   if (isInit(u8)) {
     lastInit = u8.slice(0);
-    if (en) { BP.send({ type: "newtrack" }); BP.feed(u8.slice(0)); }
+    // Carry the transport state. The main process used to assume a new track meant "playing", but this
+    // fires on any init segment - including the one the web player buffers while PAUSED as it restores the
+    // last session at launch. That made the sidecar start playing into a paused UI, and the only way out
+    // was to skip and come back, which forced a real track change and resynced it.
+    if (en) { BP.send({ type: "newtrack", playing: isPlaying() }); BP.feed(u8.slice(0)); }
   } else if (en) {
     BP.feed(u8.slice(0));
   }
@@ -135,7 +140,7 @@ function nudgeReappend() {
 // will pick up on its own via the next init segment.
 function forceRefeed() {
   if (!lastInit) { bpLog("no init segment captured yet - will start on the next track"); return false; }
-  BP.send({ type: "newtrack" });
+  BP.send({ type: "newtrack", playing: isPlaying() });
   BP.feed(lastInit.slice(0));
   var dropped = 0;
   sourceBuffers.forEach(function (sb) {
@@ -235,7 +240,16 @@ function syncTick() {
   var tr = curTrack(); var id = tr && tr.id != null ? String(tr.id) : null;
   if (id && id !== lastTrackId) { loadCurrent(); lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now(); return; }
   var playing = isPlaying();
-  if (playing !== lastPlaying) { BP.send(playing ? { type: "play" } : { type: "pause" }); lastPlaying = playing; if (playing) { BP.send({ type: "seek", ms: posMs() }); } }
+  // Edge-triggered alone is not enough. The sidecar's transport can be moved by things this loop never
+  // observed (a newtrack arriving from the MSE tap, a respawn after a mode change, a dropped command), and
+  // once the two disagree nothing here would ever notice, because `playing` still matches `lastPlaying`.
+  // Reassert periodically so any divergence heals on its own instead of needing a skip to clear it.
+  reassert = (reassert + 1) % 10;                       // ~3s at the 300ms tick
+  if (playing !== lastPlaying || reassert === 0) {
+    BP.send(playing ? { type: "play" } : { type: "pause" });
+    if (playing && playing !== lastPlaying) BP.send({ type: "seek", ms: posMs() });
+    lastPlaying = playing;
+  }
   // seek detection: a position jump not explained by wall-clock elapsed => user scrubbed
   var now = Date.now(), pm = posMs();
   if (playing) {
@@ -358,7 +372,7 @@ BP.on(function (m) {
 
 // --- enable / disable ---
 function enable() {
-  if (enabled) return; setBpEnabled(true); setOn(true);
+  if (enabled) return; setBpEnabled(true); setOn(true); syncSettingsButton();
   BP.send({ type: "enable" }); bpLive = false;
   // Mute now: this is what makes PipeWire drop the device so mpv's exclusive open can succeed. The
   // watchdog undoes it if mpv does not deliver audio, so a failed start degrades instead of going silent.
@@ -372,13 +386,18 @@ function enable() {
   toast(boot ? "Bit-perfect on" : "Bit-perfect on - starts on the next track");
 }
 function disable() {
-  if (!enabled) return; setBpEnabled(false); setOn(false); stallToldOnce = false; bpLive = false; bpStalled = false;
+  if (!enabled) return; setBpEnabled(false); setOn(false); syncSettingsButton(); stallToldOnce = false; bpLive = false; bpStalled = false;
   BP.send({ type: "disable" });
   muteWeb(false);
   mode = "off"; renderBadge();
   toast("Bit-perfect off");
 }
 function toggle() { if (enabled) disable(); else enable(); }
+// Keep the settings row's label in step with reality, whichever control changed it. Guarded because
+// enable() can run during boot, before the row object below exists.
+function syncSettingsButton() {
+  try { if (settingsEntry) settingsEntry.button = bpEnabled() ? "Turn off" : "Turn on"; } catch (e) {}
+}
 
 hookMedia(); // install before the first play() so no element ever escapes the registry
 tapMse();    // and before the first appendBuffer, so we always hold the current track's init segment
@@ -387,14 +406,20 @@ var offChange = Q.player.onChange ? Q.player.onChange(function () { if (enabled)
 
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
-var unregSettings = Q.registerSettings ? Q.registerSettings({
+// The panel renders `button` off THIS object every time it opens, so keeping the object in a variable and
+// updating the label is what keeps the two controls agreeing. It used to be an inline literal whose label
+// was computed once, at registration: clicking the badge changed the real state but left the row reading
+// its boot-time text, so the row then both LIED about the state and, because onClick just toggles whatever
+// is actually true, appeared to do the opposite of what its own button said.
+var settingsEntry = {
   // Deliberately promises less than it used to. "(exclusive mode)" described a path most Linux setups can
   // never take: where the sound server holds the device open by policy, an exclusive open is refused for as
   // long as that profile is selected, so the app plays through the server instead. Whether the result is
   // byte-exact then depends on the track's rate and the output volume, which is what the badge reports.
   label: "Bit-perfect audio", sub: "Send FLAC straight to your DAC at its native rate, bypassing the browser mixer. The badge shows whether the current track really is byte-exact, and what is in the way when it is not.",
   button: (on() ? "Turn off" : "Turn on"), onClick: toggle
-}) : null;
+};
+var unregSettings = Q.registerSettings ? Q.registerSettings(settingsEntry) : null;
 
 function toast(msg) {
   var t = document.getElementById("qz-bp-toast");
