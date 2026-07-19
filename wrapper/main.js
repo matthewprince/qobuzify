@@ -320,10 +320,15 @@ function qzbpFeedChunk(buf) {
   if (!f || f.done || !buf || !buf.length) return;
   const b = Buffer.from(buf);
   f.chunks.push(b); f.bytes += b.length;
-  // Proof that real audio reached the sidecar. The renderer keeps the web element AUDIBLE until it sees
-  // this, so a bit-perfect path that never starts can no longer leave the user in silence.
+  // Count MEDIA bytes separately. Every track's first chunk is the init segment: a few hundred bytes of
+  // ftyp/moov container header carrying zero audio frames. Treating that as "real audio reached the
+  // sidecar" meant the header alone declared the feed healthy and permanently disarmed the watchdog below,
+  // which is the one thing that catches "page muted, mpv silent". An init segment proves the tap works, not
+  // that audio is flowing.
+  const isInit = b.length > 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70; // 'ftyp'
+  if (!isInit) f.mediaBytes = (f.mediaBytes || 0) + b.length;
   qzbp.lastFeedAt = Date.now();
-  if (!f.live) { f.live = true; qzbp.stalled = false; bpTrace("LIVE: first bytes reached mpv", { bytes: f.bytes }); qzbpEvt({ type: "live" }); }
+  if (!f.live && (f.mediaBytes || 0) > 0) { f.live = true; qzbp.stalled = false; bpTrace("LIVE: media bytes reached mpv", { mediaBytes: f.mediaBytes }); qzbpEvt({ type: "live" }); }
   // A whole hi-res track is tens of MB; hold one track's worth so mpv can restart mid-track, no more.
   if (f.bytes > 320 * 1024 * 1024) { const d = f.chunks.shift(); if (d) f.bytes -= d.length; }
   if (f.res) { try { f.res.write(b); } catch (_) {} }
@@ -369,8 +374,15 @@ function alsaDeviceForDefaultSink() {
   const def = (pactl(["get-default-sink"]) || "").trim();
   const sinks = pactlJson(["list", "sinks"]);
   if (sinks && sinks.length) {
-    const pick = sinks.find((s) => s.name === def && (s.properties || {})["alsa.card"] != null)
-      || sinks.find((s) => (s.properties || {})["alsa.card"] != null);
+    // ONLY the sink that is actually default. There used to be an `|| sinks.find(any with alsa.card)`
+    // fallback here, which silently returned whichever ALSA sink pactl happened to list first whenever the
+    // default sink was virtual (an EasyEffects chain, a null sink, a combine sink, Bluetooth). That is the
+    // exact guess the wpctl branch below refuses to make, and because this branch runs first it defeated
+    // that policy on any machine with pulseaudio-utils installed. The harm is not theoretical: on a laptop
+    // with one card plus a filter chain the guessed card IS the device downstream of the chain, so it is
+    // open and clocked at the graph rate, every term of the bit-perfect test passes, and the badge claims
+    // bit-perfect over the user's DSP. No sink we can name means no claim.
+    const pick = sinks.find((s) => s.name === def && (s.properties || {})["alsa.card"] != null);
     if (pick) {
       const p = pick.properties || {};
       return "alsa/hw:" + p["alsa.card"] + "," + (p["alsa.device"] == null ? 0 : p["alsa.device"]);
@@ -489,19 +501,46 @@ function sinkState() {
       val.pro = String(p["device.profile.pro"]) === "true";
       for (const pr of ((node.info || {}).params || {}).Props || []) {
         if (Array.isArray(pr.channelVolumes) && pr.channelVolumes.length) {
-          val.gain = Math.max.apply(null, pr.channelVolumes);
+          // Every channel has its own multiplier. Taking the MAX reported the least attenuated channel, so
+          // a balance setting of [1.0, 0.72] read as unity and claimed bit-perfect over an audibly lopsided
+          // mix. Unity means all of them are 1; anything else is reported as its worst channel, and note
+          // that includes values ABOVE 1, which are not "louder but intact" but amplification that clips.
+          val.gain = pr.channelVolumes.every((v) => v === 1) ? 1 : Math.min.apply(null, pr.channelVolumes);
         }
         if (pr.mute === true) val.gain = 0;
       }
     }
   }
-  // Fallback when pw-dump is unavailable. NOTE wpctl prints the CUBE ROOT of the linear volume, so it
-  // has to be cubed back: a wpctl reading of 0.35 is a linear gain of ~0.0429, not 0.35. Reading that
-  // scale wrong is how a heavily attenuated sink can look close to unity.
+  // PulseAudio (no PipeWire, so no pw-dump and no wpctl). pactl reports the raw volume, where
+  // PA_VOLUME_NORM = 65536 is exactly unity, so this is an EXACT test rather than a rounded one.
+  // Without this branch a real-PulseAudio machine could never claim bit-perfect at any volume.
+  if (val.gain == null) {
+    const j = pactlJson(["list", "sinks"]);
+    const def = (pactl(["get-default-sink"]) || "").trim();
+    const s = j && j.length && (j.find((x) => x.name === def) || null);
+    if (s) {
+      if (s.mute === true) val.gain = 0;
+      else {
+        const vals = Object.keys(s.volume || {}).map((k) => (s.volume[k] || {}).value);
+        if (vals.length && vals.every((v) => typeof v === "number")) {
+          val.gain = vals.every((v) => v === 65536) ? 1 : Math.min.apply(null, vals) / 65536;
+        }
+      }
+    }
+  }
+  // Last resort. NOTE wpctl prints the CUBE ROOT of the linear volume, so it has to be cubed back: a
+  // reading of 0.35 is a linear gain of ~0.0429, not 0.35. It also prints only two decimals, so anything
+  // in [0.995, 1.005) prints "1.00" and cubes to exactly 1 - a band roughly +/-1.5% wide that would be
+  // asserted as unity while actually scaling (or amplifying past full scale). Precision we do not have is
+  // not a reason to make the claim, so a value that is merely CLOSE to unity reports as unknown and the
+  // badge says so. Below that band the number is good enough to show the user what is wrong.
   if (val.gain == null) {
     const t = wpctl(["get-volume", "@DEFAULT_AUDIO_SINK@"]);
     const m = t && /Volume:\s*([0-9.]+)/.exec(t);
-    if (m) val.gain = Math.pow(parseFloat(m[1]), 3);
+    if (m) {
+      const g = Math.pow(parseFloat(m[1]), 3);
+      val.gain = g > 0.97 ? null : g;   // near unity but unprovable -> unknown; clearly attenuated -> show it
+    }
     if (t && /\[MUTED\]/.test(t)) val.gain = 0;
   }
   qzbp.sinkCache = { at: now, val };
@@ -609,8 +648,18 @@ function bpTrace(stage, extra) {
 // If we are enabled and the player says it is playing but no audio has reached mpv, say so and stand down.
 const STALL_MS = 2500;   // long enough for a real exclusive open, short enough not to be a noticeable gap
 function qzbpStallCheck() {
+  // Re-check the output gain on this same timer, BEFORE the guards below. mpv only emits audio-params at a
+  // track boundary, so the badge's gain was sampled once and frozen for the whole track: turn the volume
+  // down mid-song and it kept insisting "Bit-perfect", and muting the sink left it asserting a perfect
+  // path over silence. The 1s cache in sinkState() bounds this to one pw-dump per second.
+  if (qzbp.enabled && qzbp.mode === "passthrough" && (qzbp.srcParams || qzbp.outParams)) {
+    const g = sinkState().gain;
+    if (g !== qzbp.lastGain) { qzbp.lastGain = g; qzbpReportParams(); }
+  }
   if (!qzbp.enabled || !qzbp.wantPlaying || qzbp.stalled) return;
-  const fed = qzbp.feed && qzbp.feed.bytes > 0;
+  // Media bytes, not total bytes: the init segment alone used to satisfy this and disarm the watchdog for
+  // the rest of the session, so a track that fed a header and then nothing sat silent with nothing watching.
+  const fed = qzbp.feed && (qzbp.feed.mediaBytes || 0) > 0;
   if (fed) return;
   // Grace runs from whichever came last: arming bit-perfect, or the newest track's feed opening. Using
   // only the enable time would fire on every track change, in the gap before the first bytes land.
@@ -716,10 +765,14 @@ function qzbpReportParams() {
   // Re-resolve the device every time in passthrough. mpv is given NO --audio-device there so it follows
   // the default sink, but this used to verify against whatever sink was default at enable time. Move the
   // default (or unplug the DAC) and it reads hw_params from a card the audio is not going to any more.
-  if (qzbp.mode === "passthrough") {
-    const dev = alsaDeviceForDefaultSink();
-    if (dev) qzbp.device = dev;
-  }
+  // Assign UNCONDITIONALLY. Guarding this with `if (dev)` made the fix cover only the success case: when
+  // re-resolution returns null - a Bluetooth sink, a virtual default, neither pactl nor wpctl present - the
+  // old device silently persisted. That is worse than useless on a pro-audio profile, because such a PCM is
+  // held open forever, so /proc keeps reporting RUNNING at its old rate even when nothing is routed there,
+  // and the rate check passes against a card the audio has left. Move to Bluetooth mid-session and the badge
+  // would read "Bit-perfect" over an SBC link. A null device makes hwRateOf() return 0, which withholds the
+  // claim, which is the correct answer to "we cannot tell".
+  if (qzbp.mode === "passthrough") qzbp.device = alsaDeviceForDefaultSink();
   const rate = out.samplerate || 0;
   const hw = qzbp.mode === "shared" ? 0 : hwRateOf(qzbp.device);
 
@@ -737,12 +790,15 @@ function qzbpReportParams() {
   const gainOk = gain === 1;
   const bitperfect = rateOk && gainOk && !converted;
 
-  let why = null;
+  // ALL the reasons, not the first one. A single scalar with gain checked last meant a rate mismatch
+  // masked a volume problem entirely - and a graph pinned to one rate while the sink sits below 100% is
+  // the default state of a stock desktop, so the masked case was the common one. The user would repin
+  // their graph, restart the track, and only then discover volume was also breaking it.
+  const why = [];
   if (!bitperfect) {
-    if (converted) why = "convert";
-    else if (!rateOk) why = "rate";
-    else if (gain == null) why = "gain-unknown";
-    else why = "gain";
+    if (converted) why.push("convert");
+    if (!rateOk) why.push(hw ? "rate" : "device-unknown");
+    if (gain == null) why.push("gain-unknown"); else if (gain !== 1) why.push("gain");
   }
   qzbpEvt({
     type: "params", rate, format: out.format, channels: out["channel-count"],
@@ -803,6 +859,17 @@ function qzbpSpawn(mode) {
   try { proc = spawn(bin, mpvArgs(qzbp.socketPath, mode), { stdio: ["ignore", "ignore", "pipe"] }); }
   catch (e) { qzbpEvt({ type: "error", what: "spawn", msg: String(e && e.message) }); return; }
   qzbp.proc = proc;
+  // spawn() does NOT throw synchronously when the binary is missing: it returns a ChildProcess and emits
+  // 'error' asynchronously, so the try/catch above never sees ENOENT. With no listener that becomes an
+  // unhandled EventEmitter 'error' and takes down the whole main process. Reachable in the deb/rpm builds,
+  // which declare mpv as a dependency and resolve a bare `mpv` from PATH rather than shipping one. ENOENT
+  // also emits 'close' rather than 'exit', so the respawn ladder below never runs either.
+  proc.on("error", (e) => {
+    if (qzbp.proc !== proc) return;
+    qzbp.proc = null; qzbp.sock = null; qzbp.enabled = false;
+    bpTrace("sidecar spawn failed", { bin, msg: e && e.message });
+    qzbpEvt({ type: "error", what: "spawn", msg: String((e && e.message) || e) });
+  });
   // Watch stderr for an output-open failure. pcmBusy() already rules out the common case before we spawn,
   // but it cannot rule out every one (a race against another client, a DAC that rejects the rate, a device
   // that disappears), so the runtime check stays as the backstop.
@@ -856,7 +923,7 @@ function qzbpStop() {
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
   // Stale negotiated params outlive the sidecar that reported them, and a badge computed from the last
   // session's numbers is exactly the kind of quiet wrongness this whole change is removing.
-  qzbp.srcParams = null; qzbp.outParams = null; qzbp.sinkCache = null;
+  qzbp.srcParams = null; qzbp.outParams = null; qzbp.sinkCache = null; qzbp.lastGain = undefined;
   if (qzbp.feed && qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} }
   qzbp.feed = null;
   try { if (qzbp.srv) qzbp.srv.close(); } catch (_) {}

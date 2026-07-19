@@ -32,7 +32,7 @@ function setBpEnabled(v) { enabled = !!v; try { G.enabled = !!v; } catch (e) {} 
 var mode = "off", curRate = 0, curFmt = "";
 var hwRate = 0;      // rate the DAC is actually clocked at, straight from the kernel
 var bpTrue = false;  // every condition below holds, i.e. the DAC gets the file's own samples
-var bpWhy = null;    // which condition failed: "rate" | "gain" | "gain-unknown" | "convert"
+var bpWhy = null;    // ARRAY of failed conditions: "rate" | "gain" | "gain-unknown" | "convert" | "device-unknown"
 var bpGain = 1;      // linear gain the output applies to our samples (1 = untouched)
 var bpPro = false;   // sink is on a Pro Audio profile (explains a SOFTWARE volume multiply)
 var bpSrcRate = 0;   // decoder-side rate, to show what a player-side conversion converted FROM
@@ -291,21 +291,43 @@ function renderBadge() {
     return;
   }
   badge.className = "qz-bp-badge shared";
-  // Say WHICH condition failed. "Shared" told the user nothing they could act on, and a rate-only message
-  // was worse than nothing once we learned a below-unity sink volume silently multiplies every sample:
-  // the badge read "44.1 → 96kHz" as though rate were the only problem while gain was also breaking it.
-  if (bpWhy === "gain") {
+  // bpWhy is a LIST. It used to be one reason with gain checked last, so a rate mismatch hid a volume
+  // problem - and "graph pinned to one rate" plus "sink below 100%" is the default state of a stock
+  // desktop, so the hidden case was the common one. Lead the badge with the most actionable fault but
+  // put every one of them in the tooltip, or the user fixes one and is told nothing about the rest.
+  var reasons = bpWhy || [];
+  if (reasons.length > 1) {
+    var parts = [];
+    if (reasons.indexOf("convert") >= 0) parts.push("the player had to convert it before output");
+    if (reasons.indexOf("rate") >= 0) parts.push("this track is " + fmtRate(curRate) + " but your converter runs at " + fmtRate(hwRate));
+    if (reasons.indexOf("device-unknown") >= 0) parts.push("the current output device could not be identified");
+    if (reasons.indexOf("gain") >= 0) parts.push("the output volume is at " + Math.round(bpGain * 100) + "%, so every sample is being scaled");
+    if (reasons.indexOf("gain-unknown") >= 0) parts.push("the output volume could not be read");
+    badge.textContent = reasons.indexOf("gain") >= 0 && reasons.indexOf("rate") >= 0
+      ? fmtRate(curRate) + " → " + fmtRate(hwRate) + " · " + Math.round(bpGain * 100) + "%"
+      : (hwRate && hwRate !== curRate ? fmtRate(curRate) + " → " + fmtRate(hwRate) : "Not bit-perfect");
+    badge.title = "Not bit-perfect, for " + parts.length + " reasons: " + parts.join("; ") + ".";
+    return;
+  }
+  var bpWhy1 = reasons[0] || null;
+  if (bpWhy1 === "device-unknown") {
+    badge.textContent = "Output ?";
+    badge.title = "Cannot confirm bit-perfect: the audio output in use could not be identified, so there is "
+      + "nothing to check the track's rate against. This happens with Bluetooth or virtual/filtered outputs.";
+    return;
+  }
+  if (bpWhy1 === "gain") {
     badge.textContent = "Volume " + Math.round(bpGain * 100) + "%";
     badge.title = "Not bit-perfect: your output volume is at " + Math.round(bpGain * 100) + "%, so every sample is "
       + "being multiplied before it reaches the DAC."
       + (bpPro ? " Under a Pro Audio profile that happens in software, because the profile exposes no hardware volume control for the server to use."
                : "")
       + " Set the system volume for this output to 100% and use your DAC's own volume control instead.";
-  } else if (bpWhy === "gain-unknown") {
+  } else if (bpWhy1 === "gain-unknown") {
     badge.textContent = "Volume ?";
     badge.title = "Cannot confirm bit-perfect: the output volume could not be read, so it is not possible to say "
       + "whether the samples are being scaled. Claiming bit-perfect here would be a guess.";
-  } else if (bpWhy === "convert") {
+  } else if (bpWhy1 === "convert") {
     badge.textContent = fmtRate(bpSrcRate) + " → " + fmtRate(curRate);
     badge.title = "Not bit-perfect: the player had to convert this track before output (the audio device would not "
       + "accept it as decoded), so these are no longer the original samples.";
@@ -327,7 +349,7 @@ BP.on(function (m) {
   else if (m.type === "params") {
     curRate = m.rate || curRate; curFmt = m.format || curFmt; if (m.mode) mode = m.mode;
     hwRate = m.hwRate || 0; bpTrue = !!m.bitperfect;
-    bpWhy = m.why || null; bpPro = !!m.pro; bpSrcRate = m.srcRate || 0;
+    bpWhy = Array.isArray(m.why) ? m.why : (m.why ? [m.why] : []); bpPro = !!m.pro; bpSrcRate = m.srcRate || 0;
     bpGain = (typeof m.gain === "number") ? m.gain : 1;
     renderBadge();
   }
@@ -340,7 +362,31 @@ BP.on(function (m) {
     if (bpLive) { bpLive = false; if (curTrack() && isPlaying()) forceRefeed(); }
     renderBadge();
   }
-  else if (m.type === "fatal" || m.type === "disabled") { bpLive = false; mode = "off"; muteWeb(false); renderBadge(); } // sidecar died -> unmute so audio never fully drops
+  // The sidecar is gone for good. Unmuting once is NOT enough: syncTick re-mutes every 300ms while
+  // `!bpStalled`, and hookMedia re-mutes any element created later, so the single muteWeb(false) here was
+  // undone within one tick and the user was left in permanent silence - with the badge still reading
+  // "Bit-perfect" and the settings row still offering to turn it off. Latch the dead state so the re-mute
+  // stops, and put every control back to what is actually true.
+  else if (m.type === "fatal" || m.type === "disabled") {
+    bpLive = false; bpStalled = true; mode = "off";
+    if (m.type === "fatal") { setBpEnabled(false); setOn(false); syncSettingsButton(); }
+    curRate = 0; bpTrue = false; bpWhy = [];
+    muteWeb(false); renderBadge();
+    if (m.type === "fatal" && !stallToldOnce) { stallToldOnce = true; toast("Bit-perfect stopped - playing normally"); }
+  }
+  // Errors the main process was already reporting and this handler simply dropped on the floor, so the
+  // three cases where the user goes silent and most needs telling were the three that said nothing.
+  else if (m.type === "error") {
+    bpLog("sidecar error: " + m.what + (m.msg ? " - " + m.msg : ""));
+    if (m.what === "spawn" || m.what === "serve") {
+      bpLive = false; bpStalled = true; setBpEnabled(false); setOn(false); syncSettingsButton();
+      mode = "off"; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
+      if (!stallToldOnce) { stallToldOnce = true; toast("Bit-perfect unavailable - playing normally"); }
+    } else { // "load": this track failed, fall back for it rather than killing the feature
+      bpLive = false; bpStalled = true; muteWeb(false); renderBadge();
+      if (!stallToldOnce) { stallToldOnce = true; toast("Bit-perfect couldn't play this track - playing normally"); }
+    }
+  }
   // Real audio reached mpv, so it is safe to hand the DAC over and silence the web element. Fires per
   // track, and muting is idempotent, so a track change re-arms it without a gap.
   else if (m.type === "live") { bpLive = true; bpStalled = false; muteWeb(true); if (mode === "off") mode = "shared"; renderBadge(); }
