@@ -202,28 +202,68 @@ org.freedesktop.ReserveDevice1.Audio1   owner=wireplumber  Priority=-20
 ApplicationDeviceName="alsa_card.usb-Audeze_LLC_Audeze_Maxwell_Headset_..."
 ```
 
-This changes the ceiling. Reserving is **not** a config mutation and does not touch PipeWire's graph, rates,
-routing or profile: it is the documented request WirePlumber opted in to answering. It also fails safe, because the
-reservation is a D-Bus name that the bus drops automatically if our process dies, so WirePlumber reacquires the card
-on its own. With the card released, mpv can open `hw:` and set the DAC to each track's native rate, which bypasses a
-pinned graph entirely. On the dev machine that promotes 48k content from resampled to genuinely bit-perfect without
-the user changing a thing (44.1k stays impossible: the Maxwell's USB descriptors offer only 48000 and 96000).
+The protocol is real and the priority reading above is accurate. **The conclusion first drawn from it was not, and
+this section originally recommended building it. That recommendation is WITHDRAWN.** A six-lens review of qbz with
+adversarial verification returned `survives=false` from all five independent reservation reviewers. Reasons, in
+descending order of how much they matter:
 
-**Real cost:** while the reservation is held the card is gone from the desktop, so other applications lose audio to
-that device until playback ends. That is inherent to exclusive mode, not a flaw in the protocol, and it is why this
-must be an opt-in toggle that defaults to off rather than the automatic behaviour §1 assumed.
+**1. It can strand a DAC in hardware, and our architecture cannot avoid the pattern that does it.**
+`device_reservation/linux.rs:87-112` documents its own "Tight coupling rule (load-bearing — do not violate)":
+acquiring the reservation and then releasing it *without a device consumer in between* makes WirePlumber
+release-and-reacquire over an idle PCM, and some USB DACs get stranded by that transition and need a physical
+power-cycle to recover (Cambridge DacMagic Plus confirmed, validated 2026-05-07). qbz avoids it via Rust drop
+order: `alsa_direct.rs:33-43` pins the field order with a "do not rearrange" comment so the PCM fd closes BEFORE
+the bus name is released. **We cannot express that invariant.** We would hold the name in Node while mpv holds the
+PCM in a separate process, so every failure path (mpv fails to open, mpv is SIGKILLed, we probe then back off) is
+exactly the forbidden acquire-hold-release-with-no-consumer sequence. On the dev machine mpv failing to open with
+EBUSY is the EXPECTED outcome, which makes the hazardous path the DEFAULT path. The tempting
+"acquire, sleep, re-read /proc status, release if it did not help" probe is *precisely* the code sample that file
+prints as forbidden.
 
-**If we implement it**, do both halves. Publish our own `ReserveDevice1` interface (`Priority`, `ApplicationName`,
-`RequestRelease`) so a higher-priority application can take the card back from us mid-playback. Taking advantage of
-everyone else's politeness without offering it is the one thing to avoid here.
+**2. Whether it even works under a pro-audio profile is UNVERIFIED.** The entire qbz crate contains zero handling
+of pro-audio, `pause-on-idle`, or node profiles; the only "pro-audio" string is a JACK comment (`backend.rs:36`).
+The negative signal is that qbz still needs a 50/100/200/400/800 ms EBUSY retry ladder *and* an out-of-band
+`pactl suspend-sink` fallback after reserving, i.e. on their hardware the handshake frequently did not free the PCM.
+
+**3. It is per-CARD, not per-node.** `linux.rs:519-526` maps to `ReserveDevice1.Audio<N>`, so a successful acquire
+tears down the whole ALSA device and every node on that card. On the dev machine the default sink is on card 1, so
+success means every other application on the box loses its output for as long as we hold the name.
+`settings.rs:68-70` states that intent outright.
+
+**4. The payoff here is close to zero anyway.** The Maxwell exposes only 48000/96000, so 44.1k can never be
+bit-perfect on it regardless of who owns the card.
+
+**Standing decision: do not implement device reservation.** If it is ever revisited, both halves of the protocol
+must ship together (we would also have to publish `Priority` / `ApplicationName` / `RequestRelease` so a
+higher-priority app can reclaim the card), and the drop-ordering hazard must be solved first, not noted.
 
 ## Credits
 
-The `ReserveDevice1` approach came from reading **[qbz](https://github.com/vicrodh/qbz)** by **blitzkriegfc** (MIT).
-His `crates/qbz-audio/src/device_reservation/linux.rs` is a clean, well-behaved client of the protocol: it honours a
-refusal instead of retrying harder, releases the name on drop, models "session bus unavailable" as an explicit
-degraded state, and picks its priority with an argument rather than a magic number (above the system mixer at 0, well
-below pro DAW software at 10-30, so it can pre-empt PipeWire without ever stomping on a recording session). We had
-concluded that a Pro Audio profile made exclusive access structurally impossible; his implementation is where the
-front door turned up. Our version is an independent implementation against the published PulseAudio spec rather than
-a port of his Rust, so nothing is owed under the MIT licence. The credit is owed anyway.
+Thanks to **blitzkriegfc** for **[qbz](https://github.com/vicrodh/qbz)** (MIT), which taught us two things, one of
+which stopped us shipping something harmful.
+
+First, that `org.freedesktop.ReserveDevice1` exists at all. We had concluded a Pro Audio profile made exclusive
+access structurally impossible, and `crates/qbz-audio/src/device_reservation/linux.rs` is where the sanctioned
+handover protocol turned up. The client itself is thoughtfully built: it honours a refusal instead of retrying
+harder, releases the name on drop, models "session bus unavailable" as an explicit degraded state rather than an
+error, and picks its priority with an argument instead of a magic number (above the system mixer at 0, well below
+pro DAW software at 10-30, so it can pre-empt PipeWire without stomping a recording session).
+
+Second, and more valuable to us: that same file documents the acquire-release-over-idle-PCM hazard and the USB DACs
+it has been observed to strand. **That warning is the reason §8 above withdraws the recommendation.** Writing down a
+hardware failure you hit, with the device named and the date it was validated, is a real service to everyone who
+reads the code later. It cost us nothing and saved us shipping a DAC-bricking path into an architecture that cannot
+hold the invariant that makes it safe.
+
+Accuracy, since this doc is also a decision record: we are **not** adopting qbz's approach. Their exclusive path
+falls back to out-of-band graph mutation (`pactl suspend-sink`, `pw-metadata clock.force-rate`,
+`pactl set-default-sink` at `alsa_backend.rs:36-83`, `pipewire_backend.rs:55-74`), which our never-touch-PipeWire
+rule forbids; their bit-perfect badge is a label derived from saved settings rather than a runtime measurement; and
+their live output path converts float to int by truncating multiply with no dither (`alsa_direct.rs:571-743`), so it
+is not sample-identical for 16-bit content despite the comment above it. None of that diminishes the two things
+above. Different projects, different constraints, and we only know any of this because the source is open.
+
+What we may adopt is smaller and read-only: the `/proc/asound/cardN/stream0` supported-rate parse
+(`alsa_backend.rs:429-467`), and the DAC wizard's pattern of GENERATING config snippets as text for the user to
+apply themselves while never writing a system file (`qbz-dac-wizard/src/lib.rs`, "Read-only - nothing here writes a
+system file"). That second one is exactly how we should tell users about `allowed-rates` without touching their box.
