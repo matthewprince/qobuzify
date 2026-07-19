@@ -894,7 +894,15 @@ function qzbpCommand(msg) {
       }
       break;
     case "disable": qzbpStop(); qzbpEvt({ type: "disabled" }); break;
-    case "newtrack": bpTrace("newtrack received from renderer"); qzbp.wantPlaying = true; qzbpFeedStart(); break;
+    // A new track is NOT the same thing as "the user pressed play". This assumed it was, and the init
+    // segment the web player buffers while restoring a paused session at launch was enough to start the
+    // sidecar playing into a paused UI. Take the renderer's actual transport state; only default to
+    // playing when an older renderer did not send one.
+    case "newtrack":
+      qzbp.wantPlaying = (typeof msg.playing === "boolean") ? msg.playing : true;
+      bpTrace("newtrack received from renderer", { playing: qzbp.wantPlaying });
+      qzbpFeedStart();
+      break;
     case "feed": qzbpFeedChunk(msg.data); break;
     case "endfeed": if (qzbp.feed) { qzbp.feed.done = true; if (qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} } } break;
     case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;
