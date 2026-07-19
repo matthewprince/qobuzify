@@ -21,7 +21,17 @@ if (!BP || !BP.feed) return function () {}; // not the wrapper (or no sidecar): 
 var CSS_ID = "qz-bp-css";
 var LS_ON = "qz-bitperfect:on";
 var enabled = false, disposed = false;
+// The extension can be re-initialised while the prototype taps (which must outlive cleanup) keep running.
+// Anything the tap reads therefore CANNOT live in per-instance closure state: measured in the field, the
+// sink was invoked with init segments while its own `enabled` was pinned false by a long-dead instance,
+// so mpv sat idle holding the DAC and not one byte was ever fed. Keep the authoritative flag on window so
+// whichever instance enables and whichever tap runs are always looking at the same thing.
+var G = (window.__QZBP_G__ = window.__QZBP_G__ || { enabled: false });
+function bpEnabled() { try { return enabled || !!G.enabled; } catch (e) { return enabled; } }
+function setBpEnabled(v) { enabled = !!v; try { G.enabled = !!v; } catch (e) {} }
 var mode = "off", curRate = 0, curFmt = "";
+var hwRate = 0;      // rate the DAC is actually clocked at, straight from the kernel
+var bpTrue = false;  // decoded rate == hardware rate, i.e. nothing resampled us
 var lastTrackId = null, lastPlaying = null, lastWebMs = 0, lastWall = 0;
 var sourceBuffers = [];   // live audio SourceBuffers, for forcing a re-feed on mid-track enable
 var lastInit = null;      // most recent init segment ('ftyp'), replayed when enabling mid-track
@@ -33,31 +43,52 @@ function setOn(v) { try { localStorage.setItem(LS_ON, v ? "1" : "0"); } catch (e
 // reliable track boundary here - a poll on the track id races the first appendBuffer of the next track.
 function isInit(u8) { return u8.length > 8 && u8[4] === 0x66 && u8[5] === 0x74 && u8[6] === 0x79 && u8[7] === 0x70; }
 
+// THE TAP MUST NOT CLOSE OVER INSTANCE STATE.
+// This bit was silently fatal. The prototype wrappers deliberately outlive cleanup (unwinding them could
+// clobber whoever wrapped over us since), and cleanup sets `enabled = false`. But tapMse() bails when the
+// prototype is ALREADY wrapped - so after the extension re-initialises, the live wrapper is still the FIRST
+// instance's closure, whose `enabled` is pinned false forever. The new instance then sets its own
+// `enabled = true`, sends "enable", spawns mpv... and waits for bytes from a tap that can never call it.
+// Observed exactly that: 41 appendBuffer calls during a track change, zero BP.send, zero BP.feed, mpv
+// idle-active with the DAC held. So the wrapper now dispatches to a GLOBAL that the CURRENT instance owns,
+// and re-init simply re-points it.
+function onSegment(u8) {
+  var en = bpEnabled();
+  if (isInit(u8)) {
+    lastInit = u8.slice(0);
+    if (en) { BP.send({ type: "newtrack" }); BP.feed(u8.slice(0)); }
+  } else if (en) {
+    BP.feed(u8.slice(0));
+  }
+}
+function onNewSourceBuffer(sb) { try { if (sourceBuffers.indexOf(sb) < 0) sourceBuffers.push(sb); } catch (e) {} }
+
 function tapMse() {
   try {
+    // Always claim the sinks, even if the wrappers are already installed by a previous instance.
+    window.__QZBP_SINK__ = onSegment;
+    window.__QZBP_SB__ = onNewSourceBuffer;
+
     var proto = SourceBuffer.prototype, orig = proto.appendBuffer;
-    if (!orig || orig.__qzbp) return;
-    var wrapped = function (buf) {
-      try {
-        var src = buf && buf.buffer ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) : buf;
-        var u8 = new Uint8Array(src);
-        if (isInit(u8)) {
-          lastInit = u8.slice(0);
-          if (enabled) { BP.send({ type: "newtrack" }); BP.feed(u8.slice(0)); }
-        } else if (enabled) {
-          BP.feed(u8.slice(0));
-        }
-      } catch (e) { }
-      return orig.apply(this, arguments);
-    };
-    wrapped.__qzbp = 1;
-    proto.appendBuffer = wrapped;
+    if (!orig) return;
+    if (!orig.__qzbp) {
+      var wrapped = function (buf) {
+        try {
+          var src = buf && buf.buffer ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) : buf;
+          var sink = window.__QZBP_SINK__;
+          if (sink) sink(new Uint8Array(src));
+        } catch (e) { }
+        return orig.apply(this, arguments);
+      };
+      wrapped.__qzbp = 1;
+      proto.appendBuffer = wrapped;
+    }
 
     var addSb = MediaSource.prototype.addSourceBuffer;
     if (addSb && !addSb.__qzbp) {
       var wrapAdd = function (mime) {
         var sb = addSb.apply(this, arguments);
-        try { if (String(mime).indexOf("audio") >= 0) sourceBuffers.push(sb); } catch (e) { }
+        try { if (String(mime).indexOf("audio") >= 0 && window.__QZBP_SB__) window.__QZBP_SB__(sb); } catch (e) { }
         return sb;
       };
       wrapAdd.__qzbp = 1;
@@ -66,18 +97,50 @@ function tapMse() {
   } catch (e) { }
 }
 
+// Say what happened. Enabling used to either work or produce silence with no explanation anywhere, which
+// is the single most expensive failure mode in this codebase.
+function bpLog(m) { try { console.log("[Qobuzify bit-perfect] " + m); } catch (e) {} }
+
+// The player's own seek handle (React fiber props.seek), same one media-session drives. Needed because
+// dropping the buffered range alone does not reliably make the player re-request: seeking to where the
+// playhead already is does, and it is the only way to make bytes flow through our tap again mid-track.
+var _seekInst = null;
+function seekInput() { return document.querySelector(".player__progressbar input[type=range]") || document.querySelector(".player__progressbar input"); }
+function findSeekInstance() {
+  try {
+    if (_seekInst && _seekInst.props && typeof _seekInst.props.seek === "function") return _seekInst;
+    var input = seekInput(); if (!input) return null;
+    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactInternalInstance$") === 0; });
+    if (!fk) return null;
+    var f = input[fk], d = 0;
+    while (f && d++ < 40) { var sn = f.stateNode; if (sn && sn.props && typeof sn.props.seek === "function") { _seekInst = sn; return sn; } f = f.return; }
+  } catch (e) {}
+  return null;
+}
+function nudgeReappend() {
+  var inst = findSeekInstance();
+  if (!inst) return false;
+  try { inst.props.seek({ position: Math.max(0, posMs()) }); return true; } catch (e) { return false; }
+}
+
 // Enabling mid-track is the awkward case: the page has usually already appended the whole track, so no
-// further bytes are coming and mpv would sit silent until the next one. Dropping the buffered range leaves
-// a hole at the playhead, which makes the player re-fetch and re-append - and those appends we do capture.
+// further bytes are coming and mpv would sit idle holding the DAC. Two nudges, because neither alone was
+// enough: drop the buffered range to leave a hole at the playhead, THEN seek to that position so the
+// player actually notices the hole and re-requests. Those re-appends are what we capture.
+// Returns whether we could plausibly start now; false means "wait for the next track", which the tap
+// will pick up on its own via the next init segment.
 function forceRefeed() {
-  if (!lastInit) return false;
+  if (!lastInit) { bpLog("no init segment captured yet - will start on the next track"); return false; }
   BP.send({ type: "newtrack" });
   BP.feed(lastInit.slice(0));
-  var did = false;
+  var dropped = 0;
   sourceBuffers.forEach(function (sb) {
-    try { if (!sb.updating) { sb.remove(0, Infinity); did = true; } } catch (e) { }
+    try { if (!sb.updating) { sb.remove(0, Infinity); dropped++; } } catch (e) { }
   });
-  return did;
+  var sought = nudgeReappend();
+  bpLog("bootstrap: sourceBuffers=" + sourceBuffers.length + " dropped=" + dropped + " seek=" + sought);
+  if (!dropped && !sought) bpLog("could not make the player re-append - will start on the next track");
+  return dropped > 0 || sought;
 }
 
 // --- the muted web element keeps the timeline alive; mute it (re-assert on track change: it may be recreated) ---
@@ -92,7 +155,9 @@ function hookMedia() {
     if (!orig || orig.__qzbp) return;
     var wrapped = function () {
       trackEl(this);
-      if (enabled) { try { this.muted = true; this.volume = 0; } catch (e) {} }
+      // Same proof gate as everywhere else: a freshly created element must stay audible until mpv is
+      // known to be receiving audio, or this hook alone would re-introduce the silent failure.
+      if (bpEnabled() && !bpStalled) { try { this.muted = true; this.volume = 0; } catch (e) {} }
       return orig.apply(this, arguments);
     };
     wrapped.__qzbp = 1;
@@ -126,8 +191,43 @@ function loadCurrent() {
   BP.send(isPlaying() ? { type: "play" } : { type: "pause" });
 }
 
+// --- volume -> the DAC's hardware mixer -----------------------------------------------------------
+// With bit-perfect on, the web element is muted and mpv runs at unity gain, so Qobuz's volume slider
+// controls nothing. Rather than grey it out, mirror it onto the DAC's own hardware volume: the samples
+// stay untouched and the attenuation happens in the device, which is the only way to have a working
+// slider AND bit-perfect at once. Read the level off the slider's RENDERED FILL, never the store -
+// settings.volume goes stale (it sits pinned at 100 while the rendered slider moves).
+var stallToldOnce = false;   // one toast per session, not one per track
+var bpLive = false;          // mpv has confirmed real audio (badge/state only)
+// Muting is NOT an optimisation, it is how the DAC gets freed. The web element playing through PipeWire
+// holds the very device mpv must open EXCLUSIVELY, so "do not mute until mpv proves itself" deadlocks:
+// the element keeps the device, mpv is refused, it never proves anything, so we never mute. Measured
+// exactly that (pipewire holding /dev/snd/pcmC1D1p while mpv sat idle). So: mute provisionally to let mpv
+// try, and if it has not delivered audio within the watchdog window, unmute and stay in Shared.
+var bpStalled = false;
+var hwVol = { supported: false, elem: null };
+var lastSentVol = null;
+function sliderPct() {
+  try {
+    var sl = document.querySelector(".player__settings-volume-slider .rangeslider");
+    if (!sl) return null;
+    var w = sl.getBoundingClientRect().width || 0;
+    var fill = sl.querySelector(".rangeslider__fill");
+    if (!w || !fill) return null;
+    return Math.max(0, Math.min(100, Math.round((fill.getBoundingClientRect().width || 0) / w * 100)));
+  } catch (e) { return null; }
+}
+function pushVol(force) {
+  if (disposed || !enabled || !hwVol.supported) return;
+  var p = sliderPct();
+  if (p == null || (!force && p === lastSentVol)) return;
+  lastSentVol = p;
+  BP.send({ type: "volume", pct: p });
+}
+
 function syncTick() {
   if (disposed || !enabled) return;
+  pushVol(false);
   var tr = curTrack(); var id = tr && tr.id != null ? String(tr.id) : null;
   if (id && id !== lastTrackId) { loadCurrent(); lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now(); return; }
   var playing = isPlaying();
@@ -139,7 +239,9 @@ function syncTick() {
     if (Math.abs(pm - expected) > 900) BP.send({ type: "seek", ms: pm });
   }
   lastWebMs = pm; lastWall = now;
-  muteWeb(true); // keep it muted (element can be recreated on track change)
+  // Keep it muted while we are still trying or succeeding; once the watchdog has given up we must stop
+  // re-muting, or the fallback to normal playback would be silently undone every tick.
+  if (!bpStalled) muteWeb(true); // element can be recreated on track change
 }
 
 // --- indicator (player slot): honest mode + rate, fed by mpv events ---
@@ -149,37 +251,88 @@ function syncTick() {
 var badge = document.createElement("div");
 badge.className = "qz-bp-badge"; badge.title = "Bit-perfect: audio bypasses the browser mixer to your DAC at native rate. Volume is on your DAC/system while active.";
 function fmtRate(r) { return r ? (r % 1000 === 0 ? (r / 1000) + "kHz" : (r / 1000).toFixed(1) + "kHz") : ""; }
+// The claim is driven by the measured rates the main process reports, never by which output path we happen
+// to be on. Exclusive and passthrough are both bit-perfect when the converter is clocked at the track's
+// rate, and neither is when it isn't, so one flag decides the wording and a rate mismatch is shown outright
+// rather than hidden behind a mode name the user has no way to check.
 function renderBadge() {
   if (!enabled) { badge.className = "qz-bp-badge off"; badge.textContent = ""; badge.style.display = "none"; return; }
   badge.style.display = "";
-  if (mode === "exclusive") { badge.className = "qz-bp-badge bp"; badge.textContent = "Bit-perfect" + (curRate ? " · " + fmtRate(curRate) : ""); }
-  else if (mode === "shared") { badge.className = "qz-bp-badge shared"; badge.textContent = "Shared" + (curRate ? " · " + fmtRate(curRate) : ""); }
-  else { badge.className = "qz-bp-badge wait"; badge.textContent = "Bit-perfect…"; }
+  if (!curRate) { badge.className = "qz-bp-badge wait"; badge.textContent = "Bit-perfect…"; return; }
+  if (bpTrue) { badge.className = "qz-bp-badge bp"; badge.textContent = "Bit-perfect · " + fmtRate(curRate); return; }
+  badge.className = "qz-bp-badge shared";
+  // Name both ends of the conversion. "Shared" told the user nothing actionable; "44.1 → 96kHz" tells them
+  // their graph is pinned to a rate this track isn't, which is the one thing they can actually change.
+  badge.textContent = hwRate && hwRate !== curRate
+    ? fmtRate(curRate) + " → " + fmtRate(hwRate)
+    : "Shared · " + fmtRate(curRate);
 }
 var slot = Q.playerSlot ? Q.playerSlot({ id: "qz-bp", zone: "right", order: 12, el: badge }) : null;
 
 BP.on(function (m) {
   if (disposed || !m) return;
   if (m.type === "ready") { mode = m.mode || mode; renderBadge(); }
-  else if (m.type === "params") { curRate = m.rate || curRate; curFmt = m.format || curFmt; if (m.mode) mode = m.mode; renderBadge(); }
-  else if (m.type === "mode") { mode = m.mode; renderBadge(); }
-  else if (m.type === "fatal" || m.type === "disabled") { mode = "off"; muteWeb(false); renderBadge(); } // sidecar died -> unmute so audio never fully drops
+  else if (m.type === "params") {
+    curRate = m.rate || curRate; curFmt = m.format || curFmt; if (m.mode) mode = m.mode;
+    hwRate = m.hwRate || 0; bpTrue = !!m.bitperfect;
+    renderBadge();
+  }
+  // A mode change means the main process is respawning mpv on a different output, so the loaded track is
+  // gone with the old process. Re-feed it, or playback stops here and never resumes anywhere - which is
+  // precisely how degrading turned into permanent silence instead of a downgrade.
+  else if (m.type === "mode") {
+    mode = m.mode;
+    if (mode !== "exclusive") { bpTrue = false; }
+    if (bpLive) { bpLive = false; if (curTrack() && isPlaying()) forceRefeed(); }
+    renderBadge();
+  }
+  else if (m.type === "fatal" || m.type === "disabled") { bpLive = false; mode = "off"; muteWeb(false); renderBadge(); } // sidecar died -> unmute so audio never fully drops
+  // Real audio reached mpv, so it is safe to hand the DAC over and silence the web element. Fires per
+  // track, and muting is idempotent, so a track change re-arms it without a gap.
+  else if (m.type === "live") { bpLive = true; bpStalled = false; muteWeb(true); if (mode === "off") mode = "shared"; renderBadge(); }
+  // Enabled, playing, and nothing ever reached the sidecar. Rather than sit silent holding the DAC, fall
+  // back to normal playback and SAY so - the failure used to be completely invisible in both directions.
+  // A refused device is no longer a dead end that needs its own event: the main process checks whether the
+  // PCM is free before it picks a path, and degrades to the sound server if the open is refused anyway, so
+  // there is always an output that plays. What used to arrive here as "unavailable" now arrives as a plain
+  // mode change above, handled by re-feeding rather than by giving up and unmuting the browser.
+  else if (m.type === "stalled") {
+    bpLive = false; bpStalled = true; muteWeb(false); mode = "shared"; renderBadge();
+    bpLog("mpv could not take the device (something else is holding it) - playing normally instead");
+    if (!stallToldOnce) { stallToldOnce = true; toast("Bit-perfect couldn't start - playing normally"); }
+  }
+  else if (m.type === "hwvol") {
+    hwVol.supported = !!m.supported; hwVol.elem = m.elem || null;
+    // The device keeps its own volume across launches, so on enable the slider and the hardware can
+    // disagree. Only adopt the slider here when doing so LOWERS the level: these are headphones, and
+    // syncing a high slider onto a quiet DAC would fire a jump straight into someone's ears. Raising
+    // stays a deliberate act, and every later slider move mirrors normally.
+    if (hwVol.supported) {
+      var p = sliderPct();
+      if (p != null && m.pct != null && p < m.pct) pushVol(true);
+      else lastSentVol = p;
+    }
+    renderBadge();
+  }
 });
 
 // --- enable / disable ---
 function enable() {
-  if (enabled) return; enabled = true; setOn(true);
-  BP.send({ type: "enable" });
+  if (enabled) return; setBpEnabled(true); setOn(true);
+  BP.send({ type: "enable" }); bpLive = false;
+  // Mute now: this is what makes PipeWire drop the device so mpv's exclusive open can succeed. The
+  // watchdog undoes it if mpv does not deliver audio, so a failed start degrades instead of going silent.
+  bpStalled = false;
   muteWeb(true);
   lastTrackId = null; lastPlaying = null;
   // Mid-track: nudge the player into re-appending so bytes start flowing now rather than next track.
-  if (curTrack() && isPlaying()) forceRefeed();
+  var boot = (curTrack() && isPlaying()) ? forceRefeed() : true;
   loadCurrent();
   renderBadge();
-  toast("Bit-perfect on");
+  toast(boot ? "Bit-perfect on" : "Bit-perfect on - starts on the next track");
 }
 function disable() {
-  if (!enabled) return; enabled = false; setOn(false);
+  if (!enabled) return; setBpEnabled(false); setOn(false); stallToldOnce = false; bpLive = false; bpStalled = false;
   BP.send({ type: "disable" });
   muteWeb(false);
   mode = "off"; renderBadge();
@@ -230,7 +383,13 @@ return function cleanup() {
   if (syncTimer) clearInterval(syncTimer);
   if (offChange) offChange();
   try { if (enabled) { BP.send({ type: "disable" }); muteWeb(false); } } catch (e) {}
-  enabled = false; // the prototype taps gate on this, and they outlive cleanup
+  enabled = false;
+  // Only clear the SHARED flag if we still own the sink; a newer live instance must keep running.
+  try { if (window.__QZBP_SINK__ === onSegment) G.enabled = false; } catch (e) {}
+  // Release the sinks, but ONLY if they are still ours: a newer instance may have claimed them already,
+  // and stealing them back is precisely how the tap went permanently dead before.
+  try { if (window.__QZBP_SINK__ === onSegment) window.__QZBP_SINK__ = null; } catch (e) {}
+  try { if (window.__QZBP_SB__ === onNewSourceBuffer) window.__QZBP_SB__ = null; } catch (e) {}
   // The taps stay installed: another extension may have wrapped over them since, so unwinding here
   // would clobber whoever wrapped last. Gated off, they cost a branch per append.
   if (slot) slot.remove();

@@ -14,6 +14,7 @@
 try {
   var net = require("net");
   var http = require("http");
+  var fs = require("fs");
   var electron = null; try { electron = require("electron"); } catch (_) {}
 
   var CLIENT_ID = "1519198716417020004"; // Qobuzify's built-in Discord app
@@ -24,10 +25,43 @@ try {
   var sock = null, ready = false, seq = 0, lastActivity = null, lastRecvAt = 0;
   var reconnectTimer = null, backoff = 1000, connecting = false;
 
-  function pipePath(i) {
-    if (process.platform === "win32") return "\\\\?\\pipe\\discord-ipc-" + i;
-    var base = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || "/tmp";
-    return base.replace(/\/$/, "") + "/discord-ipc-" + i;
+  // Discord's IPC socket is NOT reliably at $XDG_RUNTIME_DIR/discord-ipc-N on Linux. Sandboxed clients
+  // put it somewhere nested: Vesktop and the official Flatpak land at
+  // $XDG_RUNTIME_DIR/.flatpak/<app-id>/xdg-run/discord-ipc-0 (older builds: .../app/<app-id>/), and Snap
+  // uses $XDG_RUNTIME_DIR/snap.<name>/. Checking only the base directory means a Flatpak Discord is never
+  // found, the socket never connects, and presence silently never appears with no error anywhere - which
+  // is exactly how this read as "RPC just doesn't work on Linux".
+  function ipcDirs() {
+    var base = (process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || "/tmp").replace(/\/$/, "");
+    var dirs = [base];
+    [base + "/app", base + "/.flatpak"].forEach(function (parent) {
+      var kids = [];
+      try { kids = fs.readdirSync(parent); } catch (_) { return; }   // not a flatpak host: fine
+      kids.forEach(function (id) {
+        dirs.push(parent + "/" + id);
+        dirs.push(parent + "/" + id + "/xdg-run");
+      });
+    });
+    try {
+      fs.readdirSync(base).forEach(function (n) { if (n.indexOf("snap.") === 0) dirs.push(base + "/" + n); });
+    } catch (_) {}
+    if (dirs.indexOf("/tmp") < 0) dirs.push("/tmp");
+    return dirs;
+  }
+  // Every plausible socket, existing ones first so a live client is reached on the first attempt
+  // instead of after a pile of ENOENTs.
+  function pipeCandidates() {
+    var out = [], i;
+    if (process.platform === "win32") {
+      for (i = 0; i <= 9; i++) out.push("\\\\?\\pipe\\discord-ipc-" + i);
+      return out;
+    }
+    ipcDirs().forEach(function (d) {
+      for (var k = 0; k <= 9; k++) out.push(d + "/discord-ipc-" + k);
+    });
+    var live = out.filter(function (p) { try { return fs.existsSync(p); } catch (_) { return false; } });
+    if (!live.length) return out;
+    return live.concat(out.filter(function (p) { return live.indexOf(p) < 0; }));
   }
   function encode(op, obj) {
     var data = Buffer.from(JSON.stringify(obj), "utf8");
@@ -47,9 +81,13 @@ try {
     backoff = Math.min(Math.round(backoff * 1.6), BACKOFF_MAX);
     reconnectTimer = setTimeout(function () { reconnectTimer = null; connect(); }, wait);
   }
+  var _cand = [];
   function openPipe(i, cb) {
-    if (i > 9) return cb(null);
-    var s = net.connect(pipePath(i));
+    // Rebuilt at the start of every attempt, so a Discord started (or a Flatpak dir created) after we
+    // gave up is picked up by the next reconnect rather than needing an app restart.
+    if (i === 0) _cand = pipeCandidates();
+    if (i >= _cand.length) return cb(null);
+    var s = net.connect(_cand[i]);
     var settled = false;
     s.once("connect", function () { if (settled) return; settled = true; cb(s); });
     s.once("error", function () { if (settled) return; settled = true; try { s.destroy(); } catch (_) {} openPipe(i + 1, cb); });
@@ -127,6 +165,23 @@ try {
       return true;
     } catch (_) { return false; }
   }
+
+  // Same intake as the HTTP bridge below, over IPC. The desktop wrapper's renderer is an https page, so
+  // its POST to http://127.0.0.1 is cross-origin https->http AND (with a JSON content-type) needs a
+  // preflight: it never left the renderer, so the bridge received nothing and Discord presence silently
+  // never appeared. Nothing to block over IPC. The bake's renderer is not an https page and keeps using
+  // the HTTP bridge, where this listener is simply unused.
+  try {
+    if (electron && electron.ipcMain) {
+      electron.ipcMain.on("qz:rpc", function (_e, d) {
+        try {
+          if (!d) return;
+          if (d.clear) clearActivity();
+          else if (d.activity) pushActivity(d.activity);
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
 
   // localhost bridge: the renderer POSTs { activity: {...} } or { clear: true }
   var server = http.createServer(function (req, res) {

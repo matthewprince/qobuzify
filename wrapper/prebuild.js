@@ -35,5 +35,23 @@ try {
   rpc = "ok";
 } catch (e) { rpc = "FAILED: " + (e && e.message); }
 
+// Bundle the MPRIS module (Linux system media controls) into one self-contained file. Required, not
+// cosmetic: electron-builder's production-dependency pruner drops call-bind-apply-helpers, so a
+// node_modules-based require works in dev and dies with "Cannot find module" in the packaged app.
+// abstract-socket and x11 stay external - both are optional natives dbus-next only touches on bus
+// address forms this never uses.
+try {
+  require("esbuild").buildSync({
+    entryPoints: [path.join(__dirname, "mpris-main.js")],
+    outfile: path.join(OUT, "mpris-bundle.js"),
+    bundle: true, platform: "node", target: "node20",
+    external: ["electron", "abstract-socket", "x11"],
+    logLevel: "warning",
+  });
+  console.log("bundled mpris-bundle.js");
+} catch (e) {
+  console.warn("mpris bundle SKIPPED (" + (e && e.message) + ") - media keys will be off on Linux");
+}
+
 const sz = fs.statSync(path.join(OUT, "qz-payload.js")).size;
 console.log("baked qz-payload.js (" + Math.round(sz / 1024) + " KB) + " + Object.keys(manifest).length + " vendor(s) + rpc-main " + rpc);

@@ -28,6 +28,11 @@ try {
   var _bridgeFails = 0, _bridgeWarned = false; // surface a dead bridge instead of failing silently
 
   function post(body) {
+    // IPC first, on the desktop wrapper. That page is https, so the POST below is cross-origin
+    // https->http AND needs a preflight for its JSON content-type: it never left the renderer, the
+    // bridge received nothing, and presence silently never appeared (the warning below fired instead,
+    // blaming a missing patch or a firewall). The bake's renderer is not https and still uses the POST.
+    try { if (window.__QZRPC__ && window.__QZRPC__.send) { window.__QZRPC__.send(body); return; } } catch (e) {}
     try {
       _fetch(BRIDGE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(function () { _bridgeFails = 0; })

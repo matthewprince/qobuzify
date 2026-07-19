@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy this file to .spotify-creds.json (gitignored) and fill in your own values. Used ONLY to map a Qobuz track to its Spotify track id by ISRC, so Qz Lyrics can fetch its synced lyrics. Stays local; never committed.",
+  "_comment": "Copy this file to .spotify-creds.json (gitignored) and fill in your own values. Used ONLY to map a Qobuz track to its Spotify track id by ISRC, so the lyrics backend can fetch its synced lyrics. Stays local; never committed.",
   "_how_to_get": "Go to https://developer.spotify.com/dashboard -> Create app (any name; Redirect URI can be http://localhost ; check Web API). Open the app -> Settings -> copy Client ID and Client secret.",
   "client_id": "YOUR_SPOTIFY_CLIENT_ID",
   "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET"

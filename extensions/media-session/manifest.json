@@ -1,0 +1,8 @@
+{
+  "id": "media-session",
+  "name": "Media Session",
+  "description": "Lockscreen, notification and Bluetooth/headset transport controls. Shows the current track (title, artist, album art) and a live scrubber on your phone lockscreen, Windows/macOS media overlay and car display, and makes your headset play/pause and skip buttons work.",
+  "icon": "icon-lock",
+  "version": "1.0.0",
+  "author": "ethan"
+}

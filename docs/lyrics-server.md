@@ -46,9 +46,11 @@ Same-title songs are a real problem. Selena Gomez and Baby Keem both have a trac
 
 The fix is a duration guard on both sides. If a cached lyric's timing runs well past the current track's end (more than 10 seconds over), it belongs to a different, longer song with the same title. The server evicts that D1 row and R2 raw and re-resolves; the client drops its local cache entry and re-asks. A stale wrong-song match now auto-corrects on the next play instead of being stuck forever.
 
-## Cache only what's trustworthy
+## Caching everything, upgrading over time
 
-Not every result is worth caching. The Worker caches only high-confidence lyrics: results from the trusted high-quality sources even at line level, or anything word-by-word. Line-level results from the open sources are served to the client but not cached, so they stay re-resolvable and can upgrade to a better source on a later play. The client mirrors this with a `cacheable` flag in the response, and a cached line-level result gets a background re-resolve (fired with no user latency) so the next play can quietly upgrade it to word-by-word.
+Every real lyric result is cached, line-level included, so a track anyone has played loads instantly for everyone else instead of re-resolving upstream on every play. Only a still-warming result (where a better tier is expected imminently) is left uncached.
+
+A line-level result is never treated as final, though. On a small fraction of its cache hits, and at least once a month, the Worker re-resolves it in the background (fired with no user latency): if a word-by-word source has since become reachable, the cached row quietly upgrades; if not, the staleness clock resets so it isn't re-checked every play. That gives the best of both: instant cached serves, plus a track that self-upgrades to karaoke-grade timing as better sources appear. The client carries a `cacheable` flag in the response so it knows which tier to keep locally versus re-ask the Worker for.
 
 ## The home-IP relay
 
