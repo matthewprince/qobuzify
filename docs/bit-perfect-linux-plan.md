@@ -164,3 +164,66 @@ Frame: Windows already gets bit-perfect (patches the official app's JUCE/WASAPI-
 **Phase 6 (parallel, independent) — Windows installer:** bundle node.exe, pre-flight Qobuz check, embedded-hash integrity, `$ProgressPreference` fix, running-Qobuz notice.
 
 **Blunt feasibility call:** True bit-perfect on Linux is **definitely achievable and proven** (QBZ/Feishin/hifi.rs do exactly this; the null test will prove it byte-for-byte). It is **not "zero-config, just works" in the way the AppImage today is** — that framing is the one place the research over-sells. The audio *engine* is a solved, bundled, battle-tested component. **The single biggest risk is the two-brain sync: keeping the sealed Qobuz web player's timeline/queue/scrobble state machine correct while a muted-but-live Chromium element and an exclusively-holding libmpv both need to coexist without contending for the DAC (§2 null-sink resolution).** That is net-new integration work with no prior art to copy (QBZ replaced the UI entirely; we're keeping Qobuz's). Settle it in Phase 0 step 2 before committing to the full build. Format_id capping (§5) is the second risk but is steerable in-app. Everything else is engineering, not uncertainty.
+---
+
+## 8. 2026-07-18 update: what actually shipped, and the door we never knocked on
+
+**What shipped** (see `wrapper/main.js` `pickMode()` / `mpvArgs()`): the exclusive-first plan above turned out to
+be unshippable as written. mpv runs `--idle=yes --keep-open=yes`, so a **refused** device does not make it exit:
+it sits alive, idle, holding nothing and playing nothing, with no error anywhere. On any PipeWire desktop the
+server holds the PCM open by policy, and permanently so under a Pro Audio profile (`node.pause-on-idle=false`),
+so the exclusive open could never succeed and the user got silence rather than a downgrade. The shipped design
+therefore checks `/proc/asound/card<C>/pcm<D>p/sub0/status` **before** spawning and, when the PCM is not free,
+plays **through** the sound server at the track's native rate and unity gain (`--ao=pipewire,pulse,alsa`,
+no `--audio-device`). Nothing in the user's routing, profile, graph or rate policy is ever changed.
+
+**Measured, not asserted** (dev machine, Audeze Maxwell, 96k graph):
+- mpv decode to AO, app's exact flags: `768000/768000` samples bit-identical, full-scale extremes included.
+- mpv to pipewire-pulse to graph to sink monitor: `768000/768000` samples bit-identical at matched rate.
+So passthrough IS bit-exact whenever the graph rate equals the track rate. The badge reports that as a measured
+fact (decoded rate vs the DAC's live `hw_params` rate), not as a mode label.
+
+**The limitation, stated honestly:** passthrough is only bit-perfect at matched rate. Stock PipeWire ships
+`default.clock.allowed-rates = [ 48000 ]`, a single entry, so the graph never switches. Most users are therefore
+pinned exactly as this dev machine is, and 44.1k content (most of Qobuz) is resampled. We must never "fix" that
+by editing anyone's config.
+
+### The correction: `org.freedesktop.ReserveDevice1`
+
+§1 and §2 above assume the only way to get the device is to take it, and conclude that a busy PCM is a wall.
+That is wrong, and it cost this project a lot of time. There is a **sanctioned handover protocol**: an app claims
+the well-known bus name `org.freedesktop.ReserveDevice1.Audio<card>`, reads the current holder's `Priority`, and
+calls `RequestRelease(priority)` if it outranks them. WirePlumber implements the server side (`alsa.reserve = true`
+in `50-alsa-config.lua`) and **advertises itself at priority -20**, which is it saying explicitly that a real audio
+application should outrank it. Verified live on the dev machine:
+
+```
+org.freedesktop.ReserveDevice1.Audio1   owner=wireplumber  Priority=-20
+ApplicationDeviceName="alsa_card.usb-Audeze_LLC_Audeze_Maxwell_Headset_..."
+```
+
+This changes the ceiling. Reserving is **not** a config mutation and does not touch PipeWire's graph, rates,
+routing or profile: it is the documented request WirePlumber opted in to answering. It also fails safe, because the
+reservation is a D-Bus name that the bus drops automatically if our process dies, so WirePlumber reacquires the card
+on its own. With the card released, mpv can open `hw:` and set the DAC to each track's native rate, which bypasses a
+pinned graph entirely. On the dev machine that promotes 48k content from resampled to genuinely bit-perfect without
+the user changing a thing (44.1k stays impossible: the Maxwell's USB descriptors offer only 48000 and 96000).
+
+**Real cost:** while the reservation is held the card is gone from the desktop, so other applications lose audio to
+that device until playback ends. That is inherent to exclusive mode, not a flaw in the protocol, and it is why this
+must be an opt-in toggle that defaults to off rather than the automatic behaviour §1 assumed.
+
+**If we implement it**, do both halves. Publish our own `ReserveDevice1` interface (`Priority`, `ApplicationName`,
+`RequestRelease`) so a higher-priority application can take the card back from us mid-playback. Taking advantage of
+everyone else's politeness without offering it is the one thing to avoid here.
+
+## Credits
+
+The `ReserveDevice1` approach came from reading **[qbz](https://github.com/vicrodh/qbz)** by **blitzkriegfc** (MIT).
+His `crates/qbz-audio/src/device_reservation/linux.rs` is a clean, well-behaved client of the protocol: it honours a
+refusal instead of retrying harder, releases the name on drop, models "session bus unavailable" as an explicit
+degraded state, and picks its priority with an argument rather than a magic number (above the system mixer at 0, well
+below pro DAW software at 10-30, so it can pre-empt PipeWire without ever stomping on a recording session). We had
+concluded that a Pro Audio profile made exclusive access structurally impossible; his implementation is where the
+front door turned up. Our version is an independent implementation against the published PulseAudio spec rather than
+a port of his Rust, so nothing is owed under the MIT licence. The credit is owed anyway.
