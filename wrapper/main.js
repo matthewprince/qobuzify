@@ -657,20 +657,24 @@ function qzbpStallCheck() {
     if (g !== qzbp.lastGain) { qzbp.lastGain = g; qzbpReportParams(); }
   }
   if (!qzbp.enabled || !qzbp.wantPlaying || qzbp.stalled) return;
-  // Media bytes, not total bytes: the init segment alone used to satisfy this and disarm the watchdog for
-  // the rest of the session, so a track that fed a header and then nothing sat silent with nothing watching.
-  const fed = qzbp.feed && (qzbp.feed.mediaBytes || 0) > 0;
-  if (fed) return;
-  // Grace runs from whichever came last: arming bit-perfect, or the newest track's feed opening. Using
-  // only the enable time would fire on every track change, in the gap before the first bytes land.
+  // "No media bytes reached mpv" is NO LONGER a failure to alarm on. The renderer now mutes the web element
+  // only on the `live` event (real audio in mpv), so "no bytes" simply means bit-perfect has not engaged yet
+  // - the browser is still playing the track normally, nothing is silent, nothing needs rescuing. It engages
+  // on its own when a feedable track (mid-playback, or the next track's init) starts flowing. So the old
+  // "no bytes -> STALLED -> couldn't start" path is gone; it only ever fired on the harmless waiting state
+  // and scared the user off a feature that was about to work on the next track.
+  //
+  // The one genuine failure left is: audio DID reach mpv (we went live, so we muted) but mpv then sat idle
+  // producing nothing. That would be real silence. Catch only that: live-but-idle past the grace.
+  const f = qzbp.feed;
+  if (!f || !f.live) return;                         // never went live -> not committed -> nothing to rescue
+  if (!qzbp.coreIdle) return;                        // mpv is playing -> fine
   const since = Math.max(qzbp.enabledAt || 0, qzbp.feedStartedAt || 0);
   if (Date.now() - since < STALL_MS) return;
   qzbp.stalled = true;
-  bpTrace("STALLED: no bytes ever reached mpv", { device: qzbp.device, mode: qzbp.mode });
-  // Do NOT keep the DAC hostage while producing no sound: hand it back, and tell the renderer to unmute
-  // and stop claiming bit-perfect. Degrading loudly beats a silent lie.
+  bpTrace("STALLED: mpv went live then sat idle", { device: qzbp.device, mode: qzbp.mode });
   try { mpvSend(["stop"]); } catch (_) {}
-  qzbpEvt({ type: "stalled", why: "no audio reached the bit-perfect sidecar" });
+  qzbpEvt({ type: "stalled", why: "audio reached the bit-perfect sidecar but it stopped producing sound" });
 }
 
 // DELIBERATELY REMOVED: the null-sink isolation layer (pwIsolate / pwSweep / pwRestore).
@@ -740,8 +744,15 @@ function mpvArgs(sockPath, mode) {
 // and hoped for. Order is best-audio-first, but every step has to be true, not merely plausible.
 function pickMode() {
   if (process.platform !== "linux") return "exclusive"; // CoreAudio/WASAPI negotiate exclusivity themselves
-  if (qzbp.device && !pcmBusy(qzbp.device)) return "exclusive"; // PCM is free: take it at the track's rate
-  if (soundServerPresent()) return "passthrough";               // server owns the card: go through it
+  // If a sound server owns the card, go THROUGH it - always. The old code grabbed the raw device whenever
+  // pcmBusy() read "free", but on a PipeWire desktop "free" is a lie in motion: muting the web element (which
+  // enabling bit-perfect does) makes the server suspend the sink for a beat, so the PCM flickers to "closed"
+  // exactly at enable time. pickMode then chose exclusive, the server immediately re-took the device, and mpv's
+  // exclusive open lost the race - silence, or "couldn't play, playing normally". Passthrough at the graph's
+  // rate is byte-perfect when the rates match and, crucially, ALWAYS opens. The device-grab is only correct
+  // where there is genuinely no server to contend with (bare ALSA).
+  if (soundServerPresent()) return "passthrough";
+  if (qzbp.device && !pcmBusy(qzbp.device)) return "exclusive";
   return qzbp.device ? "exclusive" : "shared";
 }
 function qzbpEvt(m) { try { if (win && !win.isDestroyed()) win.webContents.send("qzbp:evt", m); } catch (_) {} }
@@ -835,6 +846,7 @@ function qzbpConnect() {
           if (m.name === "audio-params") qzbp.srcParams = m.data; else qzbp.outParams = m.data;
           qzbpReportParams();
         }
+        else if (m.name === "core-idle") qzbp.coreIdle = m.data === true; // true = mpv not producing audio (paused/buffering/idle)
         else if (m.name === "eof-reached" && m.data === true) qzbpEvt({ type: "ended" });
       } else if (m.event === "end-file" && m.reason === "error") {
         qzbpEvt({ type: "error", what: "load" });
