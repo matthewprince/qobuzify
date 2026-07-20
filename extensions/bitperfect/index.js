@@ -132,24 +132,22 @@ function nudgeReappend() {
   try { inst.props.seek({ position: Math.max(0, posMs()) }); return true; } catch (e) { return false; }
 }
 
-// Enabling mid-track is the awkward case: the page has usually already appended the whole track, so no
-// further bytes are coming and mpv would sit idle holding the DAC. Two nudges, because neither alone was
-// enough: drop the buffered range to leave a hole at the playhead, THEN seek to that position so the
-// player actually notices the hole and re-requests. Those re-appends are what we capture.
-// Returns whether we could plausibly start now; false means "wait for the next track", which the tap
-// will pick up on its own via the next init segment.
+// Enabling mid-track: hand mpv this track's codec header and let the tap forward whatever segments the
+// player appends next. If the track is still playing (segments are still being appended progressively),
+// bit-perfect picks up within a segment. If it is already fully buffered (nothing more will append),
+// nothing flows and we cleanly wait for the next track's init - the current track just keeps playing
+// normally in the browser, untouched.
+//
+// The old version DROPPED the player's buffered range (sb.remove(0, Infinity)) + seeked, to force a
+// re-append. That was the bug behind "couldn't start" and the silent-paused sidecar: dropping the buffer
+// stalls the web player into a rebuffer, which reads as paused, which left mpv paused into silence - and
+// when the re-append never came, we had already muted, so the track went silent and the watchdog had to
+// rescue it with a scary toast. We do NOT touch the player's buffer anymore. Priming is non-destructive.
 function forceRefeed() {
-  if (!lastInit) { bpLog("no init segment captured yet - will start on the next track"); return false; }
+  if (!lastInit) { bpLog("no init segment captured yet - bit-perfect starts on the next track"); return false; }
   BP.send({ type: "newtrack", playing: isPlaying() });
   BP.feed(lastInit.slice(0));
-  var dropped = 0;
-  sourceBuffers.forEach(function (sb) {
-    try { if (!sb.updating) { sb.remove(0, Infinity); dropped++; } } catch (e) { }
-  });
-  var sought = nudgeReappend();
-  bpLog("bootstrap: sourceBuffers=" + sourceBuffers.length + " dropped=" + dropped + " seek=" + sought);
-  if (!dropped && !sought) bpLog("could not make the player re-append - will start on the next track");
-  return dropped > 0 || sought;
+  return true;
 }
 
 // --- the muted web element keeps the timeline alive; mute it (re-assert on track change: it may be recreated) ---
@@ -420,16 +418,19 @@ BP.on(function (m) {
 function enable() {
   if (enabled) return; setBpEnabled(true); setOn(true); syncSettingsButton();
   BP.send({ type: "enable" }); bpLive = false;
-  // Mute now: this is what makes PipeWire drop the device so mpv's exclusive open can succeed. The
-  // watchdog undoes it if mpv does not deliver audio, so a failed start degrades instead of going silent.
+  // Do NOT mute the web element here. Muting up-front silenced the current track before we knew we could
+  // feed it, and if we could not (already buffered), the track sat silent until the watchdog rescued it
+  // with "couldn't start". The 'live' event mutes the browser the instant real audio reaches mpv - so we
+  // only ever hand the DAC over once bit-perfect is genuinely producing sound. Until then the browser keeps
+  // playing normally.
   bpStalled = false;
-  muteWeb(true);
   lastTrackId = null; lastPlaying = null;
-  // Mid-track: nudge the player into re-appending so bytes start flowing now rather than next track.
-  var boot = (curTrack() && isPlaying()) ? forceRefeed() : true;
+  // Prime mpv with the current track's header (non-destructive). Segments still being appended flow through
+  // the tap and bit-perfect engages within a segment; a fully-buffered track quietly waits for the next one.
+  var primed = (curTrack() && isPlaying()) ? forceRefeed() : false;
   loadCurrent();
   renderBadge();
-  toast(boot ? "Bit-perfect on" : "Bit-perfect on - starts on the next track");
+  toast(primed ? "Bit-perfect on" : "Bit-perfect on - starts on the next track");
 }
 function disable() {
   if (!enabled) return; setBpEnabled(false); setOn(false); syncSettingsButton(); stallToldOnce = false; bpLive = false; bpStalled = false;
