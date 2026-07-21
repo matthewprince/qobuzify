@@ -312,6 +312,17 @@
         if (this.value) localStorage.setItem(LS_LANG, this.value);
         else localStorage.removeItem(LS_LANG);
       } catch (e) {}
+      // Persist through Qobuz's own settings store too (the reducer flags it for storage), so the
+      // pick sticks even if the user quits before the post-reload dispatch runs. Clearing back to
+      // System default must also dispatch, or the store would keep serving the last override; drop
+      // the navigator spoof first (own props, configurable) so the REAL system locale is stored.
+      try {
+        if (QZ_STORE) {
+          var lv = this.value;
+          if (!lv) { try { delete navigator.language; delete navigator.languages; } catch (e2) {} lv = navigator.language; }
+          if (lv) QZ_STORE.dispatch({ type: "SETTINGS_SET_LANGUAGE", language: lv });
+        }
+      } catch (e) {}
       // The language is read once, at boot, by code we cannot reach afterwards, so a reload is the
       // honest way to apply it rather than pretending a live switch happened.
       location.reload();
@@ -328,10 +339,12 @@
       this.classList.toggle("qz-switch--on");
     });
   }
-  // Only locales the Qobuz bundle actually ships, one entry per language so the list stays usable.
+  // Only locales the Qobuz bundle actually ships (its LanguageInterfaceEnum), one entry per
+  // language so the list stays usable. Values must stay enum-legal: they are also dispatched into
+  // Qobuz's settings store, and pt-BR (which the bundle silently normalizes to pt-PT) is not.
   var LANGS = [["", "System default"], ["en-US", "English (US)"], ["en-GB", "English (UK)"],
-    ["de-DE", "Deutsch"], ["fr-FR", "Francais"], ["es-ES", "Espanol"], ["it-IT", "Italiano"],
-    ["pt-BR", "Portugues (BR)"], ["ja-JP", "Nihongo"]];
+    ["de-DE", "Deutsch"], ["fr-FR", "Francais"], ["fr-CA", "Francais (CA)"], ["es-ES", "Espanol"],
+    ["it-IT", "Italiano"], ["pt-PT", "Portugues"], ["ja-JP", "Nihongo"]];
   function langOptions() {
     var cur = ""; try { cur = localStorage.getItem(LS_LANG) || ""; } catch (e) {}
     return LANGS.map(function (l) {
@@ -370,10 +383,13 @@
     } catch (e) {}
   }
 
-  // open a URL in the user's real browser (window.open works in the Qobuz Electron shell; the <a>
-  // click is a fallback if the popup is blocked)
+  // open a URL in the user's real browser (window.open works in the Qobuz Electron shell). Its
+  // return value CANNOT signal success: with "noopener" in the features it is null per spec, and
+  // under the wrapper's setWindowOpenHandler (deny after shell.openExternal) it is null too - so
+  // testing it made the anchor fallback ALSO fire and every link opened twice. Open once; the
+  // anchor path only covers a host where window.open itself throws.
   function openExternal(url) {
-    try { if (window.open(url, "_blank", "noopener")) return; } catch (e) {}
+    try { window.open(url, "_blank", "noopener"); return; } catch (e) {}
     try { var a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
   }
   function copyText(s) { try { if (navigator.clipboard) navigator.clipboard.writeText(s); } catch (e) {} }
@@ -393,6 +409,9 @@
     // Android has no PowerShell installer - send it to the Android download page instead of copying a
     // Windows command. Desktop keeps the copy-the-installer flow.
     if (IS_ANDROID) { openExternal((updateInfo && updateInfo.url) || "https://qobuzify.app/android"); return; }
+    // The wrapper is its own product line with its own releases; a Windows PowerShell one-liner is
+    // useless there. Send it to the release download (the server payload carries the platform url).
+    if (WRAP) { openExternal((updateInfo && updateInfo.url) || "https://github.com/matthewprince/qobuzify/releases/latest"); return; }
     copyText(INSTALL_CMD); openExternal("https://qobuzify.app/");
   }
 
@@ -632,10 +651,35 @@
           } catch (e) { return null; }
         },
         onChange: function (fn) {
-          var lastId = null;
+          var lastId = null, settleT = null;
           try { lastId = QZ_STORE.getState().player.currentTrack && QZ_STORE.getState().player.currentTrack.id; } catch (e) {}
+          // The store id flips BEFORE React repaints the player bar, so a synchronous getTrack()
+          // here would pair the new id with the PREVIOUS track's DOM-scraped title/artist/cover (a
+          // torn snapshot every consumer then had to debounce around). Defer the callback until the
+          // scrape settles: poll until the title is non-empty and stable across two reads, capped
+          // at ~1.5s, then deliver one coherent object. A cleared track (id null) has nothing to
+          // scrape, so it fires right away.
+          function settle(id, prevTitle, polls) {
+            settleT = null;
+            var t = Q.player.getTrack();
+            var curId = null;
+            try { var c = QZ_STORE.getState().player.currentTrack; curId = c && c.id; } catch (e) {}
+            if (curId !== id) return; // superseded by another change; that change's own settle runs
+            if (polls >= 10 || (t && (!t.id || (t.title && t.title === prevTitle)))) {
+              try { fn(t); } catch (e) { try { console.error("[Qobuzify] onChange consumer failed:", e); } catch (_) {} }
+              return;
+            }
+            settleT = setTimeout(function () { settle(id, (t && t.title) || "", polls + 1); }, 150);
+          }
           return QZ_STORE.subscribe(function () {
-            try { var ct = QZ_STORE.getState().player.currentTrack; var id = ct && ct.id; if (id !== lastId) { lastId = id; fn(Q.player.getTrack()); } } catch (e) {}
+            try {
+              var ct = QZ_STORE.getState().player.currentTrack; var id = ct && ct.id;
+              if (id !== lastId) {
+                lastId = id;
+                if (settleT) { clearTimeout(settleT); settleT = null; }
+                settle(id, "", 0);
+              }
+            } catch (e) {}
           });
         },
         // Remove UPCOMING play-queue items whose trackId matches pred - so a filtered track is skipped
@@ -716,6 +760,17 @@
 
   function initExtensions() {
     window.Qobuzify = buildApi();
+    // Locale override, store half (issue #11): the navigator spoof at the top wins the boot path,
+    // but Qobuz's post-login hydration prefers persisted settings.language and the account zone
+    // over navigator. Align the persisted value with the override once the store exists - the
+    // SETTINGS_SET_LANGUAGE reducer flags it for storage, so Qobuz's own hydration then carries
+    // the user's choice on every later boot. A renamed action type in a future bundle makes this a
+    // no-op and behavior degrades to the navigator-only override, never a crash.
+    try {
+      var lp = localStorage.getItem(LS_LANG);
+      var lst = lp && QZ_STORE && QZ_STORE.getState().settings;
+      if (lst && lst.language !== lp) QZ_STORE.dispatch({ type: "SETTINGS_SET_LANGUAGE", language: lp });
+    } catch (e) {}
     if (QZ_STORE) QZ_STORE.subscribe(function () {
       try { var loc = QZ_STORE.getState().router && QZ_STORE.getState().router.location; var path = loc && loc.pathname;
         if (path && path !== lastPath) { lastPath = path; routeCbs.forEach(function (f) { try { f(path); } catch (e) {} }); } } catch (e) {}
@@ -729,7 +784,17 @@
       tries++;
       if (!QZ_STORE) QZ_STORE = findStore();
       if (QZ_STORE) { clearInterval(iv); window.__QZ_EXT_INIT = true; initExtensions(); }
-      else if (tries > 60) clearInterval(iv);
+      else if (tries > 60) {
+        // On a slow cold start React can take well past 18s to mount; a hard stop here left every
+        // extension silently dead for the whole session. Drop to a slow poll instead - it costs
+        // nothing once the store appears and makes a late mount recoverable.
+        clearInterval(iv);
+        try { console.warn("[Qobuzify] app store not found after 18s - extensions delayed, retrying every 2.5s"); } catch (e) {}
+        iv = setInterval(function () {
+          if (!QZ_STORE) QZ_STORE = findStore();
+          if (QZ_STORE) { clearInterval(iv); window.__QZ_EXT_INIT = true; initExtensions(); }
+        }, 2500);
+      }
     }, 300);
   }
 
