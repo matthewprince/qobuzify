@@ -18216,7 +18216,10 @@ function log(m) {
 }
 var player = null;
 var positionUs = 0;
-var lastTrackKey = null;
+var lastMetaKey = null;
+var lastPubId = null;
+var lastPubTitle = null;
+var holds = 0;
 function start(onCmd) {
   if (process.platform !== "linux" || player) return player;
   let Player;
@@ -18237,6 +18240,18 @@ function start(onCmd) {
     log("service registration failed (no session bus?): " + (e && e.message));
     player = null;
     return null;
+  }
+  try {
+    player.on("error", (e) => {
+      log("bus error: " + (e && e.message) + " - media keys off");
+      player = null;
+      lastMetaKey = null;
+      lastPubId = null;
+      lastPubTitle = null;
+      holds = 0;
+    });
+  } catch (e) {
+    log("error-handler wiring failed: " + (e && e.message));
   }
   try {
     player.canRaise = true;
@@ -18281,19 +18296,28 @@ function update(s) {
   if (!player || !s) return;
   try {
     positionUs = Math.max(0, Math.round(Number(s.positionMs || 0) * 1e3));
-    const key = s.trackId == null ? null : String(s.trackId);
-    if (key !== lastTrackKey) {
-      lastTrackKey = key;
-      player.metadata = key == null ? {} : {
-        "mpris:trackid": player.objectPath("track/" + key.replace(/[^A-Za-z0-9]/g, "")),
-        "mpris:length": Math.max(0, Math.round(Number(s.durationMs || 0) * 1e3)),
-        "mpris:artUrl": s.artUrl || "",
-        "xesam:title": s.title || "",
-        "xesam:album": s.album || "",
-        "xesam:artist": s.artist ? [s.artist] : []
-      };
+    const id = s.trackId == null ? null : String(s.trackId);
+    const metaKey = id == null ? null : [id, s.title || "", s.artist || "", s.album || "", s.artUrl || "", s.durationMs || 0].join("|");
+    if (metaKey !== lastMetaKey) {
+      const torn = id != null && lastPubId != null && id !== lastPubId && s.title && s.title === lastPubTitle;
+      if (torn && holds < 3) {
+        holds++;
+      } else {
+        holds = 0;
+        lastMetaKey = metaKey;
+        lastPubId = id;
+        lastPubTitle = s.title || "";
+        player.metadata = id == null ? {} : {
+          "mpris:trackid": player.objectPath("track/" + id.replace(/[^A-Za-z0-9]/g, "")),
+          "mpris:length": Math.max(0, Math.round(Number(s.durationMs || 0) * 1e3)),
+          "mpris:artUrl": s.artUrl || "",
+          "xesam:title": s.title || "",
+          "xesam:album": s.album || "",
+          "xesam:artist": s.artist ? [s.artist] : []
+        };
+      }
     }
-    const want = key == null ? "Stopped" : s.playing ? "Playing" : "Paused";
+    const want = id == null ? "Stopped" : s.playing ? "Playing" : "Paused";
     if (player.playbackStatus !== want) player.playbackStatus = want;
   } catch (_) {
   }
@@ -18313,7 +18337,10 @@ function stop() {
   } catch (_) {
   }
   player = null;
-  lastTrackKey = null;
+  lastMetaKey = null;
+  lastPubId = null;
+  lastPubTitle = null;
+  holds = 0;
   positionUs = 0;
 }
 module.exports = { start, update, seeked, stop };
