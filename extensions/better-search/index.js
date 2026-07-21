@@ -413,16 +413,27 @@ function onType() {
   state.data = null; render();
   debTimer = setTimeout(function () { doSearch(v.trim()); }, 190);
 }
+function onFocus() { if (input && norm(input.value).length >= 2) { show(); if (state.q !== input.value.trim()) onType(); } }
+function onKeyDown(e) {
+  if (!input) return;
+  if (e.key === "Escape") { closeSearch(); }
+  else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); clearTimeout(debTimer); if (norm(input.value).length >= 2) { show(); doSearch(input.value.trim()); } }
+}
+function unhookInput() {
+  if (!input) return;
+  input.removeEventListener("input", onType);
+  input.removeEventListener("focus", onFocus);
+  input.removeEventListener("keydown", onKeyDown);
+  input = null;
+}
 function hookInput() {
   var inp = document.querySelector(".SearchBar__input");
   if (!inp || inp === input) return;
+  unhookInput(); // React recreated the box - drop the listeners left on the dead element
   input = inp;
   input.addEventListener("input", onType);
-  input.addEventListener("focus", function () { if (norm(input.value).length >= 2) { show(); if (state.q !== input.value.trim()) onType(); } });
-  input.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") { closeSearch(); }
-    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); clearTimeout(debTimer); if (norm(input.value).length >= 2) { show(); doSearch(input.value.trim()); } }
-  });
+  input.addEventListener("focus", onFocus);
+  input.addEventListener("keydown", onKeyDown);
 }
 
 Q.css(CSS_ID, [
@@ -536,7 +547,7 @@ return function cleanup() {
   if (hookObs) hookObs();
   if (offRoute) offRoute();
   window.removeEventListener("resize", layout);
-  if (input) { input.removeEventListener("input", onType); input = null; }
+  unhookInput();
   if (panel) { panel.remove(); panel = null; }
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };

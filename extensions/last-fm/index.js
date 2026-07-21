@@ -191,6 +191,12 @@ try {
       if (safePlaying()) {
         var pos = safePos(), delta = pos - scr.lastPos; scr.lastPos = pos;
         if (delta > 0 && delta < 4000) scr.listenedMs += delta; // ignore seeks / big jumps
+        else if (delta < -5000 && pos < 3000) {
+          // same id, position wrapped back to ~0: repeat-one (or a manual replay) restarted the
+          // track. Re-arm so the new play scrobbles under the normal 50%/4min rule.
+          scr.startTs = Date.now(); scr.listenedMs = 0; scr.scrobbled = false;
+          var mc = metaCache[scr.id]; if (mc) sendNowPlaying(mc); // cached only - best-effort, like every nowplaying
+        }
         if (!scr.scrobbled && scr.durationMs >= 30000 && scr.listenedMs >= threshold(scr.durationMs)) {
           scr.scrobbled = true;
           doScrobble(scr);

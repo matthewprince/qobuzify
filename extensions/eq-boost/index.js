@@ -6,16 +6,18 @@
 // before the player wires up its per-play graph, so it lands as the master output stage.
 //
 // The Windows DESKTOP bake plays through a native JUCE engine and uses no Web Audio at all, so this
-// patch simply never fires there. PROTOTYPE: a huge always-on bass boost to prove the hook.
+// patch simply never fires there. PROTOTYPE: a modest bass boost to prove the hook, and it stays
+// OFF until explicitly armed - a gain stage with no UI knob must never ship default-on.
 // Runs as function(Qobuzify){ ... return cleanup }.
 var Q = Qobuzify;
 if (location.host.indexOf("play.qobuz.com") < 0) return function () {};
 if (!window.AudioNode || !window.AudioDestinationNode) return function () {};
+if (Q.storage.get("eq:on", "0") !== "1") return function () {}; // opt-in only; no patch installed otherwise
 
 var BANDS = [
-  { type: "lowshelf", freq: 140, gain: 30, q: 0.7 },
-  { type: "peaking", freq: 45, gain: 22, q: 1.1 },
-  { type: "peaking", freq: 80, gain: 15, q: 1.0 }
+  { type: "lowshelf", freq: 140, gain: 6, q: 0.7 },
+  { type: "peaking", freq: 45, gain: 4, q: 1.1 },
+  { type: "peaking", freq: 80, gain: 3, q: 1.0 }
 ];
 
 var origConnect = AudioNode.prototype.connect;
@@ -31,7 +33,8 @@ function chainFor(ctx) {
   var prev = pre;
   for (var i = 0; i < BANDS.length; i++) {
     var b = BANDS[i], f = ctx.createBiquadFilter();
-    f.type = b.type; f.frequency.value = b.freq; f.gain.value = b.gain; f.Q.value = b.q;
+    // clamp so no future band edit can push summed boosts into guaranteed clipping again
+    f.type = b.type; f.frequency.value = b.freq; f.gain.value = Math.max(-12, Math.min(12, b.gain)); f.Q.value = b.q;
     origConnect.call(prev, f); prev = f;
   }
   var an = ctx.createAnalyser(); an.fftSize = 256; origConnect.call(prev, an);

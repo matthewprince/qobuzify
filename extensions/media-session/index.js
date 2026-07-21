@@ -106,12 +106,16 @@ function applyMetadata(force) {
     }
     return;
   }
-  var key = String(tk.id) + "|" + (tk.cover || "");
-  if (!force && key === lastMetaKey) return;   // unchanged: nothing to do (also how we skip re-setting every tick)
-  lastMetaKey = key;
   var title = tk.title || "";
   var artist = tk.artist || (tk.artists && tk.artists.join(", ")) || "";
   var album = tk.album || "";
+  // Key on the scraped text fields too, not just id|cover: the force-publish on a track change runs
+  // before the player bar repaints (bug class 3), and consecutive album tracks share a cover url, so
+  // an id|cover key would latch the previous track's title/artist for the whole song. With the text
+  // in the key, the settled DOM one tick later changes the key and the 1s heartbeat republishes.
+  var key = [String(tk.id), title, artist, album, tk.cover || ""].join("|");
+  if (!force && key === lastMetaKey) return;   // unchanged: nothing to do (also how we skip re-setting every tick)
+  lastMetaKey = key;
   var big = tk.cover ? bigArt(tk.cover) : "";
   var durMs = tk.durationMs || 0;
   if (!durMs) { try { durMs = (Q.getState().player.currentTrack || {}).duration || 0; } catch (e) {} }
@@ -242,18 +246,32 @@ if (AB) {
 // Linux media keys arrive here from the main process (wrapper/mpris-main.js). Per the MPRIS spec Seek
 // carries a RELATIVE offset while SetPosition is absolute, so translate both to an absolute seek and
 // echo the result back, otherwise the desktop's scrubber drifts away from where we actually landed.
+function onMprisCmd(m) {
+  if (!m || !m.action) return;
+  if (m.action === "seek" || m.action === "setpos") {
+    var t = m.action === "seek" ? curPosMs() + (Number(m.ms) || 0) : (Number(m.ms) || 0);
+    t = Math.max(0, t);
+    seekToMs(t);
+    try { MPRIS.seeked(t); } catch (e) {}
+    return;
+  }
+  runCmd(m.action);
+}
+var offCmd = null;
 if (MPRIS && MPRIS.onCmd) {
-  MPRIS.onCmd(function (m) {
-    if (!m || !m.action) return;
-    if (m.action === "seek" || m.action === "setpos") {
-      var t = m.action === "seek" ? curPosMs() + (Number(m.ms) || 0) : (Number(m.ms) || 0);
-      t = Math.max(0, t);
-      seekToMs(t);
-      try { MPRIS.seeked(t); } catch (e) {}
-      return;
-    }
-    runCmd(m.action);
-  });
+  // Marketplace toggles re-run this source in the same page; a second bare onCmd registration would
+  // double-fire every media key (playpause twice = looks dead). So the ONE ipc registration per page
+  // dispatches through a rebindable window slot (the __QZBP_SINK__ pattern): re-init just re-points
+  // the slot, and cleanup uses the unsubscribe newer preloads return from onCmd. Older preloads
+  // return nothing; the latch then stays set and the orphan registration keeps serving the slot.
+  window.__QZ_MPRIS_SINK__ = onMprisCmd;
+  if (!window.__QZ_MPRIS_BOUND__) {
+    window.__QZ_MPRIS_BOUND__ = true;
+    offCmd = MPRIS.onCmd(function (m) {
+      var fn = window.__QZ_MPRIS_SINK__;
+      if (fn) fn(m);
+    }) || null;
+  }
 }
 
 // ---- wire up: initial publish, react to track changes, and a light 1s heartbeat ----
@@ -279,6 +297,13 @@ return function cleanup() {
       if (hadPrevCmd) window.__qzMediaCmd = prevCmd;
       else { try { delete window.__qzMediaCmd; } catch (e) { window.__qzMediaCmd = undefined; } }
     }
+  }
+  if (MPRIS) {
+    // Null the slot first so an old-preload orphan registration goes inert while disabled, then drop
+    // the ipc registration where the preload lets us, and clear the desktop widget's frozen state.
+    if (window.__QZ_MPRIS_SINK__ === onMprisCmd) window.__QZ_MPRIS_SINK__ = null;
+    if (offCmd) { try { offCmd(); } catch (e) {} offCmd = null; window.__QZ_MPRIS_BOUND__ = false; }
+    try { MPRIS.send({ trackId: null, playing: false }); } catch (e) {}
   }
   lastMetaKey = null;
 };

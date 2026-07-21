@@ -140,11 +140,12 @@ function hydrateMeta(type, fpv) {
   var idx = readJSON(K_MIDX(type));
   if (!idx || !idx.meta || !idx.chunks) return null;
   if (fpv != null && idx.v !== fpv) return null;
-  var out = [];
+  var out = [], titled = false;
   for (var i = 0; i < idx.chunks; i++) {
     var ch = readJSON(K_MCH(type, i)); if (!ch || !ch.length) return null; // torn cache -> give up, re-page
-    for (var j = 0; j < ch.length; j++) out.push(dec(ch[j]));
+    for (var j = 0; j < ch.length; j++) { if (ch[j].t) titled = true; out.push(dec(ch[j])); }
   }
+  if (out.length && !titled) return null; // poisoned cache of id-only stubs (pre-fix wrap bug) -> re-page
   return out;
 }
 
@@ -176,7 +177,9 @@ function pageAll(type, fpv) {
   var all = [], offset = 0, total = null, pages = 0;
   progStart();
   function step() {
-    return Q.api("favorite/getUserFavorites?type=" + type + "&limit=" + PAGE + "&offset=" + offset).then(function (j) {
+    // realApi, never Q.api: our own wrap (below) serves cached id-only stubs for favorites calls, and
+    // paging through it would persist a metadata cache of empty records under a valid fingerprint.
+    return realApi.call(Q, "favorite/getUserFavorites?type=" + type + "&limit=" + PAGE + "&offset=" + offset).then(function (j) {
       var node = j && j[type], items = (node && node.items) || [];
       if (total == null) total = (node && node.total) || (mem.ids && Object.keys(mem.ids[type] || {}).length) || items.length;
       all = all.concat(items);
@@ -294,7 +297,9 @@ function isBetterSearchFavCall(mp) {
   if (typeof mp !== "string" || mp.indexOf("favorite/getUserFavorites") !== 0) return false;
   if (!/(?:^|[?&])type=tracks(?:&|$)/.test(mp)) return false;
   var lm = mp.match(/[?&]limit=(\d+)/); if (!lm || +lm[1] < 500) return false;
-  var om = mp.match(/[?&]offset=(\d+)/); if (om && +om[1] > 0) return false;
+  // any explicit offset means a real pager - better-search's one capped call carries none. Serving a
+  // pager page 0 the ENTIRE set would end its loop with stubs (and offset=0 pages exist beyond ours).
+  if (/[?&]offset=/.test(mp)) return false;
   return true;
 }
 function wrappedApi(methodPath) {

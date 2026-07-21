@@ -52,7 +52,9 @@ var deny = {};         // trackId -> true (resolved and blocked)
 var metaPromise = {};  // trackId -> Promise (track/get in flight; also lets the fetch gate await a verdict)
 var disposed = false;
 
-function metaBlocked(m) { return m ? (songTrashed(m.t, m.a[0]) || anyBlocked(m.a)) : false; }
+// trash keys are minted from whichever artist name the DOM showed (row/bar first anchor), which is
+// not always track/get's main performer - so test the song key against EVERY performer credit.
+function metaBlocked(m) { if (!m) return false; for (var i = 0; i < m.a.length; i++) if (songTrashed(m.t, m.a[i])) return true; return anyBlocked(m.a); }
 function classify(id, m) {
   metaCache[id] = m;
   if (metaBlocked(m)) { deny[id] = true; var t = safeTrack(); if (t && String(t.id) === String(id)) enforce(t); pruneQueue(); } // resolved as blocked -> skip if it's current, and pull it from the upcoming queue so it never plays

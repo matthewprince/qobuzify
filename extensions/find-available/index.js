@@ -154,9 +154,12 @@ function playTrack(it) {
 }
 
 // ---- results panel ----
-function closePanel() { var p = document.getElementById("qz-fav-panel"); if (p) p.remove(); document.removeEventListener("mousedown", onDown, true); document.removeEventListener("keydown", onEsc, true); document.removeEventListener("scroll", closePanel, true); }
+function closePanel() { var p = document.getElementById("qz-fav-panel"); if (p) p.remove(); document.removeEventListener("mousedown", onDown, true); document.removeEventListener("keydown", onEsc, true); document.removeEventListener("scroll", onScrollAway, true); }
 function onDown(e) { var p = document.getElementById("qz-fav-panel"); if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest("." + BTN))) closePanel(); }
 function onEsc(e) { if (e.key === "Escape") closePanel(); }
+// scroll doesn't bubble but capture still descends through document, so the panel's OWN list scrolling
+// would fire this too - only close when the scroll happened outside the panel.
+function onScrollAway(e) { var p = document.getElementById("qz-fav-panel"); if (p && e.target instanceof Node && p.contains(e.target)) return; closePanel(); }
 
 function qualityTag(it) { if (it.hires || it.hires_streamable) return "Hi-Res"; if ((it.maximum_bit_depth || 0) >= 16) return "Lossless"; return ""; }
 function coverUrl(it) { var im = it.album && it.album.image; return (im && (im.small || im.thumbnail || im.large)) || ""; }
@@ -174,7 +177,7 @@ function openPanel(anchor, info) {
   var left = Math.min(Math.max(8, r.right - pw), window.innerWidth - pw - 8);
   var top = r.bottom + 6; if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
   p.style.left = left + "px"; p.style.top = top + "px";
-  setTimeout(function () { document.addEventListener("mousedown", onDown, true); document.addEventListener("keydown", onEsc, true); document.addEventListener("scroll", closePanel, true); }, 0);
+  setTimeout(function () { document.addEventListener("mousedown", onDown, true); document.addEventListener("keydown", onEsc, true); document.addEventListener("scroll", onScrollAway, true); }, 0);
 
   var myReq = ++reqId;
   findVersions(info).then(function (list) {

@@ -29,10 +29,18 @@ function startMinutes(min) {
 function startEndOfTrack() {
   clearAll(); mode = "track";
   var startId = null; try { startId = (Q.getState().player.currentTrack || {}).id; } catch (e) {}
+  var lastPos = -1;
   // poll for the track advancing - Qobuz's onChange is unreliable on autoplay advance, so we watch
   // the current-track id directly and pause the moment it changes (the next track just started).
+  // repeat-one restarts the SAME id, so a position wrap back to ~0 counts as the boundary too.
   tickId = setInterval(function () {
-    try { var id = (Q.getState().player.currentTrack || {}).id; if (id != null && id !== startId) fire(); } catch (e) {}
+    try {
+      var id = (Q.getState().player.currentTrack || {}).id;
+      if (id != null && id !== startId) { fire(); return; }
+      var pos = Q.player.getPositionMs();
+      if (lastPos >= 0 && pos < 3000 && pos < lastPos - 5000 && Q.player.isPlaying()) { fire(); return; }
+      lastPos = pos;
+    } catch (e) {}
   }, 400);
   updateBtn(); closePop(); toast("Will pause when this track ends");
 }
