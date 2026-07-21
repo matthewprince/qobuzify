@@ -28,10 +28,20 @@ try {
 // went over the network. This goes over IPC to the same win.setFullScreen() call F11 makes, so there
 // is no request to block. onChange keeps the button's icon honest when fullscreen is toggled by F11
 // or the window manager instead of by the button.
+// Subscribes hold ONE persistent ipcRenderer listener dispatching to a replaceable slot: extensions
+// are unloaded and re-run in the same page by the Marketplace toggle, and a bare ipcRenderer.on per
+// call stacks a listener per cycle (media keys double-fire, a disabled extension keeps control).
+// Re-registering replaces the previous callback; the returned unsubscribe clears it (callers that
+// ignore the return value still get replace-on-register).
 try {
+  let fsCb = null;
+  try { ipcRenderer.on("qz:fullscreen-changed", (_e, v) => { try { if (fsCb) fsCb(!!v); } catch (_) {} }); } catch (_) {}
   contextBridge.exposeInMainWorld("__QZFS__", {
     set: (on) => { try { ipcRenderer.send("qz:fullscreen", !!on); } catch (_) {} },
-    onChange: (cb) => { try { ipcRenderer.on("qz:fullscreen-changed", (_e, v) => { try { cb(!!v); } catch (_) {} }); } catch (_) {} },
+    onChange: (cb) => {
+      fsCb = typeof cb === "function" ? cb : null;
+      return () => { if (fsCb === cb) fsCb = null; };
+    },
   });
 } catch (_) {}
 
@@ -49,11 +59,17 @@ try {
 // exact metadata and transport state the desktop wants, and already knows how to drive the sealed
 // player - it just had no way to reach D-Bus, which lives in the main process. `send` publishes state,
 // `seeked` corrects the desktop's scrubber after a jump, and `onCmd` receives the keyboard's keys.
+// onCmd has the same single-listener slot semantics as __QZFS__.onChange above.
 try {
+  let mprisCb = null;
+  try { ipcRenderer.on("qz:mpris-cmd", (_e, m) => { try { if (mprisCb) mprisCb(m); } catch (_) {} }); } catch (_) {}
   contextBridge.exposeInMainWorld("__QZMPRIS__", {
     send: (state) => { try { ipcRenderer.send("qz:mpris", state); } catch (_) {} },
     seeked: (ms) => { try { ipcRenderer.send("qz:mpris-seeked", ms); } catch (_) {} },
-    onCmd: (cb) => { try { ipcRenderer.on("qz:mpris-cmd", (_e, m) => { try { cb(m); } catch (_) {} }); } catch (_) {} },
+    onCmd: (cb) => {
+      mprisCb = typeof cb === "function" ? cb : null;
+      return () => { if (mprisCb === cb) mprisCb = null; };
+    },
   });
 } catch (_) {}
 

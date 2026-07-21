@@ -330,7 +330,9 @@ function qzbpFeedChunk(buf) {
   qzbp.lastFeedAt = Date.now();
   if (!f.live && (f.mediaBytes || 0) > 0) { f.live = true; qzbp.stalled = false; bpTrace("LIVE: media bytes reached mpv", { mediaBytes: f.mediaBytes }); qzbpEvt({ type: "live" }); }
   // A whole hi-res track is tens of MB; hold one track's worth so mpv can restart mid-track, no more.
-  if (f.bytes > 320 * 1024 * 1024) { const d = f.chunks.shift(); if (d) f.bytes -= d.length; }
+  // Never evict chunks[0]: it is the ftyp/moov init segment, and a replay that starts headerless is
+  // undemuxable, so every crash-respawn/reconnect on a long hi-res track would kill the stream.
+  if (f.bytes > 320 * 1024 * 1024 && f.chunks.length > 1) { const d = f.chunks.splice(1, 1)[0]; if (d) f.bytes -= d.length; }
   if (f.res) { try { f.res.write(b); } catch (_) {} }
 }
 
@@ -357,13 +359,63 @@ function mpvBinary() {
 //     "Device or resource busy". Park OUR streams on a throwaway null sink instead: the real sink goes
 //     idle, the server suspends it, and the device frees up. The web clock keeps running on the null sink,
 //     which is all the timeline needs.
+// --- async probe batch for the 1s watchdog --------------------------------------------------------
+// The per-second badge re-verify needs pw-dump/pactl/wpctl output every tick, but execFileSync on the
+// Electron main thread stalls IPC, feed chunks and every window event for as long as the daemon takes
+// to answer (up to the 4s timeout when it is wedged) - a per-second freeze while bit-perfect is on.
+// So the watchdog samples asynchronously, one in-flight batch at a time, and the sync helpers below
+// serve from the sampled raw outputs while they are fresh. Parsing and every decision stay exactly as
+// they were; only the acquisition moves off the hot path. Cold calls (enable click, a track-boundary
+// params event before the first sample) still exec synchronously, which is rare and user-initiated.
+const qzbpProbe = { at: 0, out: null, busy: false };
+function qzbpExecAsync(cmd, args) {
+  return new Promise((resolve) => {
+    try {
+      require("child_process").execFile(cmd, args, { timeout: 4000, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        (err, stdout) => resolve(err ? null : stdout));
+    } catch (_) { resolve(null); }
+  });
+}
+function qzbpSample(cb) {
+  if (process.platform !== "linux") { cb(); return; }
+  if (qzbpProbe.busy) return; // batch in flight; the next tick retries
+  qzbpProbe.busy = true;
+  Promise.all([
+    qzbpExecAsync("pw-dump", []),
+    qzbpExecAsync("pactl", ["get-default-sink"]),
+    qzbpExecAsync("pactl", ["-f", "json", "list", "sinks"]),
+    qzbpExecAsync("wpctl", ["inspect", "@DEFAULT_AUDIO_SINK@"]),
+    qzbpExecAsync("wpctl", ["get-volume", "@DEFAULT_AUDIO_SINK@"]),
+  ]).then(([pwdump, pactlDef, pactlSinks, wpInspect, wpVol]) => {
+    qzbpProbe.at = Date.now();
+    qzbpProbe.out = { pwdump, pactlDef, pactlSinks, wpInspect, wpVol };
+    qzbpProbe.busy = false;
+    cb();
+  });
+}
+// Fresh means sampled within 2s: newer than the watchdog period so the hot path never falls through
+// to a blocking exec, stale soon enough that a dead watchdog cannot serve old answers for long.
+function qzbpProbeFresh() { return qzbpProbe.out && Date.now() - qzbpProbe.at < 2000 ? qzbpProbe.out : null; }
+
 function pactl(args) {
+  // Serve the async sample even when its value is null: that command just failed asynchronously, and
+  // re-running it synchronously would block on the exact daemon the sampling exists to avoid.
+  const p = qzbpProbeFresh(), key = args.join(" ");
+  if (p) {
+    if (key === "get-default-sink") return p.pactlDef;
+    if (key === "-f json list sinks") return p.pactlSinks;
+  }
   try { return require("child_process").execFileSync("pactl", args, { timeout: 4000, encoding: "utf8" }); }
   catch (_) { return null; }
 }
 function pactlJson(args) { try { return JSON.parse(pactl(["-f", "json"].concat(args)) || "null"); } catch (_) { return null; } }
 
 function wpctl(args) {
+  const p = qzbpProbeFresh(), key = args.join(" ");
+  if (p) {
+    if (key === "inspect @DEFAULT_AUDIO_SINK@") return p.wpInspect;
+    if (key === "get-volume @DEFAULT_AUDIO_SINK@") return p.wpVol;
+  }
   try { return require("child_process").execFileSync("wpctl", args, { timeout: 4000, encoding: "utf8" }); }
   catch (_) { return null; }
 }
@@ -406,14 +458,21 @@ function alsaDeviceForDefaultSink() {
   //    routing to contradict. /proc/asound/pcm lists the card-device pairs that actually exist
   //    ("01-00: USB Audio : playback 1"); the card list alone doesn't, and assuming device 0 is wrong on
   //    plenty of hardware (an NVidia HDMI card's devices start at 3, so hw:0,0 opens nothing at all).
-  try {
-    const pcm = fs.readFileSync("/proc/asound/pcm", "utf8").split("\n");
-    for (const line of pcm) {
-      const m = /^(\d+)-(\d+):\s*(.*)$/.exec(line.trim());
-      if (!m || !/playback/i.test(m[3]) || /loopback|dummy/i.test(m[3])) continue;
-      return "alsa/hw:" + parseInt(m[1], 10) + "," + parseInt(m[2], 10);
-    }
-  } catch (_) {}
+  //    GUARDED by !soundServerPresent(): if a server IS running (bare PipeWire with neither pactl nor
+  //    wpctl, or PulseAudio whose default is a virtual/DSP/combine sink), guessing the first hardware card
+  //    would name a device the audio is NOT routed to - and the badge would then claim bit-perfect over the
+  //    user's filter chain. When a server owns audio and we can't name its sink, the honest answer is null
+  //    (-> device-unknown), never a guess. This branch is only correct on genuinely serverless ALSA.
+  if (!soundServerPresent()) {
+    try {
+      const pcm = fs.readFileSync("/proc/asound/pcm", "utf8").split("\n");
+      for (const line of pcm) {
+        const m = /^(\d+)-(\d+):\s*(.*)$/.exec(line.trim());
+        if (!m || !/playback/i.test(m[3]) || /loopback|dummy/i.test(m[3])) continue;
+        return "alsa/hw:" + parseInt(m[1], 10) + "," + parseInt(m[2], 10);
+      }
+    } catch (_) {}
+  }
   return null;
 }
 
@@ -461,6 +520,8 @@ function hwRateOf(device) {
 // the two agree. So: trust `channelVolumes`, which is the gain that reaches the samples either way, and
 // never infer unity from softVolumes.
 function pwDumpJson() {
+  const p = qzbpProbeFresh();
+  if (p) { try { return JSON.parse(p.pwdump || "null"); } catch (_) { return null; } }
   try {
     const out = require("child_process").execFileSync("pw-dump", [], { timeout: 5000, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     return JSON.parse(out);
@@ -557,8 +618,11 @@ function fmtBits(f) {
 
 function soundServerPresent() {
   if (process.platform !== "linux") return false;
-  try { if (fs.existsSync(path.join(process.env.XDG_RUNTIME_DIR || "/run/user/1000", "pipewire-0"))) return true; } catch (_) {}
-  try { if (fs.existsSync(path.join(process.env.XDG_RUNTIME_DIR || "/run/user/1000", "pulse", "native"))) return true; } catch (_) {}
+  // Derive the runtime dir from the real uid, not a hardcoded /run/user/1000: a session with uid != 1000 and
+  // XDG_RUNTIME_DIR unset would otherwise miss its own server sockets and churn passthrough -> shared.
+  const run = process.env.XDG_RUNTIME_DIR || ("/run/user/" + (typeof process.getuid === "function" ? process.getuid() : 1000));
+  try { if (fs.existsSync(path.join(run, "pipewire-0"))) return true; } catch (_) {}
+  try { if (fs.existsSync(path.join(run, "pulse", "native"))) return true; } catch (_) {}
   return false;
 }
 
@@ -648,13 +712,27 @@ function bpTrace(stage, extra) {
 // If we are enabled and the player says it is playing but no audio has reached mpv, say so and stand down.
 const STALL_MS = 2500;   // long enough for a real exclusive open, short enough not to be a noticeable gap
 function qzbpStallCheck() {
-  // Re-check the output gain on this same timer, BEFORE the guards below. mpv only emits audio-params at a
-  // track boundary, so the badge's gain was sampled once and frozen for the whole track: turn the volume
-  // down mid-song and it kept insisting "Bit-perfect", and muting the sink left it asserting a perfect
-  // path over silence. The 1s cache in sinkState() bounds this to one pw-dump per second.
-  if (qzbp.enabled && qzbp.mode === "passthrough" && (qzbp.srcParams || qzbp.outParams)) {
-    const g = sinkState().gain;
-    if (g !== qzbp.lastGain) { qzbp.lastGain = g; qzbpReportParams(); }
+  // Re-verify the WHOLE badge on this timer, BEFORE the guards below - not just the gain. mpv only emits
+  // audio-params at a track boundary, but the three things the verdict rests on can all move mid-track with
+  // no mpv event: the default sink can switch (wired -> Bluetooth, DAC-A -> DAC-B), the graph can re-pin the
+  // same card to a new rate (96k -> 48k, which keeps the hw:C,D string identical so the device alone would
+  // miss it), and the sink volume can change. Signature over device + hardware rate + gain catches all three;
+  // re-emitting only on a change keeps this to one probe batch per second and no IPC spam. A sink we can no
+  // longer name resolves to device-unknown - an honest degrade, never a stale claim. The probes run through
+  // the async qzbpSample batch, so this tick never blocks the main thread on a subprocess; the logic below
+  // reads the sampled outputs through the same helpers and is otherwise unchanged. NOT while stalled: after
+  // a downgrade the audio path is the unmuted web element through the shared mixer, and re-emitting the dead
+  // stream's params on a signature change could hand the badge a bit-perfect claim that is false.
+  if (qzbp.enabled && qzbp.mode === "passthrough" && !qzbp.stalled && (qzbp.srcParams || qzbp.outParams)) {
+    qzbpSample(() => {
+      // state can move while the sample is in flight; re-check before emitting anything from it
+      if (!(qzbp.enabled && qzbp.mode === "passthrough" && !qzbp.stalled && (qzbp.srcParams || qzbp.outParams))) return;
+      const g = sinkState().gain;
+      const dev = alsaDeviceForDefaultSink();
+      const hw = dev ? hwRateOf(dev) : 0;
+      const sig = dev + "|" + hw + "|" + g;
+      if (sig !== qzbp.lastParamSig) { qzbp.lastParamSig = sig; qzbp.lastGain = g; qzbpReportParams(); }
+    });
   }
   if (!qzbp.enabled || !qzbp.wantPlaying || qzbp.stalled) return;
   // "No media bytes reached mpv" is NO LONGER a failure to alarm on. The renderer now mutes the web element
@@ -669,11 +747,18 @@ function qzbpStallCheck() {
   const f = qzbp.feed;
   if (!f || !f.live) return;                         // never went live -> not committed -> nothing to rescue
   if (!qzbp.coreIdle) return;                        // mpv is playing -> fine
-  const since = Math.max(qzbp.enabledAt || 0, qzbp.feedStartedAt || 0);
+  // Grace runs from the LAST FEED ACTIVITY too, not just feedStart/enable. Measured failure (Faithfully,
+  // 2026-07-20 trace): the page stalled its appends for 10.8s, bytes resumed, and this check fired 41ms
+  // after the resume - before mpv could flip core-idle - killing a stream that was actively recovering.
+  // A feed that is receiving bytes is by definition not the "went live then sat idle" corpse this hunts.
+  const since = Math.max(qzbp.enabledAt || 0, qzbp.feedStartedAt || 0, qzbp.lastFeedAt || 0);
   if (Date.now() - since < STALL_MS) return;
   qzbp.stalled = true;
   bpTrace("STALLED: mpv went live then sat idle", { device: qzbp.device, mode: qzbp.mode });
   try { mpvSend(["stop"]); } catch (_) {}
+  // The stopped stream's params must not survive it: nothing is measured any more, and stale numbers
+  // are exactly what the re-verify's stall gate exists to keep away from the badge.
+  qzbp.srcParams = null; qzbp.outParams = null;
   qzbpEvt({ type: "stalled", why: "audio reached the bit-perfect sidecar but it stopped producing sound" });
 }
 
@@ -700,7 +785,11 @@ function mpvArgs(sockPath, mode) {
     "--af=", "--volume=100", "--volume-max=100", "--audio-samplerate=0", "--audio-channels=stereo",
     // The feed is a chunked HTTP body with no Content-Length, so the stream itself can't Range-seek.
     // A demuxer cache big enough for a whole hi-res track is what makes scrubbing work at all.
-    "--cache=yes", "--demuxer-max-bytes=768MiB", "--demuxer-max-back-bytes=768MiB",
+    // Plain byte counts, not "768MiB": the suffixed form is a FATAL parse error on mpv < 0.33 (Debian 11,
+    // Ubuntu 20.04, Mint 20, Pop 20.04 all ship 0.32), and the error text does not match the open-failure
+    // regex, so a system-mpv fallback there would crash-loop into `fatal`. 805306368 = 768*1024*1024 exactly;
+    // parses on both sides of the 0.33 boundary and is a no-op on the bundled 0.41.
+    "--cache=yes", "--demuxer-max-bytes=805306368", "--demuxer-max-back-bytes=805306368",
     "--user-agent=Mozilla/5.0"];
   if (mode === "shared") { // last resort: no device we can name and no server to hand it to
     if (process.platform === "linux") a.push("--ao=pipewire,pulse,alsa");
@@ -783,7 +872,20 @@ function qzbpReportParams() {
   // and the rate check passes against a card the audio has left. Move to Bluetooth mid-session and the badge
   // would read "Bit-perfect" over an SBC link. A null device makes hwRateOf() return 0, which withholds the
   // claim, which is the correct answer to "we cannot tell".
-  if (qzbp.mode === "passthrough") qzbp.device = alsaDeviceForDefaultSink();
+  if (qzbp.mode === "passthrough") {
+    const prevDevice = qzbp.device;
+    qzbp.device = alsaDeviceForDefaultSink();
+    // Retarget the hardware volume mixer when the DAC changes. qzbpDetectMixer() otherwise runs only at
+    // enable, so after a mid-session sink switch the slider kept driving the PREVIOUS card's ALSA mixer.
+    // Re-detect on change and tell the renderer, so the slider tracks the DAC that is actually playing (or
+    // greys out if the new one has no hardware volume element).
+    if (qzbp.device !== prevDevice) {
+      qzbpDetectMixer();
+      qzbpEvt(qzbp.mixer
+        ? { type: "hwvol", supported: true, pct: hwVolRead(qzbp.mixer.card, qzbp.mixer.elem), elem: qzbp.mixer.elem }
+        : { type: "hwvol", supported: false });
+    }
+  }
   const rate = out.samplerate || 0;
   const hw = qzbp.mode === "shared" ? 0 : hwRateOf(qzbp.device);
 
@@ -817,22 +919,22 @@ function qzbpReportParams() {
     srcRate: src ? src.samplerate : rate,
   });
 }
-function qzbpConnect() {
-  const s = net.connect(qzbp.socketPath);
+// Wire an ALREADY-CONNECTED IPC socket into the relay. The caller (the connect poller in qzbpSpawn)
+// owns establishing the connection, because on win32 the only reliable probe for the named pipe IS a
+// connect attempt; by the time this runs the transport is up on every platform.
+function qzbpConnect(s) {
   qzbp.sock = s;
-  s.on("connect", () => {
-    // observe the properties that drive the UI badge + gapless/scrobble reconciliation
-    mpvSend(["observe_property", 1, "time-pos"]);
-    mpvSend(["observe_property", 2, "audio-params"]);
-    mpvSend(["observe_property", 3, "eof-reached"]);
-    mpvSend(["observe_property", 4, "core-idle"]);
-    // audio-params is the DECODER side. audio-out-params is what the audio output actually negotiated.
-    // Comparing the decoder against the hardware (which is what this did) can report bit-perfect straight
-    // across a conversion mpv did itself: if the output refuses a rate or format, mpv silently converts and
-    // audio-params never mentions it. Watch both and require them to agree.
-    mpvSend(["observe_property", 5, "audio-out-params"]);
-    qzbpEvt({ type: "ready", mode: qzbp.mode });
-  });
+  // observe the properties that drive the UI badge + gapless/scrobble reconciliation
+  mpvSend(["observe_property", 1, "time-pos"]);
+  mpvSend(["observe_property", 2, "audio-params"]);
+  mpvSend(["observe_property", 3, "eof-reached"]);
+  mpvSend(["observe_property", 4, "core-idle"]);
+  // audio-params is the DECODER side. audio-out-params is what the audio output actually negotiated.
+  // Comparing the decoder against the hardware (which is what this did) can report bit-perfect straight
+  // across a conversion mpv did itself: if the output refuses a rate or format, mpv silently converts and
+  // audio-params never mentions it. Watch both and require them to agree.
+  mpvSend(["observe_property", 5, "audio-out-params"]);
+  qzbpEvt({ type: "ready", mode: qzbp.mode });
   s.on("data", (d) => {
     qzbp.buf += d.toString("utf8");
     let i;
@@ -842,9 +944,15 @@ function qzbpConnect() {
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
       if (m.event === "property-change") {
         if (m.name === "time-pos" && m.data != null) qzbpEvt({ type: "position", ms: Math.round(m.data * 1000) });
-        else if ((m.name === "audio-params" || m.name === "audio-out-params") && m.data) {
-          if (m.name === "audio-params") qzbp.srcParams = m.data; else qzbp.outParams = m.data;
-          qzbpReportParams();
+        else if (m.name === "audio-params" || m.name === "audio-out-params") {
+          if (m.data) {
+            if (m.name === "audio-params") qzbp.srcParams = m.data; else qzbp.outParams = m.data;
+            qzbpReportParams();
+          } else {
+            // mpv unloaded the stream (stop command, watchdog kill): a cleared property clears our
+            // copy, or the re-verify timer keeps treating the dead stream's rates as measurements.
+            if (m.name === "audio-params") qzbp.srcParams = null; else qzbp.outParams = null;
+          }
         }
         else if (m.name === "core-idle") qzbp.coreIdle = m.data === true; // true = mpv not producing audio (paused/buffering/idle)
         else if (m.name === "eof-reached" && m.data === true) qzbpEvt({ type: "ended" });
@@ -854,7 +962,8 @@ function qzbpConnect() {
     }
   });
   s.on("error", () => {});
-  s.on("close", () => { qzbp.sock = null; });
+  // Only clear the live handle when it is still THIS socket: a respawn may already own qzbp.sock.
+  s.on("close", () => { if (qzbp.sock === s) qzbp.sock = null; });
 }
 // Where to go when a mode turns out not to work. Never a dead end: the last stop always produces audio.
 function nextMode(mode) {
@@ -917,13 +1026,40 @@ function qzbpSpawn(mode) {
     if (qzbp.restarts++ < 4) { qzbp.restartAt = now; qzbpSpawn(mode); }
     else { qzbp.enabled = false; qzbpEvt({ type: "fatal" }); }
   });
-  // connect once the socket exists
-  let tries = 0;
+  // Connect once the IPC endpoint exists. On unix the socket file's existence is a cheap gate; on
+  // win32 there is no reliable probe for a named pipe (opening one consumes a server instance), so
+  // the probe IS the connect attempt: try each tick and retry on failure until mpv creates the pipe.
+  // Either way an exhausted budget must SAY so: giving up silently left mpv running with no
+  // observe/loadfile relay and the renderer waiting on "Bit-perfect..." forever.
+  let tries = 0, connecting = false;
   const iv = setInterval(() => {
+    if (qzbp.proc !== proc) { clearInterval(iv); return; } // this spawn is gone; stop probing its socket
+    if (connecting) return;
     tries += 1;
-    const ready = process.platform === "win32" ? true : (() => { try { return fs.existsSync(qzbp.socketPath); } catch (_) { return false; } })();
-    if (ready) { clearInterval(iv); qzbpConnect(); if (qzbp.curUrl) { mpvSend(["loadfile", qzbp.curUrl, "replace"]); mpvSend(["set_property", "pause", !qzbp.wantPlaying]); } }
-    else if (tries > 50) clearInterval(iv);
+    if (process.platform !== "win32") {
+      let there = false;
+      try { there = fs.existsSync(qzbp.socketPath); } catch (_) {}
+      if (!there) {
+        if (tries > 50) { clearInterval(iv); qzbpEvt({ type: "error", what: "ipc" }); }
+        return;
+      }
+    }
+    connecting = true;
+    let s;
+    try { s = net.connect(qzbp.socketPath); } catch (_) { connecting = false; return; }
+    const onErr = () => {
+      connecting = false;
+      try { s.destroy(); } catch (_) {}
+      if (qzbp.proc !== proc) { clearInterval(iv); return; }
+      if (tries > 50) { clearInterval(iv); qzbpEvt({ type: "error", what: "ipc" }); }
+    };
+    s.once("error", onErr);
+    s.once("connect", () => {
+      s.removeListener("error", onErr);
+      clearInterval(iv);
+      qzbpConnect(s);
+      if (qzbp.curUrl) { mpvSend(["loadfile", qzbp.curUrl, "replace"]); mpvSend(["set_property", "pause", !qzbp.wantPlaying]); }
+    });
   }, 100);
 }
 function qzbpStop() {
@@ -935,11 +1071,21 @@ function qzbpStop() {
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
   // Stale negotiated params outlive the sidecar that reported them, and a badge computed from the last
   // session's numbers is exactly the kind of quiet wrongness this whole change is removing.
-  qzbp.srcParams = null; qzbp.outParams = null; qzbp.sinkCache = null; qzbp.lastGain = undefined;
+  qzbp.srcParams = null; qzbp.outParams = null; qzbp.sinkCache = null; qzbp.lastGain = undefined; qzbp.lastParamSig = undefined;
   if (qzbp.feed && qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} }
   qzbp.feed = null;
   try { if (qzbp.srv) qzbp.srv.close(); } catch (_) {}
   qzbp.srv = null; qzbp.port = 0;
+}
+// The page went away without an orderly "disable": Ctrl+R reload, the crash auto-reload, any real
+// navigation. The renderer half of the protocol is gone, but the feed server and its chunks live
+// main-side, so mpv would keep playing the buffered track over whatever the fresh page shows, and
+// the reloaded extension's "enable" used to be swallowed by the already-enabled guard (no mode
+// event, no hwvol, hardware slider dead for the session). Reset fully; the fresh page's enable then
+// walks the normal path and everything resynchronizes.
+function qzbpPageGone() {
+  if (!qzbp.enabled) return;
+  qzbpStop();
 }
 function qzbpCommand(msg) {
   if (!msg || typeof msg !== "object") return;
@@ -970,6 +1116,14 @@ function qzbpCommand(msg) {
         bpTrace("enable", { mode, device: qzbp.device || "none", busy: qzbp.device ? pcmBusy(qzbp.device) : null, mixer: qzbp.mixer ? qzbp.mixer.elem : null });
         if (!qzbp.stallTimer) qzbp.stallTimer = setInterval(qzbpStallCheck, 1000);
         qzbpSpawn(mode);
+      } else {
+        // A repeated enable means a renderer that lost sync with us (a reload path the navigation
+        // hooks did not catch). Swallowing it silently left that renderer with no mode, a dead
+        // hardware-volume slider and a badge stuck waiting; re-emit the snapshot it needs instead.
+        qzbpEvt({ type: "mode", mode: qzbp.mode });
+        qzbpEvt(qzbp.mixer
+          ? { type: "hwvol", supported: true, pct: hwVolRead(qzbp.mixer.card, qzbp.mixer.elem), elem: qzbp.mixer.elem }
+          : { type: "hwvol", supported: false });
       }
       break;
     case "disable": qzbpStop(); qzbpEvt({ type: "disabled" }); break;
@@ -987,7 +1141,9 @@ function qzbpCommand(msg) {
     case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;
     case "pause": qzbp.wantPlaying = false; mpvSend(["set_property", "pause", true]); break;
     case "seek": mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;
-    case "stop": mpvSend(["stop"]); qzbp.curUrl = null; qzbp.feed = null; break;
+    // Stale params must not outlive the stream they measured (the mpv-side property clear also
+    // handles this, but only while the socket is up).
+    case "stop": mpvSend(["stop"]); qzbp.curUrl = null; qzbp.feed = null; qzbp.srcParams = null; qzbp.outParams = null; break;
     // Volume is still NEVER mapped to mpv's software volume - that multiplies the samples and is exactly
     // what breaks bit-perfect. It goes to the DAC's own hardware mixer instead, so the bits we send stay
     // untouched and the attenuation happens downstream in the device.
@@ -1113,9 +1269,18 @@ async function createWindow() {
     }
   });
 
+  // The sidecar's renderer half dies with the page on any real navigation (Ctrl+R reload, crash
+  // auto-reload); without this, mpv keeps playing the buffered feed over the fresh page and the
+  // reloaded extension's enable hits the already-enabled guard. Main-frame, not same-document:
+  // Qobuz's own routing is same-document and must not touch playback.
+  win.webContents.on("did-start-navigation", (d) => {
+    if (d && d.isMainFrame && !d.isSameDocument) qzbpPageGone();
+  });
+
   // Crash/hang recovery + diagnostics. Qobuz's big library page has crashed the renderer a few
   // minutes in; log why and reload so the window comes back instead of staying blank/dead.
   win.webContents.on("render-process-gone", (_e, details) => {
+    qzbpPageGone(); // the page died mid-protocol; never leave mpv playing into the void
     saveState({ stage: "render-gone", reason: details && details.reason, exitCode: details && details.exitCode });
     // Reload to recover, but cap it: if the renderer keeps dying faster than it can stay up (a login
     // that crashes on every attempt), stop reloading instead of looping - that loop is what reads as
@@ -1156,7 +1321,16 @@ async function createWindow() {
   }
 }
 
+// One instance only. A second launch (one click on the desktop launcher while the app runs) would
+// fight this one over the persist:qobuz partition (LevelDB locks read back as logged-out/settings
+// lost), the 127.0.0.1:7673 RPC bridge, the MPRIS bus name, and - with the sidecar - the DAC itself.
+// Hand focus to the first instance instead.
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) app.quit();
+else app.on("second-instance", () => { try { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } } catch (_) {} });
+
 app.whenReady().then(async () => {
+  if (!gotInstanceLock) return; // quitting; don't spin up servers for a doomed instance
   await startVendorServer();
   saveState({ stage: "vendor-up", vendorPort });
   ipcMain.on("qzbp:cmd", (_e, msg) => { try { qzbpCommand(msg); } catch (_) {} }); // bit-perfect sidecar control
@@ -1166,8 +1340,12 @@ app.whenReady().then(async () => {
   ipcMain.on("qz:fullscreen", (_e, on) => { try { if (win && !win.isDestroyed()) win.setFullScreen(!!on); } catch (_) {} });
   // The 127.0.0.1:7673 bridge for Discord presence and the lyrics true-fullscreen button. The Windows bake
   // appends this to the native main process; the wrapper requires the same module (copied in by prebuild).
-  // It is a fully-wrapped self-starting IIFE, so a require is all it takes, and it can never throw here.
-  try { require("./rpc-main.js"); } catch (_) {}
+  // It is a fully-wrapped self-starting IIFE, so a require is all it takes - but require() itself throws
+  // when the copy is missing or broken, and swallowing that is how presence "silently never worked" once
+  // before. Say so, like the MPRIS wiring below does.
+  global.__QZ_WRAPPER__ = true; // tells rpc-main.js this is the wrapper: skip its bake-only thumbbar (main.js runs setupThumbar instead)
+  try { require("./rpc-main.js"); }
+  catch (e) { try { console.error("[Qobuzify RPC] rpc-main load failed: " + (e && e.message)); } catch (_) {} }
   await createWindow();
 
   // Linux system media controls. Electron publishes nothing to D-Bus on its own, so the desktop sees

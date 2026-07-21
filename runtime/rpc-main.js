@@ -183,9 +183,21 @@ try {
     }
   } catch (_) {}
 
-  // localhost bridge: the renderer POSTs { activity: {...} } or { clear: true }
+  // localhost bridge: the renderer POSTs { activity: {...} } or { clear: true }.
+  // Only the app's own pages may drive it: with Allow-Origin:* any web page in any browser could
+  // POST here and spoof the Discord presence or force the window fullscreen. Legit callers are the
+  // bake's local app.html (Origin absent or "null" - file/custom-scheme pages) and the wrapper's
+  // https://play.qobuz.com fallback path; any other http(s) origin is a foreign page probing
+  // 127.0.0.1 and is refused before the body is read.
+  function originAllowed(o) {
+    if (!o || o === "null") return true;
+    if (o === "https://play.qobuz.com") return true;
+    return !/^https?:\/\//i.test(o); // custom app schemes stay legal; web pages never are
+  }
   var server = http.createServer(function (req, res) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    var org = req.headers.origin;
+    if (!originAllowed(org)) { res.writeHead(403); res.end(); return; }
+    if (org) { res.setHeader("Access-Control-Allow-Origin", org); res.setHeader("Vary", "Origin"); }
     res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "*");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
@@ -238,7 +250,11 @@ try {
   // so no asset files are needed and the RGBA-vs-BGRA channel order is irrelevant. Fully wrapped so it can
   // never break the main process.
   try {
-    if (process.platform === "win32" && electron && electron.nativeImage) {
+    // The WRAPPER's main.js ships its own thumbbar (setupThumbar, driven off mpris state) and sets
+    // global.__QZ_WRAPPER__ before requiring this module; without the gate a Windows wrapper would run
+    // TWO 2s pollers fighting over setThumbarButtons. This copy exists for the Windows BAKE, where this
+    // file is appended to the native main process and is the only thumbbar there is.
+    if (process.platform === "win32" && !global.__QZ_WRAPPER__ && electron && electron.nativeImage) {
       var _ni = electron.nativeImage;
       var _icons = null, _thumbPlaying = null, _thumbWinId = null;
       var _glyph = function (kind) {
