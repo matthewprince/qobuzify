@@ -40,7 +40,7 @@ var curLyrics = null; // the resolved SL lyrics object (Syllable/Line/Static) fo
 // The vendored bundle is the renderer. Our own experimental renderer (QZLyricsRenderer, still prepended
 // at build) is HARD-DISABLED here - do not read the localStorage toggle, so a previously-set "qz-own-renderer"
 // flag can't silently re-enable it. Flip this to a localStorage read again only to resume work on ours.
-var OWN_RENDERER = false;
+var OWN_RENDERER = true; // Lyra (prepended lyra.js + lyra-glue.js -> window.QZLyricsRenderer) replaces the QzLyrics vendor bundle
 var listeners = { songchange: [], onprogress: [], onplaypause: [] };
 function emit(type, e) {
   if (type === "songchange") { try { setCoverBg(cur && cur.images && cur.images[0] && cur.images[0].url); } catch (_) {} try { qzSuppressFade(1800); } catch (_) {} } // on a song change the bundle fades the whole .LyricsContent block to opacity 0 for ~1s while the next lyrics load ("lyrics vanish + come back"); hold it visible across the swap
@@ -83,8 +83,8 @@ function isrcToSpotifyId(isrc, name) {
 /* map the current Qobuz track -> a Spotify-shaped player item */
 function mapTrack(qt) {
   if (!qt || !qt.id) { cur = null; curMeta = null; curLyrics = null; emit("songchange", { data: playerData() }); return; }
-  curMeta = { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0 };
-  curLyrics = null; _tagSong = null; // reset the credit-tag dedupe so the new song re-scans once
+  curMeta = { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0, feats: featsOf(qt.artists, qt.artist) };
+  curLyrics = null; _tagSong = null; _tagScanned = false; // reset the credit-tag dedupe so the new song re-scans once
   var cover = (qt.cover || "").replace(/_\d+\.jpg/, "_600.jpg");
   var images = ["standard", "small", "large", "xlarge"].map(function (lbl) { return { label: lbl, url: cover }; });
   var base = {
@@ -220,6 +220,29 @@ function cleanTitle(s) {
     .trim() || (s || "").trim();
 }
 function cleanArtist(s) { return (s || "").replace(/\s*(feat\.?|ft\.?|with)\s+.*$/i, "").trim(); }
+// Featured artists for the lyric key + proxy: everyone after the main artist anchor, or (single
+// anchor) a trailing "feat./ft./featuring/with X" credit parsed off the artist string. Separates
+// same-title versions (the "Without Me" solo vs feat. collision) locally and server-side.
+function featsOf(artists, artist) {
+  var f = (artists || []).slice(1).map(function (n) { return String(n == null ? "" : n).trim(); }).filter(Boolean);
+  if (!f.length) {
+    var m = /\b(?:feat\.?|ft\.?|featuring|with)\s+(.+)$/i.exec(artist || "");
+    if (m) f = m[1].split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  return f;
+}
+// Same, out of the API's track.performers credits string ("Name, Role, Role - Name, Role - ...",
+// the format feat-artists already parses) - the prefetch path has no DOM artist anchors to slice.
+function featsFromPerformers(str, mainArtist) {
+  var out = [];
+  if (!str) return out;
+  String(str).split(" - ").forEach(function (seg) {
+    var parts = seg.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    if (parts.length < 2) return;
+    if (/Featured\s*Artist/i.test(parts.slice(1).join(" ")) && parts[0] && parts[0] !== mainArtist && out.indexOf(parts[0]) < 0) out.push(parts[0]);
+  });
+  return out;
+}
 // Normalize for fuzzy compare: lowercase, strip diacritics + punctuation.
 function norm(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
 // Two titles "match" if, after cleaning + normalizing, one contains the other.
@@ -230,11 +253,16 @@ function currentSpotifyId() { try { var m = /^spotify:track:([A-Za-z0-9]+)/.exec
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
-var CACHE_VER = 11; // bumped 2026-07-07: match server PARSE_VER, drop entries cached with the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches (a nightcore/bootleg ISRC was serving an unrelated song's word-by-word); invalidates the local cache so a bad match re-resolves
+var CACHE_VER = 12; // bumped 2026-07-21: lyrKey carries feat credits now (same-title solo vs feat. versions split); pre-split entries may hold the wrong version. 11 (2026-07-07): match server PARSE_VER, drop the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}
-function lyrKey(track) { return ((track && track.name) || "") + "|" + ((track && track.artist) || ""); }
+function lyrKey(track) {
+  var k = ((track && track.name) || "") + "|" + ((track && track.artist) || "");
+  var f = (track && track.feats) || [];
+  if (f.length) k += "|" + f.join(",").toLowerCase(); // feat-credit versions of the same title cache separately
+  return k;
+}
 function saveCache() {
   try {
     var ks = Object.keys(lsCache);
@@ -256,6 +284,8 @@ function proxyLyrics(track) {
     // challenge. a browser fetch can't set a custom User-Agent (forbidden header), and a custom
     // header would force a CORS preflight the challenge could block, so a query param is the clean way.
     var u = PROXY_BASE + "?qz=1&name=" + encodeURIComponent(track.name) + "&artist=" + encodeURIComponent(track.artist);
+    var fts = track.feats || [];
+    if (fts.length) u += "&feats=" + encodeURIComponent(fts.join(",")); // comma-separated display names (wire contract with the server)
     if (track.album) u += "&album=" + encodeURIComponent(track.album);
     if (track.durationMs) u += "&durationMs=" + track.durationMs;
     var isrc = (curMeta && curMeta.isrc) || track.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
@@ -306,11 +336,12 @@ function prefetchNext() {
       if (!tr || !tr.title) return;
       var artist = (tr.performer && tr.performer.name) || (tr.album && tr.album.artist && tr.album.artist.name) || "";
       if (!artist) return;
-      var meta = { name: tr.title, artist: artist, album: (tr.album && tr.album.title) || "", durationMs: (tr.duration || 0) * 1000, isrc: tr.isrc || null };
+      var meta = { name: tr.title, artist: artist, album: (tr.album && tr.album.title) || "", durationMs: (tr.duration || 0) * 1000, isrc: tr.isrc || null, feats: featsFromPerformers(tr.performers, artist) };
       var key = lyrKey(meta);
       if (key === _prefetchedKey || (lsCache[key] && lsCache[key].ly)) return; // already prefetched / cached
       _prefetchedKey = key;
-      var u = PROXY_BASE + "?name=" + encodeURIComponent(meta.name) + "&artist=" + encodeURIComponent(meta.artist);
+      var u = PROXY_BASE + "?qz=1&name=" + encodeURIComponent(meta.name) + "&artist=" + encodeURIComponent(meta.artist); // qz=1: same WAF whitelist marker as proxyLyrics, or the challenge silently kills every prefetch
+      if (meta.feats.length) u += "&feats=" + encodeURIComponent(meta.feats.join(","));
       if (meta.album) u += "&album=" + encodeURIComponent(meta.album);
       if (meta.durationMs) u += "&durationMs=" + meta.durationMs;
       if (meta.isrc) u += "&isrc=" + encodeURIComponent(meta.isrc);
@@ -370,7 +401,7 @@ function installLyricsBridge() {
           // Read the LIVE track at fetch time (not the possibly-stale curMeta) so a
           // track-change race can't tie one song's lyrics to another.
           var qt = null; try { qt = Q.player.getTrack && Q.player.getTrack(); } catch (e) {}
-          var track = (qt && qt.title) ? { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0 } : (curMeta || { name: cur && cur.name, artist: (cur && cur.artists && cur.artists[0] && cur.artists[0].name) || "", album: (cur && cur.metadata && cur.metadata.album_title) || "", durationMs: cur && cur.duration && cur.duration.milliseconds });
+          var track = (qt && qt.title) ? { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0, feats: featsOf(qt.artists, qt.artist) } : (curMeta || { name: cur && cur.name, artist: (cur && cur.artists && cur.artists[0] && cur.artists[0].name) || "", album: (cur && cur.metadata && cur.metadata.album_title) || "", durationMs: cur && cur.duration && cur.duration.milliseconds });
           return resolveLyrics(track).then(function (ly) {
             curLyrics = ly; // keep for the debug hook / server-tag
             var result = ly ? { data: slPack(ly), httpStatus: 200, format: "json" } : { data: null, httpStatus: 404, format: "json" };
@@ -504,7 +535,11 @@ function paintMesh(layer, pal) {
   layer.innerHTML = html;
 }
 function setCoverBg(url) {
+  // Feed Lyra's ambient background the same cover this drives on the extension's own #qz-cbg, so the
+  // renderer's album-art backdrop always tracks the playing song. No-op when the own renderer is off.
+  try { if (OWN_RENDERER && _own && _own.setCover && url) _own.setCover(url); } catch (e) {}
   if (!url || _cbgWant === url) return; // dedupe repeated/echoed songchange emits
+  if (OWN_RENDERER) { _cbgWant = url; return; } // Lyra's opaque .lyra-bg covers the view - skip the hidden legacy mesh (image decode + palette + five blurred infinite animations painting zero visible pixels); _cbgWant still tracks the cover for ownEnsure's priming
   ensureCoverBg();
   var bg = document.getElementById("qz-cbg"); if (!bg) return;
   var layers = bg.getElementsByClassName("qz-cbg-layer"); if (layers.length < 2) return;
@@ -670,7 +705,7 @@ function ensureContainer() {
     "#SettingsToggle,#CinemaView,#NowBarToggle,#NowBarSideToggle,#SidebarModeToggle,#CompactModeToggle,#LyricsManager{display:none!important;}" +
     ".MenuItem__text.icon-settings,.icon-settings{display:none!important;}" +
     ".sl-modal-overlay:has(.slmodal-settingsPanel){display:none!important;}");
-  ensureCoverBg();
+  if (!OWN_RENDERER) ensureCoverBg(); // Lyra brings its own opaque background; don't build the legacy mesh behind it
   ensureFsButton();
   // The clock is live and lyrics arrive synced, so SL's native per-word gradient
   // glow renders correctly - no readable-fallback override needed. (Unsynced
@@ -693,35 +728,53 @@ try {
   document.addEventListener("visibilitychange", _onVis, true);
 } catch (e) {}
 // --- OUR renderer (QZLyricsRenderer, prepended at build): stable-DOM karaoke, no vendor ---
-var _own = null, _ownKey = null, _ownBusy = false;
+var _own = null, _ownKey = null, _ownReq = 0;
 function ownViewOpen() { return !!(container && container.style.display !== "none"); } // onRouteChange sets this on /QzLyrics
 function ownEnsure() {
   if (_own) return _own;
   if (!window.QZLyricsRenderer) return null;
   ensureContainer(); var mount = document.getElementById("qz-sl-root"); if (!mount) return null;
   _own = window.QZLyricsRenderer.make({ mount: mount, getPos: getPosMs, isPlaying: function () { return Q.player.isPlaying(); }, onSeek: qobuzSeek, onClose: function () { try { var h = window.Spicetify.Platform.History; if (h && h.goBack) h.goBack(); else if (h) h.push({ pathname: "/" }); } catch (e) {} } }); // onClose returns to the previous page, not a blank "/"
+  // Prime the just-created renderer with the CURRENT cover. setCoverBg only pushes setCover on a
+  // songchange, but _own didn't exist when this song's songchange fired, so without this the album
+  // background stays empty until the next track. The renderer queues it (pendingCover) if it's still
+  // pre-scaffold. Prefer the last URL setCoverBg saw; fall back to the live track's cover.
+  try {
+    var _u0 = _cbgWant || (cur && cur.images && cur.images[0] && cur.images[0].url);
+    if (_u0 && _own.setCover) _own.setCover(_u0);
+  } catch (e) {}
   return _own;
 }
 function ownRenderCurrent() {
   var r = ownEnsure();
-  ownDiag({ step: "enter", hasRenderer: !!r, curMeta: curMeta ? (curMeta.name + " / " + curMeta.artist) : null, viewOpen: ownViewOpen(), busy: _ownBusy });
+  ownDiag({ step: "enter", hasRenderer: !!r, curMeta: curMeta ? (curMeta.name + " / " + curMeta.artist) : null, viewOpen: ownViewOpen(), req: _ownReq });
   if (!r) return;
-  if (!curMeta) { r.status("Waiting for track…"); return; }
-  if (_ownBusy) return;
-  var key = (curMeta.name || "") + "|" + (curMeta.artist || "");
+  // Lyra's status() only overlays a message - it never clears content, so without an explicit
+  // empty load() the PREVIOUS track's lyric wall keeps rendering (and karaoke-filling against the
+  // new clock) under every status below. load({lines:[]}) clears content + resets lineCount to 0
+  // (which also un-arms the key===_ownKey early return for the no-lyrics case).
+  if (!curMeta) { if (r.lineCount) { try { r.render({ lines: [] }); } catch (e) {} } r.status("Waiting for track…"); return; }
+  var key = lyrKey(curMeta); // feat-aware, so same-name/artist versions re-render instead of replaying
   if (key === _ownKey && r.lineCount) { r.start(); return; } // already rendered this track
-  _ownBusy = true; r.status("Loading lyrics…");
-  resolveLyrics(curMeta).then(function (ly) {
-    _ownBusy = false;
+  // Supersede-safe: each call takes a monotonic token; a resolve that finishes after a NEWER call is
+  // dropped. Replaces the old _ownBusy gate, which dropped the incoming track's render while a previous
+  // resolve was still in flight - so a fast switch (or the stale-name remap firing a second resolve)
+  // rendered the older song and never retried the new one. Snapshot curMeta so a mid-resolve change
+  // can't mislabel the result.
+  var myReq = ++_ownReq, snap = curMeta;
+  r.status("Loading lyrics…");
+  resolveLyrics(snap).then(function (ly) {
+    if (myReq !== _ownReq) return; // a newer track superseded this resolve
+    if (!ownViewOpen()) return;    // route closed while resolving
     var n = ly && ly.Content ? ly.Content.length : 0;
-    ownDiag({ step: "resolved", curMeta: curMeta.name + " / " + curMeta.artist, type: ly && ly.Type, lines: n, viewOpen: ownViewOpen() });
-    if (!ownViewOpen()) return; // route closed while resolving
+    ownDiag({ step: "resolved", curMeta: snap.name + " / " + snap.artist, type: ly && ly.Type, lines: n, viewOpen: ownViewOpen() });
     _ownKey = key; curLyrics = ly;
-    if (n) { r.render(ly); r.start(); } else { r.status("No word-by-word lyrics for this track"); }
+    if (n) { r.render(ly); r.start(); } else { try { r.render({ lines: [] }); } catch (x) {} r.status("No word-by-word lyrics for this track"); }
     try { setLyricServerTag(); } catch (e) {}
-  }).catch(function (e) { _ownBusy = false; ownDiag({ step: "error", err: String((e && e.message) || e) }); try { r.status("Lyrics failed to load"); } catch (x) {} });
+  }).catch(function (e) { if (myReq !== _ownReq) return; ownDiag({ step: "error", err: String((e && e.message) || e) }); try { r.render({ lines: [] }); r.status("Lyrics failed to load"); } catch (x) {} });
 }
-function ownDiag(o) { try { localStorage.setItem("qz-own-diag", JSON.stringify(Object.assign({ t: Date.now() }, o))); } catch (e) {} }
+var _ownDiagOn = false; try { _ownDiagOn = !!localStorage.getItem("qz-own-diag-on"); } catch (e) {} // dev-only breadcrumb, off unless armed
+function ownDiag(o) { if (!_ownDiagOn) return; try { localStorage.setItem("qz-own-diag", JSON.stringify(Object.assign({ t: Date.now() }, o))); } catch (e) {} }
 function ownOpen() { var r = ownEnsure(); if (r) ownRenderCurrent(); }
 function ownClose() { if (_own) _own.stop(); }
 function ownOnTrackChange() { if (OWN_RENDERER && ownViewOpen()) { _ownKey = null; if (_own) _own.scrollToTop(); ownRenderCurrent(); } }
@@ -848,12 +901,13 @@ var _offOverride = null;
 try { var _o0 = parseInt(localStorage.getItem("qz-lyr-fixed"), 10); if (!isNaN(_o0)) _offOverride = _o0; } catch (e) {}
 // The codename the server returns for the track (already obfuscated upstream-side); shown verbatim
 // in the footer as "Lyric server: <codename>". Null until the first resolve lands.
-var curLyricSource = null, _tagSong = null; // _tagSong = source the credit tag was last written for (skip the DOM walk once placed)
+var curLyricSource = null, _tagSong = null, _tagScanned = false; // _tagSong = source the credit tag was last written for (skip the DOM walk once placed); _tagScanned = walked once this song with no anchor (Lyra path) - re-walk only on songchange
 function autoOffsetMs() { return _offOverride != null ? _offOverride : 0; }
 function setLyricServerTag() {
   try {
     var root = document.getElementById("qz-sl-root"); if (!root || root.style.display === "none") return; // skip the full-subtree scan while the lyrics view is closed
     if (_tagSong === curLyricSource && document.getElementById("qz-lyric-server")) return; // already tagged this source - nothing to re-scan
+    if (_tagScanned) return; // Lyra never renders the vendor credit lines, so a no-anchor walk is definitive for the whole song; without this latch the 250ms tick re-walked the full syllable subtree (3-6k nodes) 4x/sec forever
     // The bundled renderer draws its own credit lines from the lyrics metadata: "Written by ...",
     // "Uploaded by ...", and "Provided by <name>" where the name is mapped from the source id. Those
     // point straight at the upstream, which the whole codename wall exists to prevent, so hide them.
@@ -865,7 +919,7 @@ function setLyricServerTag() {
       if (/^\s*(Written by|Uploaded by|Made by)\b/i.test(txt)) { el.style.display = "none"; continue; }
       if (/^\s*Provided by\b/i.test(txt)) { if (!prov) prov = el; el.style.display = "none"; }
     }
-    if (!prov) return; // no credits footer yet - nothing to anchor to
+    if (!prov) { if (OWN_RENDERER) _tagScanned = true; return; } // no credits footer yet - nothing to anchor to (vendor renders credits late, so only the Lyra path latches)
     var want = "Lyric server: <b>" + (curLyricSource || "Unknown") + "</b>";
     var tag = document.getElementById("qz-lyric-server");
     if (!tag) { tag = document.createElement("div"); tag.id = "qz-lyric-server"; tag.className = "qz-lyric-server"; prov.parentNode.insertBefore(tag, prov.nextSibling); }
@@ -885,8 +939,11 @@ function setLyricServerTag() {
 // its loops. Our scroll guard uses the captured NATIVE rAF so it always stays full-rate.
 var _origRAF = window.requestAnimationFrame;
 var _nativeRAF = _origRAF ? _origRAF.bind(window) : function (f) { return setTimeout(function () { f(performance.now()); }, 16); };
+var _origCAF = window.cancelAnimationFrame;
+var _nativeCAF = _origCAF ? _origCAF.bind(window) : function (h) { clearTimeout(h); };
 try { window.__QZ_SL_nativeRAF = _nativeRAF; } catch (e) {} // our renderer ticks off the true native rAF (bypasses the vendor-only frame cap)
 (function installRafCap() {
+  if (OWN_RENDERER) return; // the cap exists to protect the SL vendor's synced-position loop; Lyra ticks on __QZ_SL_nativeRAF, so installing it would only half-rate the HOST app's rAF while lyrics are open, for nothing
   if (window.__QZ_SL_RAFCO__) return; window.__QZ_SL_RAFCO__ = true;
   var refreshHz = 0, measuring = false, frame = 0, ticking = false;
   function startMeasure() { // measure the display refresh once, lazily, the first time the view is open (rAF is live even if boot happened minimized)
@@ -897,13 +954,21 @@ try { window.__QZ_SL_nativeRAF = _nativeRAF; } catch (e) {} // our renderer tick
   function viewOpen() { var r = document.getElementById("qz-sl-root"); return !!(r && r.style.display !== "none"); }
   function cap() { if (!viewOpen()) return false; if (!refreshHz) { startMeasure(); return false; } return refreshHz > 90; }
   function tick() { frame++; if (viewOpen() && refreshHz > 90) _nativeRAF(tick); else ticking = false; } // one increment per real frame while capping
+  var idMap = {}; // returned id -> CURRENT native id across re-queue hops, so cancelAnimationFrame(id) still cancels a deferred callback (the old wrapper returned the first hop's id and a cancel after re-queue was a no-op - host code's unmount cancels leaked ghost frames)
   window.requestAnimationFrame = function (cb) {
     if (!cap()) return _nativeRAF(cb); // full rate everywhere except the open lyrics view on a high-refresh display
     if (!ticking) { ticking = true; _nativeRAF(tick); }
     var q = frame;
     // run cb only after the frame counter has advanced by >=2 native frames -> ~half the refresh rate.
     // Each callback tracks its own queue frame, so multiple vendor loops coalesce to ~72Hz without starving each other.
-    return _nativeRAF(function run(ts) { if (frame >= q + 2 || !viewOpen() || refreshHz <= 90) cb(ts); else _nativeRAF(run); });
+    var id = _nativeRAF(function run(ts) { if (frame >= q + 2 || !viewOpen() || refreshHz <= 90) { delete idMap[id]; cb(ts); } else idMap[id] = _nativeRAF(run); });
+    idMap[id] = id;
+    return id;
+  };
+  window.cancelAnimationFrame = function (h) {
+    var live = idMap[h];
+    if (live != null) { delete idMap[h]; return _nativeCAF(live); }
+    return _nativeCAF(h);
   };
 })();
 // Alt-tab scroll-jump fix. The lyrics live in a SimpleBar/virtualized scroller; when the
@@ -1069,16 +1134,33 @@ var REACT_VER = "19.2.6";
 var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null;
 (async function boot() {
   try {
+    await Promise.resolve(); // let the rest of the module finish evaluating (FS icon vars live below) before any DOM work; boot used to inherit this ordering from the React-import await, which the own path no longer performs
+    var reactFailed = false;
     if (!window.Spicetify || !window.Spicetify._qobuzify) {
-      var React = await import("https://esm.sh/react@" + REACT_VER);
-      var rdomClient = await import("https://esm.sh/react-dom@" + REACT_VER + "/client?deps=react@" + REACT_VER);
-      var rdomMain = await import("https://esm.sh/react-dom@" + REACT_VER + "?deps=react@" + REACT_VER);
-      var ReactJSX = await import("https://esm.sh/react@" + REACT_VER + "/jsx-runtime");
-      var ReactDOMServer = await import("https://esm.sh/react-dom@" + REACT_VER + "/server.browser?deps=react@" + REACT_VER).catch(function () { return {}; });
-      React = React.default || React;
-      var rdom = Object.assign({}, rdomMain.default || rdomMain, rdomClient.default || rdomClient);
-      ReactJSX = ReactJSX.default ? Object.assign({}, ReactJSX.default, ReactJSX) : ReactJSX;
-      window.Spicetify = buildSpicetify(React, rdom, ReactJSX, ReactDOMServer.default || ReactDOMServer);
+      if (OWN_RENDERER) {
+        // Lyra is React-free: the own path only reads the shim's scaffolding (Platform.History, Player).
+        // Gating boot on four sequential esm.sh imports meant an offline launch (or esm.sh down) killed
+        // the ENTIRE extension - no button, no track bridge, no lyrics - so this path never touches the network.
+        window.Spicetify = buildSpicetify(null, {}, {}, {});
+      } else {
+        try {
+          var React = await import("https://esm.sh/react@" + REACT_VER);
+          var rdomClient = await import("https://esm.sh/react-dom@" + REACT_VER + "/client?deps=react@" + REACT_VER);
+          var rdomMain = await import("https://esm.sh/react-dom@" + REACT_VER + "?deps=react@" + REACT_VER);
+          var ReactJSX = await import("https://esm.sh/react@" + REACT_VER + "/jsx-runtime");
+          var ReactDOMServer = await import("https://esm.sh/react-dom@" + REACT_VER + "/server.browser?deps=react@" + REACT_VER).catch(function () { return {}; });
+          React = React.default || React;
+          var rdom = Object.assign({}, rdomMain.default || rdomMain, rdomClient.default || rdomClient);
+          ReactJSX = ReactJSX.default ? Object.assign({}, ReactJSX.default, ReactJSX) : ReactJSX;
+          window.Spicetify = buildSpicetify(React, rdom, ReactJSX, ReactDOMServer.default || ReactDOMServer);
+        } catch (e) {
+          // esm.sh unreachable: the vendor renderer can't run without React, but the button, track
+          // bridge and cover background don't need it - boot degraded instead of dying silently.
+          reactFailed = true;
+          try { console.error("[QobuzifyLyrics] React import failed, vendor renderer disabled:", e); } catch (_) {}
+          window.Spicetify = buildSpicetify(null, {}, {}, {});
+        }
+      }
     }
     ensureContainer();
     await ensureFreshToken(); // renew the Spotify token (if logged in) before the bridge picks its path
@@ -1090,17 +1172,42 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     // which used to leave the cover background a full song behind, and black on a cold
     // relaunch. so we poll getTrack() (a cheap local read) and update on any change, deduped
     // by track id + cover. onChange stays on too, as an extra nudge.
-    var _lastTrackId = null, _lastCover = null, _emptyTicks = 0;
+    var _lastTrackId = null, _lastCover = null, _emptyTicks = 0, _nameFixPending = null, _nameFixTicks = 0;
     var handleTrack = function (qt) {
       var id = qt && qt.id ? String(qt.id) : "";
+      // Cold restore (and the first read right after launch) hands back the track id BEFORE its title/
+      // artist hydrate. Committing that blank read latched curMeta={name:"",artist:""} and then, deduped
+      // by id, never re-mapped when the metadata arrived - so a paused restored track resolved lyrics for
+      // "" and showed "No lyrics" until you actually changed songs. So don't commit an id-without-title
+      // read at all: skip it and let the 250ms poll pick up the hydrated metadata (curMeta stays null ->
+      // a brief "Waiting for track…", then flips to the real song). An empty-id read (nothing loaded)
+      // still falls through to the occlusion debounce below.
+      if (id && !(qt && qt.title)) return;
       // Q.player.getTrack() intermittently returns an EMPTY read during alt-tab focus/occlusion churn.
       // Treating that blank tick as a track change makes mapTrack() wipe cur/curMeta and emit an empty
       // songchange -> the vendor flashes "no song" / "no lyrics", then reloads. So debounce: only believe
       // "nothing is playing" after a blank read PERSISTS ~1s (4 polls). A real track change carries a
       // non-empty id and is handled instantly (and resets the counter).
       if (!id) { if (_lastTrackId && ++_emptyTicks < 4) return; } else { _emptyTicks = 0; }
-      if (id !== _lastTrackId) {
-        // real track change -> full remap, which emits songchange so the vendor loads THIS song's lyrics.
+      // The id comes from the store and flips INSTANTLY on a switch, but title/artist are scraped from
+      // the player-bar DOM, which re-renders a frame later - so the first read after a switch pairs the
+      // NEW id with the OUTGOING track's name. mapTrack commits that, then the id-dedup below locks it in,
+      // leaving lyrics+cover+header stuck on the previous song (seen switching TIMEZONE -> Wolves). So also
+      // re-map when the id is unchanged but the scraped name has since corrected to a different title.
+      var nameFixed = id && id === _lastTrackId && curMeta && qt && qt.title && qt.title !== curMeta.name;
+      // Debounce the correction: the title is SCRAPED from the player bar, and a transient DOM state (an
+      // overflow-marquee re-render mid-read, a half-updated node) can make it flicker between values. An
+      // undebounced remap on every mismatched read re-nulled the renderer key and re-resolved lyrics per
+      // 250ms tick - the "stuck on Loading lyrics… for ages" freeze (long titles = the marquee tracks).
+      // Only remap once the corrected title has read IDENTICALLY for 3 consecutive polls (~750ms); a real
+      // late-hydrated title is stable, a flicker never survives the window.
+      if (nameFixed) {
+        if (qt.title === _nameFixPending) { _nameFixTicks++; } else { _nameFixPending = qt.title; _nameFixTicks = 1; }
+        if (_nameFixTicks < 3) return;
+      } else { _nameFixPending = null; _nameFixTicks = 0; }
+      if (id !== _lastTrackId || nameFixed) {
+        _nameFixPending = null; _nameFixTicks = 0;
+        // real track change (or a corrected late-hydrated name) -> full remap, which emits songchange so the vendor loads THIS song's lyrics.
         _lastTrackId = id; _lastCover = (qt && qt.cover) || "";
         mapTrack(qt);
         schedulePrefetch(); // warm the next queued track's lyrics so it's instant when it starts
@@ -1122,7 +1229,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
 
     // run the licensed lyrics UI bundle once, loaded as a sibling <script> (the
     // 1.3MB bundle is too big to inline; it self-runs and reads window.Spicetify)
-    if (!window.__QZ_SL_BUNDLE_RAN__) {
+    if (!window.__QZ_SL_BUNDLE_RAN__ && !reactFailed) { // no React = the vendor bundle would just throw; leave RAN unset so a re-init with network can still load it
       window.__QZ_SL_BUNDLE_RAN__ = true;
       // the bundle's WebGL fluid background stalls in this shimmed env: the render loop freezes
       // (canvas stuck at 300x150), so the cover sticks on a previous song and the animation
@@ -1269,6 +1376,10 @@ Q.css("qz-lyrics-fs-css", [
 ].join(""));
 
 return function cleanup() {
+  // Lyra's teardown contract: destroy() (not just stop) releases its rAF loop, the document-level
+  // visibilitychange listener, the ResizeObserver, the background layers and the DOM. A re-init without this
+  // would leak an orphan renderer still ticking against a dead instance.
+  if (_own) { try { _own.destroy(); } catch (e) {} _own = null; }
   if (offBridge) offBridge();
   if (tickIv) clearInterval(tickIv);
   if (tokenIv) clearInterval(tokenIv);
@@ -1285,7 +1396,7 @@ return function cleanup() {
   if (_prefetchTimer) clearTimeout(_prefetchTimer);
   if (_refocusT) clearTimeout(_refocusT);
   if (_comboIv) clearInterval(_comboIv);
-  if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF
+  if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; if (_origCAF) window.cancelAnimationFrame = _origCAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF + restore the paired cancel
   if (_fsOn) { fsBridge(false); _fsOn = false; }
   document.removeEventListener("keydown", _fsEsc, true);
   if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
