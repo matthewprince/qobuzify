@@ -81,20 +81,41 @@ function availability() {
   availMap = m; availAt = now; return m;
 }
 
+// A mashup joins two songs with a standalone "x"/"×" ("Song A x Song B" - a bootleg upload). No
+// single-song pressing is a real substitute for it, so a candidate that carries only ONE side is a
+// different, shorter song, not an available version. Return the sides when the title has this shape.
+function mashupSides(tCore) {
+  if (!tCore) return null;
+  var parts = tCore.split(/\s+(?:x|×|vs|and)\s+/).filter(Boolean);
+  return parts.length >= 2 ? parts : null;
+}
+
 // score a search hit against the dead track's title+artist. Returns <=0 to drop it entirely.
-function scoreCand(it, tCore, aNorm) {
+function scoreCand(it, tCore, aNorm, tSides) {
   var nm = norm(it.title || "");
   var core = titleCore(it.title || "");
   var artist = norm((it.performer && it.performer.name) || "");
+  // Artist relationship up front - the title guard below needs to know a total mismatch.
+  var aExact = aNorm && artist === aNorm;
+  var aPartial = aNorm && !aExact && (artist.indexOf(aNorm) >= 0 || aNorm.indexOf(artist) >= 0);
+  var aMiss = aNorm && !aExact && !aPartial;
   var s = 0;
-  if (core === tCore) s += 100;
-  else if (tCore && core && (core.indexOf(tCore) >= 0 || tCore.indexOf(core) >= 0)) s += 55;
-  else return -1; // title has to be in the ballpark or it's a different song
-  if (aNorm) {
-    if (artist === aNorm) s += 60;
-    else if (artist.indexOf(aNorm) >= 0 || aNorm.indexOf(artist) >= 0) s += 35;
-    else s -= 30; // named a different artist - probably a cover
-  }
+  if (tSides) {
+    // mashup: demand every side be present, or it's only part of the track (this is what stopped a
+    // lone "Not Like the Other Girls" outscoring the "... x For You" mashup with the wrong song).
+    for (var i = 0; i < tSides.length; i++) { if (core.indexOf(tSides[i]) < 0) return -1; }
+    s += 100;
+  } else if (core === tCore) s += 100;
+  else if (tCore && core && (core.indexOf(tCore) >= 0 || tCore.indexOf(core) >= 0)) {
+    // A candidate SHORTER than the wanted title omits part of it. Fine for the SAME artist (a remaster
+    // vs a deluxe edition); by a DIFFERENT artist it's just a different, shorter song that happens to be
+    // a sub-phrase - drop it.
+    if (core.length < tCore.length && aMiss) return -1;
+    s += 55;
+  } else return -1; // title has to be in the ballpark or it's a different song
+  if (aExact) s += 60;
+  else if (aPartial) s += 35;
+  else if (aMiss) s -= 30; // named a different artist - probably a cover
   if (COVER_RE.test(nm)) s -= 70;
   if (it.hires) s += 4; // tie-break toward the better master
   return s;
@@ -102,12 +123,12 @@ function scoreCand(it, tCore, aNorm) {
 
 function findVersions(info) {
   var q = [info.artist, info.title].filter(Boolean).join(" ");
-  var tCore = titleCore(info.title), aNorm = norm(info.artist);
+  var tCore = titleCore(info.title), aNorm = norm(info.artist), tSides = mashupSides(tCore);
   return Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     var items = (j.tracks && j.tracks.items) || [];
     var scored = items
       .filter(function (it) { return it && it.streamable === true; })
-      .map(function (it) { return { it: it, s: scoreCand(it, tCore, aNorm) }; })
+      .map(function (it) { return { it: it, s: scoreCand(it, tCore, aNorm, tSides) }; })
       .filter(function (x) { return x.s > 0; })
       .sort(function (a, b) { return b.s - a.s; });
     // one entry per recording: dedupe on album + core title so the same master doesn't list twice
@@ -183,7 +204,12 @@ function openPanel(anchor, info) {
   findVersions(info).then(function (list) {
     if (myReq !== reqId || !document.getElementById("qz-fav-panel")) return;
     var body = p.querySelector(".qz-fav-body");
-    if (!list.length) { body.innerHTML = '<div class="qz-fav-msg">No streamable version found for your region.</div>'; return; }
+    if (!list.length) {
+      // A mashup rarely has any other streamable pressing (it's a one-off bootleg upload), so say that
+      // rather than imply we just failed to look - and never surface half of it as a false match.
+      var msg = mashupSides(titleCore(info.title)) ? "No streamable copy of this mashup exists in the catalog." : "No streamable version found for your region.";
+      body.innerHTML = '<div class="qz-fav-msg">' + msg + '</div>'; return;
+    }
     body.innerHTML = "";
     list.forEach(function (it) {
       var b = document.createElement("button"); b.className = "qz-fav-res"; b.type = "button";
