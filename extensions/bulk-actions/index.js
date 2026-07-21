@@ -6,6 +6,11 @@
 // favorite/create?type=tracks&track_ids= (and it does accept a batch), playlist/addTracks,
 // playlist/create, playlist/getUserPlaylists. The buttons inject into .PageHeader__actions on the
 // /album/ and /playlist/ pages.
+//
+// Shuffle is a FULL shuffle (issue #12): the native enqueue only takes the lazily-loaded head of a
+// playlist (~100 tracks), so for big sources we start playback natively from a small temp-playlist
+// head, then swap the entire shuffled remainder into the play queue store-side (see setUpcoming).
+// A Shuffle-only variant also appears on /user-library (whole-favorites shuffle).
 var Q = Qobuzify;
 var CSS_ID = "qz-ba-css";
 var WRAP_ID = "qz-ba-wrap";
@@ -16,13 +21,30 @@ var SHUF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-wi
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 function chunk(a, n) { var o = []; for (var i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; }
 function route() { try { return Q.getState().router.location.pathname || ""; } catch (e) { return ""; } }
-function ctx() { var m = route().match(/\/(album|playlist)\/([^/?#]+)/); return m ? { kind: m[1], id: m[2] } : null; }
+function coerceId(id) { return /^\d+$/.test(id) ? Number(id) : id; }
+function ctx() {
+  var p = route();
+  var m = p.match(/\/(album|playlist)\/([^/?#]+)/); if (m) return { kind: m[1], id: m[2] };
+  if (/^\/user-library(\/(tracks|all))?$/.test(p)) return { kind: "library", id: "tracks" };
+  return null;
+}
 
 var meId = null;
 function me() { if (meId != null) return Promise.resolve(meId); return Q.api("user/get").then(function (u) { meId = (u && (u.id || (u.user && u.user.id))) || 0; return meId; }).catch(function () { meId = 0; return 0; }); }
 
 function loadTrackIds(c) {
   if (c.kind === "album") return Q.api("album/get?album_id=" + c.id).then(function (j) { return ((j.tracks && j.tracks.items) || []).map(function (t) { return t.id; }).filter(Boolean); });
+  if (c.kind === "library") {
+    // whole favorites library. Prefer library-load's warm set (bound lazily at click time: extensions
+    // load alphabetically, so Q.library doesn't exist yet when we boot), else the one-request id call.
+    if (Q.library && Q.library.idsReady && Q.library.idsReady()) return Promise.resolve(Q.library.ids("tracks"));
+    return Q.api("favorite/getUserFavoriteIds").then(function (j) {
+      // node shapes vary: [id,..] | [{id},..] | {items:[..]} - same tolerant parse as library-load
+      var node = (j && j.tracks) || null;
+      var arr = (node && (node.items || node)) || [];
+      return [].map.call(arr, function (x) { return x && x.id != null ? x.id : x; }).filter(function (x) { return x != null; });
+    });
+  }
   var all = [];
   function page(off) {
     return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
@@ -101,6 +123,7 @@ function favouriteAll(btn, c) {
 
 // --- shuffle & play (build a shuffled copy, play only these tracks) ---
 function ctxName(c) {
+  if (c.kind === "library") return Promise.resolve("My Tracks");
   if (c.kind === "album") return Q.api("album/get?album_id=" + c.id + "&limit=0").then(function (j) { return j.title || "Album"; }).catch(function () { return "Album"; });
   return Q.api("playlist/get?playlist_id=" + c.id + "&limit=0").then(function (j) { return j.name || "Playlist"; }).catch(function () { return "Playlist"; });
 }
@@ -115,6 +138,89 @@ function playPlaylist(pid) {
     else if (tries > 45) clearInterval(iv);
   }, 150);
 }
+// --- full-shuffle queue write (issue #12: the native enqueue only takes the lazily-loaded head ~100) ---
+// Replace everything AFTER the playing item with the shuffled remainder, via the same partial
+// "playqueue/set" merge the app's own remove-from-queue uses (the runtime's dropUpcoming proves the
+// engine honours a wholesale upcoming rewrite; multi-select's queue append proves NEW trackIds are
+// accepted). New entries clone the live current item's keys - the item shape differs between hosts,
+// so never hardcode it - with trackId overridden and fresh unique "q<n>" queueItemIds.
+var QUEUE_CAP = 5000;   // mirrors playlist-power's paging guard; shuffle-then-truncate stays a fair sample
+var HEAD = 100;         // temp-playlist head: starts playback fast even on a 10k-track source
+function setUpcoming(ids) {
+  try {
+    if (!Q.store || typeof Q.store.dispatch !== "function") return 0;
+    var pq = Q.getState().playqueue;
+    // when shuffled the play order is shuffledItems (currentIndex indexes into it); otherwise items
+    var govShuffled = !!(pq && pq.shuffled && Array.isArray(pq.shuffledItems) && pq.shuffledItems.length);
+    var gov = govShuffled ? pq.shuffledItems : (pq && pq.items);
+    if (!gov || !gov.length) return 0;
+    var ci = pq.currentIndex || 0;
+    var tmpl = gov[ci] || gov[0]; if (!tmpl) return 0;
+    var maxN = 0;
+    function scanMax(arr) { (arr || []).forEach(function (it) { if (it && typeof it.queueItemId === "string") { var n = Number(it.queueItemId.slice(1)); if (!isNaN(n) && n > maxN) maxN = n; } }); }
+    scanMax(pq.items); scanMax(pq.shuffledItems);
+    var newItems = ids.map(function (id) {
+      maxN += 1;
+      var o = {};
+      for (var k in tmpl) { if (Object.prototype.hasOwnProperty.call(tmpl, k)) o[k] = tmpl[k]; }
+      o.trackId = coerceId(id); o.queueItemId = "q" + maxN;
+      if ("cloudItemId" in o) o.cloudItemId = null;
+      return o;
+    });
+    var payload = { index: ci, dirty: true };
+    if (govShuffled) payload.shuffledItems = gov.slice(0, ci + 1).concat(newItems);
+    else payload.items = gov.slice(0, ci + 1).concat(newItems);
+    Q.store.dispatch({ type: "playqueue/set", payload: payload });
+    return newItems.length;
+  } catch (e) { console.warn("[qobuzify] bulk-actions: queue write failed", e); return 0; }
+}
+// the order is pre-shuffled - native shuffle on top of it would double-shuffle, so turn it off first
+// (documented transport click, docs/player-control.md). If it sticks, setUpcoming's shuffledItems
+// branch still writes the governing array.
+function shuffleOff() {
+  try {
+    var pq = Q.getState().playqueue;
+    if (pq && pq.shuffled) { var el = document.querySelector(".pct-shuffle"); if (el) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); }
+  } catch (e) {}
+}
+function queueSig(pq) { var it = (pq && pq.items) || []; return it.length + "|" + (it[0] && it[0].trackId) + "|" + (it[it.length - 1] && it[it.length - 1].trackId); }
+var extendIv = null, reassertT = null;
+// Wait for the native queue to actually swap to the temp head (poll the STORE, never the DOM), then
+// replace the upcoming items with the full shuffled remainder in one dispatch. Re-assert once ~2s
+// later in case Qobuz lazily appends more playlist pages after our write.
+function armQueueExtend(ids, headLen) {
+  clearInterval(extendIv); clearTimeout(reassertT);
+  var preSig = "";
+  try { preSig = queueSig(Q.getState().playqueue); } catch (e) {}
+  var tries = 0;
+  extendIv = setInterval(function () {
+    tries++;
+    var pq = null;
+    try { pq = Q.getState().playqueue; } catch (e) {}
+    var items = (pq && pq.items) || [];
+    var swapped = items.length && String(items[0] && items[0].trackId) === String(ids[0]) && queueSig(pq) !== preSig;
+    if (swapped) {
+      clearInterval(extendIv); extendIv = null;
+      shuffleOff();
+      var n = setUpcoming(ids.slice(1));
+      if (!n) { toast("Couldn't queue the full shuffle - playing the first " + headLen, true); return; }
+      toast("All " + ids.length + " tracks queued");
+      var postSig = "";
+      try { postSig = queueSig(Q.getState().playqueue); } catch (e) {}
+      reassertT = setTimeout(function () {
+        try {
+          if (queueSig(Q.getState().playqueue) !== postSig) {
+            console.info("[qobuzify] bulk-actions: queue diverged after full-shuffle write, re-asserting");
+            setUpcoming(ids.slice(1));
+          }
+        } catch (e) {}
+      }, 2000);
+    } else if (tries > 45) {
+      clearInterval(extendIv); extendIv = null;
+      toast("Couldn't queue the full shuffle - playing the first " + headLen, true);
+    }
+  }, 150);
+}
 function shufflePlay(btn, c) {
   if (btn.disabled) return;
   btn.disabled = true; btn.classList.add("qz-ba-busy");
@@ -122,34 +228,56 @@ function shufflePlay(btn, c) {
     var ids = (r[0] || []).slice(), name = r[1];
     if (ids.length < 2) { toast("Nothing to shuffle", true); return; }
     for (var i = ids.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
+    if (ids.length > QUEUE_CAP) ids = ids.slice(0, QUEUE_CAP);
     toast("Shuffling " + ids.length + " tracks…");
+    // small source: the temp playlist holds everything and the native enqueue is already complete.
+    // Bigger: fill only the head so playback starts fast, then swap in the full remainder store-side.
+    var whole = ids.length <= 90;
+    var head = whole ? ids : ids.slice(0, HEAD);
     // an emoji in the name makes Qobuz's playlist API save an empty name, so keep it to a plain prefix
     return createPlaylist("Shuffle · " + name).then(function (pid) {
-      return addTracks(pid, ids).then(function () {
+      return addTracks(pid, head).then(function () {
         var oldPid = Q.storage.get("ba:shuf", null); Q.storage.set("ba:shuf", pid);
         // keep exactly one shuffle playlist: delete the previous one shortly after (never the one now playing)
         if (oldPid && oldPid !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + oldPid).catch(function () {}); }, 8000);
         playPlaylist(pid);
+        if (!whole) armQueueExtend(ids, head.length);
       });
     });
   }).catch(function () { toast("Failed - try again", true); }).then(function () { btn.disabled = false; btn.classList.remove("qz-ba-busy"); });
 }
 
 // --- inject ---
+// The library page has no .PageHeader__actions - park the wrap beside the grid/list view toggle
+// (inputs #ui-base-radio--grid / --list, per ux-tweaks), inserted before their common ancestor so the
+// radio group itself is never touched.
+function libraryHost() {
+  var g = document.getElementById("ui-base-radio--grid"), l = document.getElementById("ui-base-radio--list");
+  if (!g || !l) return null;
+  var host = g.parentElement, hops = 0;
+  while (host && !host.contains(l) && ++hops < 6) host = host.parentElement;
+  return (host && host.contains(l) && host.parentElement) ? { parent: host.parentElement, before: host } : null;
+}
 function inject() {
   var c = ctx();
   var ex = document.getElementById(WRAP_ID);
   if (!c) { if (ex) ex.remove(); closePicker(); return; }
   if (ex) { if (ex.getAttribute("data-ctx") === c.kind + ":" + c.id && ex.parentNode) return; ex.remove(); }
-  var actions = document.querySelector(".PageHeader__actions"); if (!actions) return;
+  var lib = c.kind === "library";
+  var actions = document.querySelector(".PageHeader__actions");
+  var libHost = (!actions && lib) ? libraryHost() : null;
+  if (!actions && !libHost) return;
   var wrap = document.createElement("span"); wrap.id = WRAP_ID; wrap.className = "qz-ba-wrap"; wrap.setAttribute("data-ctx", c.kind + ":" + c.id);
+  // library surface is shuffle-only: favouriting your favourites is a no-op, and "add all" is untested there
   wrap.innerHTML = '<button class="qz-ba-btn qz-ba-btn--accent" id="qz-ba-shuf" title="Shuffle these tracks and play">' + SHUF + '<span>Shuffle</span></button>' +
+    (lib ? '' :
     '<button class="qz-ba-btn" id="qz-ba-fav" title="Favourite all tracks">' + HEART + '<span>All</span></button>' +
-    '<button class="qz-ba-btn" id="qz-ba-add" title="Add all tracks to a playlist">' + PLUS + '<span>Add all</span></button>';
+    '<button class="qz-ba-btn" id="qz-ba-add" title="Add all tracks to a playlist">' + PLUS + '<span>Add all</span></button>');
   wrap.querySelector("#qz-ba-shuf").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); shufflePlay(this, c); });
-  wrap.querySelector("#qz-ba-fav").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); favouriteAll(this, c); });
-  wrap.querySelector("#qz-ba-add").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPicker(this, c); });
-  actions.appendChild(wrap);
+  var fv = wrap.querySelector("#qz-ba-fav"); if (fv) fv.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); favouriteAll(this, c); });
+  var ad = wrap.querySelector("#qz-ba-add"); if (ad) ad.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPicker(this, c); });
+  if (actions) actions.appendChild(wrap);
+  else libHost.parent.insertBefore(wrap, libHost.before);
 }
 
 // --- styles ---
@@ -190,6 +318,7 @@ inject();
 return function cleanup() {
   if (offRoute) offRoute();
   if (obs) obs();
+  clearInterval(extendIv); clearTimeout(reassertT);
   closePicker();
   var w = document.getElementById(WRAP_ID); if (w) w.remove();
   var st = document.getElementById(CSS_ID); if (st) st.remove();

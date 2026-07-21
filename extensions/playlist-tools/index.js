@@ -67,7 +67,10 @@ function download(name, text, mime) { try { var b = new Blob([text], { type: mim
 function safeName(s) { return String(s || "playlist").replace(/[^\w\- ]+/g, "").trim().slice(0, 60) || "playlist"; }
 
 // --- modal ---
-var modal = null, TR = [], curId = null, curName = "", tab = "stats";
+// TR is null while a playlist is loading (selectTab's !TR guard blocks tab renders); an array once
+// loadAll for the CURRENT playlist resolves. Never leave the previous playlist's array in place
+// during a load - Duplicates' Remove would act on the wrong playlist's ptids.
+var modal = null, TR = null, curId = null, curName = "", tab = "stats";
 function toast(msg) {
   if (!modal) return;
   var t = modal.querySelector(".qz-pt-toast"); if (!t) return;
@@ -75,12 +78,13 @@ function toast(msg) {
   clearTimeout(t._iv); t._iv = setTimeout(function () { t.classList.remove("qz-pt-toast--show"); }, 2200);
 }
 function openModal(id, name) {
-  curId = id; curName = name || "Playlist"; tab = "stats";
+  curId = id; curName = name || "Playlist"; tab = "stats"; TR = null;
   build();
   modal.style.display = "flex"; requestAnimationFrame(function () { modal.classList.add("qz-pt-in"); });
   modal.querySelector(".qz-pt-title").textContent = curName;
   setBody('<div class="qz-pt-loading"><div class="qz-pt-spin"></div>Loading ' + esc(curName) + '…</div>');
-  loadAll(id).then(function (tracks) { TR = tracks; selectTab("stats"); }, function () { setBody('<div class="qz-pt-empty">Could not load this playlist.</div>'); });
+  loadAll(id).then(function (tracks) { if (curId !== id) return; TR = tracks; selectTab("stats"); },
+    function () { if (curId !== id) return; setBody('<div class="qz-pt-empty">Could not load this playlist.</div>'); });
 }
 function closeModal() { if (!modal) return; modal.classList.remove("qz-pt-in"); setTimeout(function () { if (modal && !modal.classList.contains("qz-pt-in")) modal.style.display = "none"; }, 180); }
 function build() {

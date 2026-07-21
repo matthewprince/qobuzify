@@ -39,16 +39,58 @@ var anchor = null;
 function selIds() { return Object.keys(sel); }
 function count() { return selIds().length; }
 
-// A track row's id is "<trackId>[_<playlistTrackId>]__actions". Parse the leading digits.
+// The web player's library rows (.ui-module-track-row) expose NO track id in the DOM (documented in
+// find-available). The app renders them from a normalised store dictionary keyed by id, so map a row
+// to its id by title + main artist there - same recipe find-available uses for availability.
+function norm(s) { return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[‘’'`]/g, "").replace(/\s+/g, " ").trim(); }
+function titleCore(s) { return norm(s).replace(/\((?:feat|with|ft|prod)\.?[^)]*\)/g, "").replace(/\s*[-–—][^-–—]*$/, "").replace(/\s+/g, " ").trim(); }
+function dictArtist(t) {
+  try {
+    var it = t.interpreters;
+    if (typeof it === "string") it = JSON.parse(it);
+    if (it && it.length) {
+      var main = it.filter(function (x) { return x.roles && x.roles.indexOf("main-artist") >= 0; })[0] || it[0];
+      var nm = main && main.name;
+      return (nm && (nm.display || nm)) || "";
+    }
+  } catch (e) {}
+  return (t.performer && t.performer.name) || (t.artist && t.artist.name) || "";
+}
+// title+artist -> id, rebuilt from the store (the dictionary grows as rows render, so a short cache
+// keeps repeated paint() passes light without going stale).
+var dictMap = null, dictAt = 0;
+function dictIds() {
+  var now = Date.now();
+  if (dictMap && now - dictAt < 1500) return dictMap;
+  var m = {};
+  try {
+    var d = Q.getState().dictionnary.tracks.data || {};
+    for (var id in d) {
+      var t = d[id]; if (!t || !t.title) continue;
+      var k = titleCore(t.title) + "|" + norm(dictArtist(t));
+      if (m[k] == null) m[k] = String(t.id != null ? t.id : id);
+    }
+  } catch (e) {}
+  dictMap = m; dictAt = now; return m;
+}
+function uiRowTrackId(row) {
+  var te = row.querySelector(".typo-main-default-m") || row.querySelector('[class*="typo-main-default"]');
+  var title = te ? te.textContent.trim() : ""; if (!title) return null;
+  var ae = row.querySelector('a[href*="/artist/"]');
+  return dictIds()[titleCore(title) + "|" + norm(ae ? ae.textContent.trim() : "")] || null;
+}
+
+// A dwp track row's id is "<trackId>[_<playlistTrackId>]__actions". Parse the leading digits; the
+// web player's library rows have no such id and go through the store dictionary instead.
 function rowTrackId(row) {
   var id = row && row.id ? String(row.id) : "";
-  if (!/__actions$/.test(id)) return null;
-  var m = id.match(/^(\d+)_/);
-  return m ? m[1] : null;
+  if (/__actions$/.test(id)) { var m = id.match(/^(\d+)_/); return m ? m[1] : null; }
+  if (row && row.classList && row.classList.contains("ui-module-track-row")) return uiRowTrackId(row);
+  return null;
 }
 // selectable rows in document order, each { el, id }
 function selectableRows() {
-  var out = [], rows = document.querySelectorAll(".ListItem");
+  var out = [], rows = document.querySelectorAll(".ListItem, .ui-module-track-row");
   for (var i = 0; i < rows.length; i++) { var id = rowTrackId(rows[i]); if (id) out.push({ el: rows[i], id: id }); }
   return out;
 }
@@ -211,7 +253,7 @@ function renderBar() {
 
 // ---- paint selected rows (idempotent; re-applied as virtualised rows recycle) ----
 function paint() {
-  var rows = document.querySelectorAll(".ListItem");
+  var rows = document.querySelectorAll(".ListItem, .ui-module-track-row");
   for (var i = 0; i < rows.length; i++) {
     var id = rowTrackId(rows[i]);
     var on = !!(id && sel[id]);
@@ -225,7 +267,7 @@ function clearSel() { sel = {}; anchor = null; closePicker(); removeBar(); [].sl
 function onDocClick(e) {
   if (!(e.shiftKey || e.ctrlKey || e.metaKey)) return; // plain clicks pass through untouched (normal play/navigate)
   var el = e.target; if (el && el.nodeType === 3) el = el.parentElement;
-  var row = el && el.closest ? el.closest(".ListItem") : null; if (!row) return;
+  var row = el && el.closest ? el.closest(".ListItem, .ui-module-track-row") : null; if (!row) return;
   var id = rowTrackId(row); if (!id) return;
   // this is a selection gesture - stop the app from playing/navigating on the same click
   e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation();
@@ -247,7 +289,7 @@ function onKey(e) { if (e.key === "Escape" && count()) { e.stopPropagation(); cl
 // ---- styles ----
 Q.css(CSS_ID, [
   // selected row: accent tint + an inset accent bar down the left edge (dark, never white)
-  ".ListItem.qz-ms-sel{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 15%,transparent)!important;box-shadow:inset 3px 0 0 var(--qz-accent,#3DA8FE);}",
+  ".ListItem.qz-ms-sel,.ui-module-track-row.qz-ms-sel{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 15%,transparent)!important;box-shadow:inset 3px 0 0 var(--qz-accent,#3DA8FE);}",
   // floating action bar (above content + player, below the picker/toast; parked above the transport)
   "#qz-ms-bar{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:2147483200;display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:16px;background:linear-gradient(180deg,#121722,#0b0f16);border:1px solid rgba(255,255,255,.12);box-shadow:0 20px 60px -12px rgba(0,0,0,.75);color:#e7ecf3;font-family:inherit;-webkit-app-region:no-drag;}",
   "#qz-ms-bar .qz-ms-count{font-size:12.5px;font-weight:800;color:#aeb7c4;padding:0 2px 0 6px;white-space:nowrap;}",

@@ -107,12 +107,14 @@ function resolveName(kind, id) {
 var SORTS = [
   { key: "default", label: "Default", cmp: function (a, b) { return a.index - b.index; } },
   { key: "recent", label: "Recently added", cmp: function (a, b) { return (b.added || 0) - (a.added || 0) || a.index - b.index; } },
+  { key: "recenta", label: "Oldest added", cmp: function (a, b) { return (a.added || 0) - (b.added || 0) || a.index - b.index; } },
   { key: "title", label: "Title A-Z", cmp: function (a, b) { return normStr(a.title).localeCompare(normStr(b.title)) || a.index - b.index; } },
   { key: "dur", label: "Duration", cmp: function (a, b) { return a.dur - b.dur || a.index - b.index; } }
 ];
 function sortCmp(key) { var s = SORTS.filter(function (x) { return x.key === key; })[0]; return (s || SORTS[0]).cmp; }
 
-var modal = null, MTRACKS = [], mCurId = null, mCurName = "", mSort = "default";
+// MTRACKS is null while a playlist is loading (renderList's !MTRACKS guard blocks stale renders)
+var modal = null, MTRACKS = null, mCurId = null, mCurName = "", mSort = "default";
 
 function buildModal() {
   if (modal) return;
@@ -133,7 +135,7 @@ function buildModal() {
 }
 function openModal(id, name) {
   buildModal();
-  mCurId = id; mCurName = name || "Playlist"; mSort = "default";
+  mCurId = id; mCurName = name || "Playlist"; mSort = "default"; MTRACKS = null;
   modal.style.display = "flex"; requestAnimationFrame(function () { modal.classList.add("qz-pp-in"); });
   modal.querySelector(".qz-pp-title").textContent = mCurName;
   renderSegs();
@@ -325,15 +327,24 @@ function flashRow(el) { el.classList.add("qz-pp-flash"); setTimeout(function () 
 function removeCurrentFromPlaylist() {
   if (!ctx || ctx.kind !== "playlist") return;
   var id = curTrackId(); if (!id) { pageToast("Nothing is playing", true); return; }
-  var pid = ctx.id;
-  Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500").then(function (j) {
-    var items = (j.tracks && j.tracks.items) || [], match = null;
-    for (var i = 0; i < items.length; i++) { if (String(items[i].id) === id) { match = items[i]; break; } }
+  var pid = ctx.id, name = ctx.name;
+  // page the whole playlist until the track turns up - one limit=500 fetch made removal dead for any
+  // track past position 500 (same fix as playlist-context)
+  function findEntry(off) {
+    return Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
+      var items = (j.tracks && j.tracks.items) || [];
+      for (var i = 0; i < items.length; i++) { if (String(items[i].id) === id) return items[i]; }
+      var total = (j.tracks && j.tracks.total) || 0;
+      if (items.length && off + items.length < total) return findEntry(off + items.length);
+      return null;
+    });
+  }
+  findEntry(0).then(function (match) {
     var ptid = match && (match.playlist_track_id || match.playlistTrackId);
     if (!ptid) { pageToast("Couldn't find that track in the playlist", true); return; }
     return Q.api("playlist/deleteTracks?playlist_id=" + pid + "&playlist_track_ids=" + ptid).then(function () {
       var e = findSource("playlist", pid); if (e && e.ids) e.ids = e.ids.filter(function (t) { return t !== id; });
-      persistSources(); pageToast("Removed from " + ctx.name); refreshPill();
+      persistSources(); pageToast("Removed from " + name); refreshPill();
     });
   }).catch(function () { pageToast("Remove failed - try again", true); });
 }

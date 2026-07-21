@@ -120,6 +120,17 @@ if (-not $node) {
 Push-Location $dir
 try { & $node "bin/qobuzify.js" install } finally { Pop-Location }
 
+# $ErrorActionPreference = "Stop" does NOT apply to native-command exit codes in Windows PowerShell 5.1,
+# so check explicitly - otherwise a failed patch (locked app.html, shifted Squirrel layout) fell straight
+# through to a green "Done." and success instructions for an install that never happened.
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ""
+  Write-Host "Install FAILED - see the error above. Qobuz was NOT patched." -ForegroundColor Red
+  Write-Host "Close Qobuz fully and re-run the installer; if it keeps failing, report it at https://qobuzify.app" -ForegroundColor Yellow
+  Write-Host ""
+  return
+}
+
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
 Write-Host "In Qobuz: click your avatar (top-right) then Marketplace to switch themes and toggle extensions." -ForegroundColor Gray

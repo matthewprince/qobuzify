@@ -132,15 +132,24 @@ function openMenu(e) {
 function removeCurrentFromPlaylist() {
   if (!context || context.kind !== "playlist") return;
   var id = curTrackId(); if (!id) { toast("Nothing is playing", true); return; }
-  var pid = context.id;
-  Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500").then(function (j) {
-    var items = (j.tracks && j.tracks.items) || [], match = null;
-    for (var i = 0; i < items.length; i++) { if (String(items[i].id) === id) { match = items[i]; break; } }
+  var pid = context.id, name = context.name;
+  // page through the whole playlist until the track turns up - a single limit=500 fetch made removal
+  // dead for any track past position 500 while the pill happily reported "1250 of 2000".
+  function findEntry(off) {
+    return Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
+      var items = (j.tracks && j.tracks.items) || [];
+      for (var i = 0; i < items.length; i++) { if (String(items[i].id) === id) return items[i]; }
+      var total = (j.tracks && j.tracks.total) || 0;
+      if (items.length && off + items.length < total) return findEntry(off + items.length);
+      return null;
+    });
+  }
+  findEntry(0).then(function (match) {
     var ptid = match && (match.playlist_track_id || match.playlistTrackId);
     if (!ptid) { toast("Couldn't find that track in the playlist", true); return; }
     return Q.api("playlist/deleteTracks?playlist_id=" + pid + "&playlist_track_ids=" + ptid).then(function () {
       var e = find("playlist", pid); if (e && e.ids) e.ids = e.ids.filter(function (t) { return t !== id; });
-      persist(); toast("Removed from " + context.name); refresh();
+      persist(); toast("Removed from " + name); refresh();
     });
   }).catch(function () { toast("Remove failed - try again", true); });
 }

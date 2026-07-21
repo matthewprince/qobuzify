@@ -34,14 +34,20 @@ function favSets() {
   ]).then(function (r) { var A = {}, T = {}; r[0].forEach(function (a) { A[a.id] = 1; }); r[1].forEach(function (t) { T[t.id] = 1; }); favCache = { artists: A, tracks: T }; return favCache; });
 }
 
-// current track's seed artist: prefer the player-bar link, fall back to the API
+// current track's seed artist. track/get's performer is the authoritative identity - the player
+// bar's first /artist/ anchor can be a featured or same-named artist and lags on track change,
+// so the DOM link is only a last resort when the store has no id or the API call fails.
 function currentSeed() {
-  var bar = document.querySelector(".player");
-  var a = bar && bar.querySelector('a[href*="/artist/"]');
-  if (a) { var m = (a.getAttribute("href") || "").match(/\/artist\/(\d+)/); if (m) return Promise.resolve({ id: m[1], name: (a.textContent || "").trim() || "this artist" }); }
+  function fromBar() {
+    var bar = document.querySelector(".player");
+    var a = bar && bar.querySelector('a[href*="/artist/"]');
+    if (!a) return null;
+    var m = (a.getAttribute("href") || "").match(/\/artist\/(\d+)/);
+    return m ? { id: m[1], name: (a.textContent || "").trim() || "this artist" } : null;
+  }
   var ct = Q.getState().player.currentTrack;
-  if (!ct || !ct.id) return Promise.resolve(null);
-  return api("track/get?track_id=" + ct.id).then(function (j) { var p = j.performer || (j.album && j.album.artist); return p && p.id ? { id: p.id, name: p.name || "this artist" } : null; }).catch(function () { return null; });
+  if (!ct || !ct.id) return Promise.resolve(fromBar());
+  return api("track/get?track_id=" + ct.id).then(function (j) { var p = j.performer || (j.album && j.album.artist); return p && p.id ? { id: p.id, name: p.name || "this artist" } : fromBar(); }).catch(function () { return fromBar(); });
 }
 
 // --- the radio engine ---

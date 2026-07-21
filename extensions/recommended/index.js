@@ -237,9 +237,11 @@ function statsTopArtists() {
   return favFallback();
 }
 function favFallback() { return favArtists().then(function (fa) { return fa.slice(0, 8).map(function (a) { return { name: a.name, artistId: a.id, cover: coverUrl(a) }; }); }, function () { return []; }); }
-// build a playlist from seed artists (+ their similars' top tracks), excluding what you just heard, then play it
+// build a playlist from seed artists (+ their similars' top tracks), excluding what you just heard, then play it.
+// "just heard" = our own play log (synchronous); __QZ_STATS has no .recent property - its recents
+// live behind an async aggregate, so don't reach for the stats global here.
 function buildMix(seedIds, name, themeKey) {
-  var exclude = {}; try { ((window.__QZ_STATS && window.__QZ_STATS.recent) || []).forEach(function (p) { if (p && p.id) exclude[p.id] = 1; }); } catch (e) {}
+  var exclude = {}; try { readLog("tracks").forEach(function (p) { if (p && p.id) exclude[p.id] = 1; }); } catch (e) {}
   return pool(seedIds.slice(0, 6), 4, function (id) { return Promise.all([artistTopTracks(id), similarArtists(id)]).then(function (r) { return { top: r[0] || [], sims: (r[1] || []).slice(0, 3) }; }); }).then(function (buckets) {
     var simIds = {}; buckets.forEach(function (b) { b.sims.forEach(function (a) { simIds[a.id] = 1; }); });
     return pool(Object.keys(simIds).slice(0, 10), 4, artistTopTracks).then(function (simTracks) {
