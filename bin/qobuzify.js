@@ -57,7 +57,12 @@ function installRuntime(def, seed) {
   try { const tk = JSON.parse(fs.readFileSync(path.join(ROOT, ".spotify-user-token.json"), "utf8")); if (tk.access_token) spotifyToken = { access_token: tk.access_token, expires_at: tk.expires_at || 0, refresh_token: tk.refresh_token || null }; } catch (_) {}
   let apple = null; // Apple Music TTML (syllable lyrics + duet agents): your own dev + media-user tokens, local only
   try { const a = JSON.parse(fs.readFileSync(path.join(ROOT, ".apple-creds.json"), "utf8")); if (a.developer_token && a.media_user_token) apple = { developer_token: a.developer_token, media_user_token: a.media_user_token, storefront: a.storefront || "us" }; } catch (_) {}
-  const vendors = extensions.filter((e) => e.hasVendor).map((e) => ({ name: "qobuzify-ext-" + e.id + ".js", src: path.join(EXT_DIR, e.id, "vendor.js") }));
+  // qobuzify-lyrics now renders through Lyra (prepended lyra.js + lyra-glue.js, OWN_RENDERER=true); the
+  // extension never loads its QzLyrics vendor.js and never runs it, so shipping it is 1.3MB of dead
+  // weight AND it is the bundle whose self-run update card nagged desktop users to "update qobuzify
+  // lyrics". Exclude it from the bake (the file stays on disk as the OWN_RENDERER=false fallback only).
+  const VENDOR_EXCLUDE = new Set(["qobuzify-lyrics"]);
+  const vendors = extensions.filter((e) => e.hasVendor && !VENDOR_EXCLUDE.has(e.id)).map((e) => ({ name: "qobuzify-ext-" + e.id + ".js", src: path.join(EXT_DIR, e.id, "vendor.js") }));
   install(locate(), { catalog, extensions, def: def || DEFAULT_THEME, version: version(), seed: seed || Date.now(), runtimeSrc, spotify, spotifyToken, apple, vendors });
   return catalog.find((t) => t.slug === (def || DEFAULT_THEME));
 }
