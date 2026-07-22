@@ -51,10 +51,11 @@ function installRuntime(def, seed) {
   }
   const extensions = buildExtensions(EXT_DIR);
   const runtimeSrc = fs.readFileSync(RUNTIME, "utf8");
-  let spotify = null; // local-only creds for the Qobuzify Lyrics ISRC->Spotify bridge
-  try { const c = JSON.parse(fs.readFileSync(path.join(ROOT, ".spotify-creds.json"), "utf8")); if (c.client_id && !/YOUR_/.test(c.client_id)) spotify = { client_id: c.client_id, client_secret: c.client_secret }; } catch (_) {}
-  let spotifyToken = null; // (vestigial) optional Spotify user token; the lyrics view uses open sources by default
-  try { const tk = JSON.parse(fs.readFileSync(path.join(ROOT, ".spotify-user-token.json"), "utf8")); if (tk.access_token) spotifyToken = { access_token: tk.access_token, expires_at: tk.expires_at || 0, refresh_token: tk.refresh_token || null }; } catch (_) {}
+  // Spotify creds are NO LONGER injected: the client-side ISRC->Spotify bridge was removed, so no local
+  // Spotify request is ever made and no client_secret ships in the payload. The server does all Spotify-id
+  // resolution from the ISRC. (The .spotify-* files, if present, are now ignored.)
+  const spotify = null;
+  const spotifyToken = null;
   let apple = null; // Apple Music TTML (syllable lyrics + duet agents): your own dev + media-user tokens, local only
   try { const a = JSON.parse(fs.readFileSync(path.join(ROOT, ".apple-creds.json"), "utf8")); if (a.developer_token && a.media_user_token) apple = { developer_token: a.developer_token, media_user_token: a.media_user_token, storefront: a.storefront || "us" }; } catch (_) {}
   // A prebuilt sibling bundle (extension/vendor.js) ships as its own file rather than inlined. None ship
