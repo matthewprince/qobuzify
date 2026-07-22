@@ -1,5 +1,5 @@
 // Synced, word-by-word lyrics for Qobuz - a karaoke-style fill, an album-cover background, and
-// auto-scroll. It renders through a licensed UI bundle (passed in as `vendor`) sitting behind a
+// auto-scroll. It renders through Lyra (our own renderer, prepended at build) behind a
 // Qobuzify-API shim, and a Qobuz->Spotify ISRC bridge feeds Player.data.item.uri the mapped
 // spotify:track:<id>. The lyric data is resolved server-side and delivered pre-aligned through the
 // Qobuzify lyrics API. Opens from a player-bar button.
@@ -36,11 +36,10 @@ function ensureFreshToken() {
 // --- track state for the Player shim ---
 var cur = null; // mapped current track (Spotify-shaped item)
 var curMeta = null; // clean Qobuz metadata {name, artist, album, durationMs} for lyric lookup
-var curLyrics = null; // the resolved SL lyrics object (Syllable/Line/Static) for our own animator
-// The vendored bundle is the renderer. Our own experimental renderer (QZLyricsRenderer, still prepended
-// at build) is HARD-DISABLED here - do not read the localStorage toggle, so a previously-set "qz-own-renderer"
-// flag can't silently re-enable it. Flip this to a localStorage read again only to resume work on ours.
-var OWN_RENDERER = true; // Lyra (prepended lyra.js + lyra-glue.js -> window.QZLyricsRenderer) replaces the QzLyrics vendor bundle
+var curLyrics = null; // the resolved lyrics object (Syllable/Line/Static) for the animator
+// Lyra (prepended lyra.js + lyra-glue.js, exposed as window.QZLyricsRenderer) is the renderer. This is
+// a constant, not a localStorage read, so a stray flag can never swap it out at runtime.
+var OWN_RENDERER = true;
 var listeners = { songchange: [], onprogress: [], onplaypause: [] };
 function emit(type, e) {
   if (type === "songchange") { try { setCoverBg(cur && cur.images && cur.images[0] && cur.images[0].url); } catch (_) {} try { qzSuppressFade(1800); } catch (_) {} } // on a song change the bundle fades the whole .LyricsContent block to opacity 0 for ~1s while the next lyrics load ("lyrics vanish + come back"); hold it visible across the swap
@@ -167,50 +166,8 @@ function qobuzSeek(ms) {
 }
 
 // --- lyrics source: our own resolver feeding SL's renderer ---
-// SL fetches from api.qzlyrics.org/query; we intercept that fetch and instead hand back our own
-// lyrics packed into the exact shape SL's lyricsPacker.unpack() and renderer expect.
+// Kept because the resolver client issues its lyric-proxy requests through the original fetch.
 var _origFetch = window.fetch.bind(window);
-var _lyricsFetch = null; // our fetch wrapper (kept so cleanup() can restore window.fetch)
-
-// faithful port of SL's SLObjPack.pack() so SL's strict unpack() accepts our payload
-function slPack(obj) {
-  var seen = new WeakSet();
-  function snap(n, d) {
-    if (d > 512) throw new Error("depth");
-    if (n === null) return null;
-    var t = typeof n;
-    if (t === "string" || t === "boolean") return n;
-    if (t === "number") { if (!isFinite(n)) throw new Error("nonfinite"); return n; }
-    if (t !== "object") throw new Error("type");
-    if (seen.has(n)) throw new Error("cycle");
-    seen.add(n);
-    try {
-      if (Array.isArray(n)) { var a = new Array(n.length); for (var i = 0; i < n.length; i++) a[i] = snap(n[i], d + 1); return a; }
-      var p = Object.getPrototypeOf(n); if (p !== Object.prototype && p !== null) throw new Error("nonplain");
-      var ks = Object.keys(n), o = {}; for (var j = 0; j < ks.length; j++) { var k = ks[j]; if (k === "__proto__" || k === "constructor" || k === "prototype") throw new Error("forbidden"); o[k] = snap(n[k], d + 1); } return o;
-    } finally { seen.delete(n); }
-  }
-  var safe = snap(obj, 0), freq = new Map();
-  (function count(n) { if (n === null || typeof n !== "object") { freq.set(n, (freq.get(n) || 0) + 1); return; } if (Array.isArray(n)) n.forEach(count); else Object.keys(n).forEach(function (k) { freq.set(k, (freq.get(k) || 0) + 1); count(n[k]); }); })(safe);
-  var values = Array.from(freq.entries()).sort(function (a, b) { return b[1] - a[1]; }).map(function (e) { return e[0]; });
-  var idx = new Map(); values.forEach(function (v, i) { idx.set(v, i); });
-  function ptr(n) { var x = idx.get(n); if (x === undefined) throw new Error("unindexed"); return x; }
-  function schema(arr) { if (!arr.length) return false; var f = arr[0]; if (typeof f !== "object" || f === null || Array.isArray(f)) return false; var k0 = Object.keys(f); if (!k0.length) return false; for (var i = 1; i < arr.length; i++) { var it = arr[i]; if (typeof it !== "object" || it === null || Array.isArray(it)) return false; var ki = Object.keys(it); if (ki.length !== k0.length) return false; for (var k = 0; k < k0.length; k++) if (ki[k] !== k0[k]) return false; } return k0; }
-  var stream = [];
-  (function emit(n) {
-    if (n === null || typeof n !== "object") { stream.push(ptr(n)); return; }
-    if (Array.isArray(n)) {
-      if (n.length === 0) { stream.push(-4); return; }
-      if (n.length === 1) { stream.push(-5); emit(n[0]); return; }
-      var sk = schema(n);
-      if (sk) { stream.push(-3); stream.push(n.length); stream.push(sk.length); sk.forEach(function (k) { stream.push(ptr(k)); }); n.forEach(function (it) { sk.forEach(function (k) { emit(it[k]); }); }); return; }
-      stream.push(-2); stream.push(n.length); n.forEach(emit); return;
-    }
-    var ks = Object.keys(n); if (!ks.length) { stream.push(-6); return; }
-    stream.push(-1); stream.push(ks.length); ks.forEach(function (k) { stream.push(ptr(k)); }); ks.forEach(function (k) { emit(n[k]); });
-  })(safe);
-  return [values, stream];
-}
 
 function cleanTitle(s) {
   return (s || "")
@@ -354,67 +311,6 @@ function prefetchNext() {
 // Race a promise against a timeout so one slow request can't stall the whole resolve
 // (an upstream can occasionally hang for tens of seconds).
 function withTimeout(p, ms) { return Promise.race([Promise.resolve(p), new Promise(function (r) { setTimeout(function () { r(null); }, ms); })]); }
-
-// SL's HideLoaderContainer() doesn't reliably strip the loader's .active class in
-// our shimmed environment, so once we've supplied lyrics, clear it ourselves (the
-// .active loader sits at z-index:9 over the fully-rendered .LyricsContent).
-function clearLoaderSoon() {
-  [400, 1000, 2000, 3400].forEach(function (ms) {
-    setTimeout(function () { var l = document.querySelectorAll("#QzLyricsPage .loaderContainer"); for (var i = 0; i < l.length; i++) l[i].classList.remove("active", "queued"); }, ms);
-  });
-}
-function installLyricsBridge() {
-  // Always feed the UI from our own resolver. We use the licensed renderer only - never the
-  // gated third-party lyrics-data API.
-  if (window.__QZ_SL_FETCH_PATCHED__) return;
-  window.__QZ_SL_FETCH_PATCHED__ = true;
-
-  // Belt and braces on top of the API denial above: the renderer opens upstream URLs directly via
-  // window.open (its update card's buttons, and a "your uid" link to their site). Denying the version
-  // check should mean none of those are ever reachable, but a stray one would put upstream's identity in
-  // front of our users, so drop those opens outright rather than trust that.
-  if (!window.__QZ_SL_OPEN_PATCHED__) {
-    window.__QZ_SL_OPEN_PATCHED__ = true;
-    var _origOpen = window.open;
-    window.open = function (u) {
-      try { if (typeof u === "string" && /qzlyrics\.org|qz\.org|github\.com\/Qz|discord\.(gg|com)/i.test(u)) return null; } catch (e) {}
-      return _origOpen.apply(window, arguments);
-    };
-  }
-  _lyricsFetch = function (input, init) {
-    try {
-      var url = typeof input === "string" ? input : (input && input.url) || "";
-      if (/api\.qzlyrics\.org/.test(url)) {
-        var op = null; try { var b = JSON.parse(init && init.body); op = b.queries && b.queries[0] && b.queries[0].operation; } catch (e) {}
-        if (op !== "lyrics") {
-          // Nothing but lyrics goes upstream. The bundle also asks this API for "ext_version", and on a
-          // newer answer it renders its own update card - upstream's release page and chat invite, inside
-          // our app, for a bundle the user cannot update on its own. Answering non-200 makes its
-          // GetLatestVersion() return undefined, so IsOutdated() is false and the card never renders.
-          // Denying the whole host (not just /query) also keeps any future endpoint of theirs from
-          // reaching out from a user's machine.
-          return Promise.resolve(new Response(
-            JSON.stringify({ queries: [{ operation: op || "unknown", operationId: "0", result: { data: null, httpStatus: 404, format: "json" } }] }),
-            { status: 200, headers: { "content-type": "application/json" } }));
-        }
-        if (op === "lyrics") {
-          // Read the LIVE track at fetch time (not the possibly-stale curMeta) so a
-          // track-change race can't tie one song's lyrics to another.
-          var qt = null; try { qt = Q.player.getTrack && Q.player.getTrack(); } catch (e) {}
-          var track = (qt && qt.title) ? { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0, feats: featsOf(qt.artists, qt.artist) } : (curMeta || { name: cur && cur.name, artist: (cur && cur.artists && cur.artists[0] && cur.artists[0].name) || "", album: (cur && cur.metadata && cur.metadata.album_title) || "", durationMs: cur && cur.duration && cur.duration.milliseconds });
-          return resolveLyrics(track).then(function (ly) {
-            curLyrics = ly; // keep for the debug hook / server-tag
-            var result = ly ? { data: slPack(ly), httpStatus: 200, format: "json" } : { data: null, httpStatus: 404, format: "json" };
-            clearLoaderSoon(); // always, even on a 404 (no-lyrics), so the loader's .active overlay never sticks
-            return new Response(JSON.stringify({ queries: [{ operation: "lyrics", operationId: "0", result: result }] }), { status: 200, headers: { "content-type": "application/json" } });
-          });
-        }
-      }
-    } catch (e) {}
-    return _origFetch(input, init);
-  };
-  window.fetch = _lyricsFetch;
-}
 
 // --- minimal PopupModal ---
 function makePopupModal() {
@@ -646,11 +542,6 @@ function ensureContainer() {
   // normal playback keeps every ease. (the karaoke word-fill is JS-driven via --gradient-position, so
   // it renders right either way.)
   Q.css("qz-sl-refocus", "#QzLyricsPage.qz-refocus .LyricsContent{opacity:1!important;transition:none!important;animation:none!important;}#QzLyricsPage.qz-refocus .LyricsContainer .LyricsContent .line{transition:none!important;animation:none!important;}");
-  // Last line of defence on the renderer's update card (see the API denial in the fetch patch). It should
-  // never be built now, but if upstream ever changes how it decides to nag, this keeps their release link
-  // and chat invite off our users' screens instead of letting a regression ship it.
-  Q.css("qz-sl-noupdate", ".update-card-wrapper,.uc-title,.uc-ver,.uc-arrow,.btn-discord{display:none!important;}" +
-    "sl-generic-modal.QzLyricsModal:has(.update-card-wrapper){display:none!important;pointer-events:none!important;}");
   // MID-SONG WHITE FLASH FIX. The bundle's virtualizer periodically tears down + recreates its rows on scroll
   // (verified via CDP). A freshly recreated row has NO state class yet (Active/Sung/NotSung), and a classless
   // .line defaults to opacity:1 + scale:1 = BRIGHT + FLAT - so for the frame before the bundle re-applies the
@@ -1130,42 +1021,19 @@ function _comboTick() {
 }
 
 // --- boot ---
-var REACT_VER = "19.2.6";
 var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null;
 (async function boot() {
   try {
     await Promise.resolve(); // let the rest of the module finish evaluating (FS icon vars live below) before any DOM work; boot used to inherit this ordering from the React-import await, which the own path no longer performs
-    var reactFailed = false;
+    // The lyrics view builds on a small Spicetify-compatible host object (Platform.History, Player) that
+    // Qobuzify's extensions target. Lyra reads only that scaffolding and is React-free, so the host is
+    // built directly with no network imports (an offline launch never blocks the button or the lyrics).
     if (!window.Spicetify || !window.Spicetify._qobuzify) {
-      if (OWN_RENDERER) {
-        // Lyra is React-free: the own path only reads the shim's scaffolding (Platform.History, Player).
-        // Gating boot on four sequential esm.sh imports meant an offline launch (or esm.sh down) killed
-        // the ENTIRE extension - no button, no track bridge, no lyrics - so this path never touches the network.
-        window.Spicetify = buildSpicetify(null, {}, {}, {});
-      } else {
-        try {
-          var React = await import("https://esm.sh/react@" + REACT_VER);
-          var rdomClient = await import("https://esm.sh/react-dom@" + REACT_VER + "/client?deps=react@" + REACT_VER);
-          var rdomMain = await import("https://esm.sh/react-dom@" + REACT_VER + "?deps=react@" + REACT_VER);
-          var ReactJSX = await import("https://esm.sh/react@" + REACT_VER + "/jsx-runtime");
-          var ReactDOMServer = await import("https://esm.sh/react-dom@" + REACT_VER + "/server.browser?deps=react@" + REACT_VER).catch(function () { return {}; });
-          React = React.default || React;
-          var rdom = Object.assign({}, rdomMain.default || rdomMain, rdomClient.default || rdomClient);
-          ReactJSX = ReactJSX.default ? Object.assign({}, ReactJSX.default, ReactJSX) : ReactJSX;
-          window.Spicetify = buildSpicetify(React, rdom, ReactJSX, ReactDOMServer.default || ReactDOMServer);
-        } catch (e) {
-          // esm.sh unreachable: the vendor renderer can't run without React, but the button, track
-          // bridge and cover background don't need it - boot degraded instead of dying silently.
-          reactFailed = true;
-          try { console.error("[QobuzifyLyrics] React import failed, vendor renderer disabled:", e); } catch (_) {}
-          window.Spicetify = buildSpicetify(null, {}, {}, {});
-        }
-      }
+      window.Spicetify = buildSpicetify(null, {}, {}, {});
     }
     ensureContainer();
-    await ensureFreshToken(); // renew the Spotify token (if logged in) before the bridge picks its path
+    await ensureFreshToken(); // renew the Spotify token (if logged in) before resolving lyrics
     if (ST && ST.refresh_token) tokenIv = setInterval(ensureFreshToken, 1500000); // keep it alive (~25 min)
-    installLyricsBridge(); // route SL's lyric fetch through our resolver
 
     // bridge: react to Qobuz track changes + progress + play/pause
     // Qobuz's onChange doesn't fire for every track change (notably in-album auto-advance),
@@ -1226,43 +1094,6 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     tickIv = setInterval(function () { handleTrack(Q.player.getTrack()); emit("onprogress", { data: Q.player.getPositionMs() }); setLyricServerTag(); }, 250);
     var lastPlaying = Q.player.isPlaying();
     offPP = Q.subscribe(function () { var p = Q.player.isPlaying(); if (p !== lastPlaying) { lastPlaying = p; emit("onplaypause", { data: { isPaused: !p } }); var _r = document.getElementById("qz-sl-root"); if (_r) _r.classList.toggle("qz-paused", !p); } }); // freeze the mesh orbits while paused (window never goes document.hidden)
-
-    // run the licensed lyrics UI bundle once, loaded as a sibling <script> (the
-    // 1.3MB bundle is too big to inline; it self-runs and reads window.Spicetify)
-    if (!window.__QZ_SL_BUNDLE_RAN__ && !reactFailed) { // no React = the vendor bundle would just throw; leave RAN unset so a re-init with network can still load it
-      window.__QZ_SL_BUNDLE_RAN__ = true;
-      // the bundle's WebGL fluid background stalls in this shimmed env: the render loop freezes
-      // (canvas stuck at 300x150), so the cover sticks on a previous song and the animation
-      // stutters. any non-"off" mode stops it creating that WebGL canvas, so we force "color" (the
-      // cheapest) and then paint our own blurred album-cover layer over it (ensureCoverBg /
-      // setCoverBg), which reliably follows the song. we preset it before the bundle loads, since it
-      // reads settings at module init.
-      try {
-        var SK = "qz:SL:settings";
-        var cfg = JSON.parse(localStorage.getItem(SK) || "{}");
-        cfg.staticBackgroundMode = "color";
-        localStorage.setItem(SK, JSON.stringify(cfg));
-      } catch (e) {}
-      // the runtime served at "/" only exposes Qobuz's own assets, so load the
-      // copied bundle by its absolute file:// path (derived from the app.html URL)
-      if (!OWN_RENDERER) { // our own renderer replaces the vendor entirely, so don't load the 1.3MB bundle
-        // The wrapper hands the bundle over inline (see wrapper/preload.js): the page is https and a
-        // <script src> to the local bundle can't be reached from it. Desktop keeps the file:// <script src>.
-        var inlined = null;
-        try { inlined = window.__QZ_VENDOR__ && window.__QZ_VENDOR__["qobuzify-lyrics"]; } catch (e) {}
-        if (inlined) {
-          var si = document.createElement("script"); // inline, so it still runs in page scope like the real bundle
-          si.textContent = inlined;
-          (document.head || document.documentElement).appendChild(si);
-        } else {
-          var base = location.href.replace(/\/app\.html.*$/, "");
-          var s = document.createElement("script");
-          s.src = base + "/node_modules/@qobuz/qobuz-dwp-ui/dist/qobuzify-ext-qobuzify-lyrics.js";
-          s.onerror = function () { try { console.error("[QobuzifyLyrics] failed to load bundle: " + s.src); } catch (_) {} };
-          (document.head || document.documentElement).appendChild(s);
-        }
-      }
-    }
 
     offBtn = ensureButton();
     _comboIv = setInterval(_comboTick, 75); // drive the combo animation (bloom + clock-synced word glow-pop)
@@ -1386,8 +1217,6 @@ return function cleanup() {
   if (offPP) offPP();
   if (offBtn) offBtn();
   if (container) container.style.display = "none";
-  if (window.fetch === _lyricsFetch) window.fetch = _origFetch; // stop routing every app fetch through our now-dead wrapper
-  window.__QZ_SL_FETCH_PATCHED__ = false;
   if (_scrollGuardRAF) cancelAnimationFrame(_scrollGuardRAF);
   if (_onSeekScroll) document.removeEventListener("scroll", _onSeekScroll, true);
   if (_onUserScroll) { document.removeEventListener("wheel", _onUserScroll, true); document.removeEventListener("pointerdown", _onUserScroll, true); document.removeEventListener("touchstart", _onUserScroll, true); }
