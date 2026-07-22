@@ -82,7 +82,7 @@ function isrcToSpotifyId(isrc, name) {
 /* map the current Qobuz track -> a Spotify-shaped player item */
 function mapTrack(qt) {
   if (!qt || !qt.id) { cur = null; curMeta = null; curLyrics = null; emit("songchange", { data: playerData() }); return; }
-  curMeta = { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0, feats: featsOf(qt.artists, qt.artist) };
+  curMeta = { name: qt.title, artist: qt.artist || "", album: qt.album || "", durationMs: qt.durationMs || 0, feats: (qt.feats && qt.feats.length ? qt.feats : featsOf(qt.artists, qt.artist)) };
   curLyrics = null; _tagSong = null; _tagScanned = false; // reset the credit-tag dedupe so the new song re-scans once
   var cover = (qt.cover || "").replace(/_\d+\.jpg/, "_600.jpg");
   var images = ["standard", "small", "large", "xlarge"].map(function (lbl) { return { label: lbl, url: cover }; });
