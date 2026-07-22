@@ -274,6 +274,9 @@ function setupThumbar() {
 // -desktop integration (exclusive acquisition, muted-element sync) is the remaining verification.
 const net = require("net");
 const { spawn } = require("child_process");
+// Direct-stream source: signs track/getFileUrl to hand mpv a plain FLAC CDN URL (see qz-fileurl.js).
+const qzfu = require("./qz-fileurl.js");
+try { qzfu.setCacheDir(app.getPath("userData")); } catch (_) {}
 const qzbp = { proc: null, sock: null, buf: "", reqId: 0, mode: "off", enabled: false, socketPath: null, restarts: 0, restartAt: 0, wantPlaying: false, curUrl: null,
   srv: null, port: 0, feed: null, token: 0, device: null };
 
@@ -1138,6 +1141,29 @@ function qzbpCommand(msg) {
       break;
     case "feed": qzbpFeedChunk(msg.data); break;
     case "endfeed": if (qzbp.feed) { qzbp.feed.done = true; if (qzbp.feed.res) { try { qzbp.feed.res.end(); } catch (_) {} } } break;
+    // DIRECT SOURCE: mpv streams a signed FLAC CDN URL instead of the tap feed. No feed server, no ftyp
+    // guessing, no starvation - mpv owns the stream and Range-seeks it. The renderer sends this on a real
+    // track change (store id is authoritative); a stale request is dropped by the token counter so a
+    // rapid skip can't play the wrong URL.
+    case "directtrack": {
+      qzbp.wantPlaying = (typeof msg.playing === "boolean") ? msg.playing : true;
+      qzbp.feed = null; // this stream is URL-driven; make sure no old feed lingers
+      const dseq = (qzbp.dseq = (qzbp.dseq || 0) + 1);
+      const startMs = Number(msg.startMs) || 0;
+      bpTrace("directtrack: resolving", { trackId: msg.trackId, playing: qzbp.wantPlaying });
+      qzfu.resolve({ token: msg.token, trackId: msg.trackId, appId: msg.appId, bundleUrl: msg.bundleUrl, formatId: 27 })
+        .then((r) => {
+          if (dseq !== qzbp.dseq) return;                 // a newer track superseded this resolve
+          if (!r.ok) { bpTrace("directtrack: resolve failed", { reason: r.reason }); qzbpEvt({ type: "directfail", reason: r.reason }); return; }
+          qzbp.curUrl = r.url;
+          mpvSend(["loadfile", r.url, "replace"]);
+          if (startMs > 250) mpvSend(["seek", startMs / 1000, "absolute"]);
+          mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
+          bpTrace("directtrack: loaded", { fmt: r.formatId, bit: r.bitDepth, rate: r.rate });
+        })
+        .catch((e) => { if (dseq === qzbp.dseq) qzbpEvt({ type: "directfail", reason: "network", detail: String(e && e.message || e) }); });
+      break;
+    }
     case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;
     case "pause": qzbp.wantPlaying = false; mpvSend(["set_property", "pause", true]); break;
     case "seek": mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;

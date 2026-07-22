@@ -31,6 +31,7 @@
     },
     "files": [
       "main.js",
+      "qz-fileurl.js",
       "preload.js",
       "rpc-main.js",
       "mpris-main.js",
