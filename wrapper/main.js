@@ -523,8 +523,12 @@ function hwRateOf(device) {
 // the two agree. So: trust `channelVolumes`, which is the gain that reaches the samples either way, and
 // never infer unity from softVolumes.
 function pwDumpJson() {
+  // Prefer the async sample, but only when it actually carries a usable dump. A round where the async
+  // pw-dump came back empty/null used to make this return null outright (the `if (p) return` swallowed the
+  // sync fallback), so the gain read as "unknown" and the badge sat on "Volume ?" even though pw-dump was
+  // perfectly readable. Treat a missing/unparseable sample as "no sample" and fall through to the sync read.
   const p = qzbpProbeFresh();
-  if (p) { try { return JSON.parse(p.pwdump || "null"); } catch (_) { return null; } }
+  if (p && p.pwdump) { try { const j = JSON.parse(p.pwdump); if (Array.isArray(j) && j.length) return j; } catch (_) {} }
   try {
     const out = require("child_process").execFileSync("pw-dump", [], { timeout: 5000, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     return JSON.parse(out);
