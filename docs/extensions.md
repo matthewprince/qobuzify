@@ -32,7 +32,7 @@ Puts Qobuz's own Hi-Res Audio logo on hi-res tracks, reusing the app's bundled `
 ## Lyrics
 
 ### qobuzify-lyrics
-Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through a licensed UI bundle (shipped as `vendor.js`) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See [lyrics-server.md](lyrics-server.md).
+Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through Lyra (our own renderer) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See [lyrics-server.md](lyrics-server.md).
 
 ## Now playing and controls
 

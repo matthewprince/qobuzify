@@ -22,9 +22,7 @@ function version() {
 // handed to the debugger, not embedded in HTML). Lyrics are proxy-first via api.qobuzify.app,
 // so the local Spotify/Apple creds stay null in the prototype.
 // The wrapper ships the SAME extension set as the desktop bake: Linux is Windows plus bit-perfect, and
-// nothing less. Nothing is filtered out here. (Held back historically: Qobuzify Lyrics, whose vendored
-// renderer never built #QzLyricsPage on the web player, and Block Artists / Trash Songs, which was
-// only ever verified against the native app's stream gate. Both are wired for the web player now.)
+// nothing less. Nothing is filtered out here.
 const EXCLUDE = new Set([]);
 
 function buildPayloadSource(def) {
@@ -44,8 +42,8 @@ function buildPayloadSource(def) {
   return "window.__QOBUZIFY__ = " + JSON.stringify(data) + ";\n" + runtimeSrc;
 }
 
-// id -> local vendor.js path, for the extensions that ship a prebuilt bundle (Qobuzify
-// Lyrics ships the render UI as vendor.js). The wrapper serves these at the same-origin
+// id -> local vendor.js path, for any extension that ships a prebuilt bundle (none do
+// today; the lyrics view renders through Lyra). The wrapper serves these at the same-origin
 // path the extension requests.
 function vendorMap() {
   const map = {};

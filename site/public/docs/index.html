@@ -312,7 +312,7 @@ var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
 <p>Puts Qobuz's own Hi-Res Audio logo on hi-res tracks, reusing the app's bundled <code>hires.png</code> so it looks native. Only hi-res gets a badge; CD and lossy show nothing, which is the point: hi-res becomes easy to spot at a glance.</p>
 <h2 id="extensions--lyrics">Lyrics</h2>
 <h3 id="extensions--qobuzify-lyrics">qobuzify-lyrics</h3>
-<p>Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through a licensed UI bundle (shipped as <code>vendor.js</code>) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See <a href="#lyrics-server">lyrics-server</a>.</p>
+<p>Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through Lyra (our own renderer) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See <a href="#lyrics-server">lyrics-server</a>.</p>
 <h2 id="extensions--now-playing-and-controls">Now playing and controls</h2>
 <h3 id="extensions--full-app-display">full-app-display</h3>
 <p>A fullscreen now-playing overlay: big cover art, title/artist/album over a blurred backdrop, a live seekable progress bar, and prev/play-pause/next. Everything drives the real player controls underneath, so the sealed audio engine is never touched directly. Toggle from the player bar or the F key.</p>

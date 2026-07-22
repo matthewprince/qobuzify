@@ -9,7 +9,7 @@
 //
 // Prepended (with lyra.js) ahead of index.js at bake time, so window.Lyra + window.QZLyricsRenderer both
 // exist before the extension body runs. With OWN_RENDERER = true, the extension uses this and never loads
-// the 1.3MB QzLyrics vendor bundle (which stays on disk untouched as a fallback).
+// any prebuilt vendor bundle for this extension.
 (function () {
   if (typeof window === "undefined" || !window.Lyra || !window.Lyra.create) return;
 
