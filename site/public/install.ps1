@@ -12,7 +12,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # irm|iex script) rather than fetched as a sibling file, so it is a real tamper anchor: an attacker who
 # swaps the zip on the origin cannot also swap this hash without breaking the signed TLS delivery.
 # build-zip.ps1 rewrites this line on every build.
-$ExpectedZipSha = "85F30A124661460933185CD877580DAABECFF3E8063DDE9951FB4E6027F061D6"
+$ExpectedZipSha = "965AA2D4A4776068E5D082AA3A9612EAE2380149794FDDB4540F5427C27028F3"
 
 Write-Host ""
 Write-Host "  Qobuzify " -ForegroundColor Cyan -NoNewline
