@@ -1,7 +1,7 @@
 {
   "name": "qobuzify",
   "productName": "Qobuzify",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "description": "Qobuzify for Linux and macOS - the Qobuz web player with Qobuzify themes and extensions.",
   "author": "Qobuzify",
