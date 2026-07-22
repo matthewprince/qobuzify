@@ -643,10 +643,23 @@
             function cleanName(s) { return String(s == null ? "" : s).replace(/^\s*[-–—·]\s+/, "").replace(/\s+[-–—·]\s*$/, "").trim(); }
             var artists = []; for (var i = 0; i < artistEls.length; i++) { var a = cleanName(artistEls[i].textContent); if (a && artists.indexOf(a) < 0) artists.push(a); }
             var albumId = albumEl ? ((albumEl.getAttribute("href") || "").match(/\/album\/([^/?]+)/) || [])[1] : null;
+            // Featured artists Qobuz prints as PLAIN TEXT after the linked performer ("Halsey feat. Juice WRLD")
+            // aren't /artist/ anchors, so artists[] misses them - and the lyric lookup then can't tell a solo
+            // from its feat. version (they share title + Spotify id). Read them off the credit line: chop the
+            // album text, then parse a trailing feat./ft./with credit. Rides the SAME scrape as artist/title
+            // (already stability-gated in onChange), so it adds no new store-vs-DOM skew.
+            var feats = [];
+            try {
+              var credit = meta ? meta.textContent : "";
+              var albTxt = albumEl ? albumEl.textContent : "";
+              if (albTxt) { var ax = credit.lastIndexOf(albTxt); if (ax >= 0) credit = credit.slice(0, ax); }
+              var fm = /\b(?:feat\.?|ft\.?|featuring|with)\s+(.+?)\s*[-–—·]?\s*$/i.exec(credit.replace(/\s+/g, " ").trim());
+              if (fm) feats = fm[1].split(/\s*(?:,|&|;|\band\b)\s*/i).map(cleanName).filter(Boolean);
+            } catch (e) {}
             return {
               id: ct.id || null, title: titleEl ? titleEl.textContent.trim() : "",
               artists: artists, artist: artists[0] || "", album: albumEl ? albumEl.textContent.trim() : "",
-              albumId: albumId, durationMs: ct.duration || 0, cover: img ? img.src : "", quality: p.quality || null
+              feats: feats, albumId: albumId, durationMs: ct.duration || 0, cover: img ? img.src : "", quality: p.quality || null
             };
           } catch (e) { return null; }
         },
