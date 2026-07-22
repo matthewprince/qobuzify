@@ -342,9 +342,18 @@ function handleRow(row) {
   if (!btn) {
     btn = document.createElement("button"); btn.type = "button"; btn.className = "qz-bt-b qz-bt-rowtrash"; btn.innerHTML = TRASH;
     btn.addEventListener("click", function (e) { stop(e); var ri = rowInfo(row); if (ri.title && ri.artist) toggleSong(ri.title, ri.artist); });
-    // put it immediately before the row's heart / first trailing icon so it can't overlap the heart.
+    // Put it before the heart's SLOT, not inside it. The heart sits in a classless FIXED-WIDTH (44px)
+    // wrapper; inserting our 26px button inside overflows that box and wraps the heart onto a second
+    // line (trash up-left, heart down-right, the diagonal-icons bug). Climb out of any narrow wrapper
+    // to the element that is a real flex child of the row and insert before THAT, so the button gets
+    // its own vertically-centered slot. A wide parent (a real actions bar) stops the climb, keeping
+    // the old before-the-heart behavior there.
     var anchor = row.querySelector(".ButtonFavorite, [class*='avorite']") || row.querySelector(".ui-block-button-icon");
-    if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(btn, anchor);
+    if (anchor && anchor.parentElement) {
+      var slot = anchor;
+      while (slot.parentElement && slot.parentElement !== row && slot.parentElement.getBoundingClientRect().width < 60) slot = slot.parentElement;
+      slot.parentElement.insertBefore(btn, slot);
+    }
     else { row.classList.add("qz-bt-row"); btn.classList.add("qz-bt-abs"); row.appendChild(btn); } // fallback: absolute
   }
   btn.classList.toggle("on", isT); btn.title = isT ? "Restore this song" : "Trash this song";

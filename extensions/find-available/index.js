@@ -277,7 +277,18 @@ function decorate() {
     if (row.getAttribute("data-qz-fav")) continue;
     if (!rowInfo(row).title) continue;
     row.setAttribute("data-qz-fav", "1");
-    row.appendChild(makeBtn(row));
+    var b = makeBtn(row);
+    row.appendChild(b);
+    // Sit over the row's own (inert) play control, same spot the body-pinned web-player variant uses.
+    // The old right:58px landed ON the trailing heart/kebab cluster, and other extensions add their own
+    // trailing buttons there too, so the right side is contested; the disabled row's play zone is dead
+    // space and collision-free. Measure the real control so both row systems (.ListItem/.track-item)
+    // center it; the CSS left:21px default covers a not-yet-laid-out row.
+    var play = row.querySelector(".ListItem__player") || row.querySelector(".Cover") || row.querySelector(".track-item__cover");
+    if (play) {
+      var rb = row.getBoundingClientRect(), pb = play.getBoundingClientRect();
+      if (pb.width) { b.style.left = Math.round(pb.left - rb.left + pb.width / 2 - 13) + "px"; }
+    }
   }
   var uiRows = document.querySelectorAll(".ui-module-track-row");
   if (uiRows.length) {
@@ -302,7 +313,7 @@ function decorate() {
 Q.css(CSS_ID, [
   // the row needs a positioning context for the absolutely-placed button; only touches rows we decorate
   ".ListItem.isDisabled[data-qz-fav]{position:relative;}",
-  ".qz-fav-btn{position:absolute;right:58px;top:50%;transform:translateY(-50%);z-index:3;display:flex;align-items:center;justify-content:center;",
+  ".qz-fav-btn{position:absolute;left:21px;top:50%;transform:translateY(-50%);z-index:3;display:flex;align-items:center;justify-content:center;",
   "width:26px;height:26px;border-radius:50%;appearance:none;border:0;cursor:pointer;pointer-events:auto;",
   "background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 22%,transparent);color:var(--qz-accent,#3DA8FE);",
   "opacity:.9;transition:background .14s,transform .12s,opacity .14s;}",
