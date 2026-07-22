@@ -1,37 +1,14 @@
 // Synced, word-by-word lyrics for Qobuz - a karaoke-style fill, an album-cover background, and
-// auto-scroll. It renders through Lyra (our own renderer, prepended at build) behind a
-// Qobuzify-API shim, and a Qobuz->Spotify ISRC bridge feeds Player.data.item.uri the mapped
-// spotify:track:<id>. The lyric data is resolved server-side and delivered pre-aligned through the
-// Qobuzify lyrics API. Opens from a player-bar button.
+// auto-scroll. It renders through Lyra (our own renderer, prepended at build) behind a Qobuzify-API
+// shim. Lyrics are resolved ENTIRELY server-side (api.qobuzify.app) and delivered pre-aligned; the
+// client sends only name/artist/ISRC and makes NO direct upstream requests. Opens from a player-bar button.
 var Q = Qobuzify;
-var SP = Q.spotify || {}; // { client_id, client_secret } - local only (ISRC->Spotify bridge)
-var ST = Q.spotifyToken || null; // { access_token, expires_at } - Spotify user token for SL's real lyric sources
-function userToken() { return (ST && ST.access_token) || ""; }
-// only treat the token as usable for SL's gated Spotify source when it's a real, non-expired user
-// token (client-creds are ~140 chars and only give you static; user tokens are ~500+). otherwise we
-// fall back to the open lyric source, which needs no token at all and now syncs (the clock
-// is fixed). a usable user token either has a refresh_token (OAuth login, ~270+ chars) or is a long
-// desktop-grabbed token (~500). client-credentials tokens (~140, no refresh) get rejected, so we
-// fall back to the open lyric source instead of getting static.
-function hasFreshUserToken() { return !!(ST && ST.access_token && (ST.refresh_token || ST.access_token.length > 300) && (!ST.expires_at || ST.expires_at > Date.now() + 60000)); }
-// renew the access token from the refresh token (OAuth PKCE, no secret) so the user logs in once
-// and synced lyrics keep working. updates ST in place.
-function refreshSpotifyToken() {
-  if (!ST || !ST.refresh_token || !SP.client_id) return Promise.resolve(false);
-  return fetch("https://accounts.spotify.com/api/token", {
-    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(ST.refresh_token) + "&client_id=" + encodeURIComponent(SP.client_id)
-  }).then(function (r) { return r.json(); }).then(function (j) {
-    if (j && j.access_token) { ST.access_token = j.access_token; ST.expires_at = Date.now() + ((j.expires_in || 3600) * 1000); if (j.refresh_token) ST.refresh_token = j.refresh_token; return true; }
-    return false;
-  }).catch(function () { return false; });
-}
-// Refresh now if the token is missing or within 5 min of expiry.
-function ensureFreshToken() {
-  if (!ST || !ST.refresh_token) return Promise.resolve(false);
-  if (ST.access_token && ST.access_token.length > 300 && ST.expires_at && ST.expires_at > Date.now() + 300000) return Promise.resolve(true);
-  return refreshSpotifyToken();
-}
+// Lyrics resolve ENTIRELY server-side through the Qobuzify proxy (api.qobuzify.app). The client makes NO
+// direct upstream lyric/token requests: the local Spotify token + ISRC->Spotify-id bridge was REMOVED so
+// nothing identifiable ever hits an upstream from a user's machine. The server does all resolution (its own
+// IPs/UA), which also keeps the resolution method from being fingerprinted or patched via client traffic.
+function userToken() { return ""; } // vestigial: the SL-compat shim still reads it; always empty now.
+function ensureFreshToken() { return Promise.resolve(false); } // no-op stub (boot still calls it)
 
 // --- track state for the Player shim ---
 var cur = null; // mapped current track (Spotify-shaped item)
@@ -50,34 +27,8 @@ function playerData() {
     duration: cur ? { milliseconds: cur.duration.milliseconds } : null };
 }
 
-// --- Spotify token + ISRC->id (the bridge) ---
-var _tok = null, _tokExp = 0, _tokP = null, _isrc = {};
-function spotifyToken() {
-  if (!SP.client_id) return Promise.reject(new Error("no spotify creds"));
-  if (_tok && Date.now() < _tokExp - 5000) return Promise.resolve(_tok);
-  if (_tokP) return _tokP;
-  _tokP = fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + btoa(SP.client_id + ":" + SP.client_secret) },
-    body: "grant_type=client_credentials"
-  }).then(function (r) { return r.json(); }).then(function (j) {
-    _tok = j.access_token; _tokExp = Date.now() + (j.expires_in || 3600) * 1000; _tokP = null; return _tok;
-  }).catch(function (e) { _tokP = null; throw e; });
-  return _tokP;
-}
-function isrcToSpotifyId(isrc, name) {
-  if (!isrc) return Promise.resolve(null);
-  if (_isrc[isrc] !== undefined) return Promise.resolve(_isrc[isrc]);
-  return spotifyToken().then(function (tok) {
-    return fetch("https://api.spotify.com/v1/search?type=track&limit=1&q=" + encodeURIComponent("isrc:" + isrc), { headers: { Authorization: "Bearer " + tok } });
-  }).then(function (r) { return r.json(); }).then(function (j) {
-    var t = j.tracks && j.tracks.items && j.tracks.items[0];
-    // a wrong or reused ISRC (common on nightcore/bootleg uploads) points at an unrelated recording;
-    // only trust the hit if its title matches, or we key the renderer off the wrong song
-    var id = (t && (!name || titleMatch(name, t.name))) ? t.id : null;
-    _isrc[isrc] = id; return id;
-  }).catch(function () { return null; });
-}
+// (Removed: the local Spotify client-credentials token + ISRC->Spotify-id search. Both hit Spotify from the
+// user's machine; the server now resolves the Spotify id from the ISRC the client sends, so this is gone.)
 
 /* map the current Qobuz track -> a Spotify-shaped player item */
 function mapTrack(qt) {
@@ -96,16 +47,13 @@ function mapTrack(qt) {
   // bridge would leave the background a song behind (a stale gradient).
   cur = Object.assign({ uri: "qobuz:track:" + qt.id }, base);
   emit("songchange", { data: playerData() });
-  // resolve the Spotify id in the background (it's the spotify-lyrics DB key). update the uri, but
-  // only re-emit (to retry lyrics with that key) if we still have none and we're still on this
-  // track - guards against a stale async overwrite landing after a song change.
+  // Fetch just the ISRC in the background (the server keys some lyrics by it) and re-emit so the proxy
+  // re-resolves with it. NOTHING is resolved locally - the Spotify id is derived server-side from this ISRC,
+  // so the client never touches Spotify (or any upstream) directly.
   Q.api("track/get?track_id=" + qt.id).then(function (tr) {
-    if (tr && tr.isrc && curMeta && curMeta.name === qt.title) curMeta.isrc = tr.isrc; // the resolver keys some lyrics by ISRC
-    return isrcToSpotifyId(tr && tr.isrc, qt.title);
-  }).then(function (spid) {
-    if (spid && cur && curMeta && curMeta.name === qt.title) {
-      cur.uri = "spotify:track:" + spid;
-      if (!curLyrics) emit("songchange", { data: playerData() });
+    if (tr && tr.isrc && curMeta && curMeta.name === qt.title) {
+      curMeta.isrc = tr.isrc;
+      if (!curLyrics) emit("songchange", { data: playerData() }); // retry lyrics now that we have the ISRC
     }
   }).catch(function () {});
 }
@@ -206,7 +154,6 @@ function norm(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[̀-
 function titleMatch(a, b) { a = norm(cleanTitle(a)); b = norm(cleanTitle(b)); if (!a || !b) return false; return a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0; }
 // An artist string "matches" if any 3+ char word of the wanted artist appears in the candidate's.
 function artistMatch(want, have) { want = norm(cleanArtist(want)); have = norm(have); if (!want || !have) return false; if (have.indexOf(want) >= 0 || want.indexOf(have) >= 0) return true; return want.split(" ").some(function (w) { return w.length > 2 && have.indexOf(w) >= 0; }); }
-function currentSpotifyId() { try { var m = /^spotify:track:([A-Za-z0-9]+)/.exec((cur && cur.uri) || ""); return m ? m[1] : null; } catch (e) { return null; } }
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
@@ -246,7 +193,6 @@ function proxyLyrics(track) {
     if (track.album) u += "&album=" + encodeURIComponent(track.album);
     if (track.durationMs) u += "&durationMs=" + track.durationMs;
     var isrc = (curMeta && curMeta.isrc) || track.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
-    var spid = currentSpotifyId(); if (spid) u += "&spotifyId=" + encodeURIComponent(spid);
     return withTimeout(_origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }), 8000);
   } catch (e) { return Promise.resolve(null); }
 }
@@ -1032,8 +978,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       window.Spicetify = buildSpicetify(null, {}, {}, {});
     }
     ensureContainer();
-    await ensureFreshToken(); // renew the Spotify token (if logged in) before resolving lyrics
-    if (ST && ST.refresh_token) tokenIv = setInterval(ensureFreshToken, 1500000); // keep it alive (~25 min)
+    // (no Spotify token to refresh anymore - the client never authenticates to any upstream)
 
     // bridge: react to Qobuz track changes + progress + play/pause
     // Qobuz's onChange doesn't fire for every track change (notably in-album auto-advance),
