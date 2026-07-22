@@ -14,7 +14,11 @@ const EXT_DIR = path.join(ROOT, "extensions");
 const RUNTIME = path.join(ROOT, "runtime", "qobuzify-runtime.js");
 
 function version() {
-  try { return JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "0.1"; }
+  // The WRAPPER's own version (wrapper/package.json), NOT the root package.json - that one carries the
+  // desktop-bake line (a different product on its own version number). Baking the bake version here made
+  // the in-app version read low, so the runtime updater (which asks /v1/version?platform=wrapper-<os>)
+  // saw the wrapper channel as newer than itself and nagged users to "update" to the version they run.
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version || "0.1"; }
   catch (_) { return "0.1"; }
 }
 
