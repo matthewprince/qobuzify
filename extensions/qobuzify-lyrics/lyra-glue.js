@@ -21,6 +21,7 @@
         isPlaying: o.isPlaying,
         onSeek: o.onSeek,
         onClose: o.onClose,
+        onRefetch: o.onRefetch,   // "Wrong lyrics?" pill -> host hits /v1/refetch, swaps in a different version
         // Lyra drives its own ambient album-art background; the extension forwards the cover via setCover
         // (see setCoverBg in index.js), so its own #qz-cbg is redundant while Lyra is active.
         settings: { background: true, glow: true, cascade: true, depthBlur: true },

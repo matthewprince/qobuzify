@@ -19,6 +19,13 @@ var ACCENT = "#3DA8FE";              // Qobuzify Electric-Blue
 function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 function h(html) { var t = document.createElement("template"); t.innerHTML = (html || "").trim(); return t.content.firstElementChild; }
 function fmtDur(sec) { sec = Math.max(0, Math.round(sec || 0)); var m = Math.floor(sec / 60), s = sec % 60; return m + ":" + (s < 10 ? "0" : "") + s; }
+function fmtLong(sec) { sec = Math.round(sec || 0); if (!sec) return ""; var hh = Math.floor(sec / 3600), mm = Math.round((sec % 3600) / 60); return hh ? (hh + " h " + mm + " min") : (mm + " min"); }
+// strip a Qobuz HTML description/biography down to plain text (they ship <p>/<br>/entities in these fields)
+function stripHtml(s) {
+  return String(s == null ? "" : s).replace(/<br\s*\/?>/gi, " ").replace(/<\/(p|div|li)>/gi, " ").replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ").trim();
+}
 // image url off any Qobuz object (album/track/playlist/artist), same field order better-search uses
 function cover(o) {
   if (!o) return "";
@@ -81,6 +88,8 @@ function api(path) {
   if (!apiCache[path]) apiCache[path] = Q.api(path).catch(function (e) { delete apiCache[path]; throw e; });
   return apiCache[path];
 }
+// drop cached GETs whose path starts with prefix - so a mutation (favourite/subscribe) forces a fresh list next read
+function invalidateApi(prefix) { Object.keys(apiCache).forEach(function (k) { if (k.indexOf(prefix) === 0) delete apiCache[k]; }); }
 function search(term, limit) { return api("catalog/search?query=" + encodeURIComponent(term) + "&limit=" + (limit || 20)); }
 function featuredAlbums(type, limit) { return api("album/getFeatured?type=" + type + "&limit=" + (limit || 24)).then(function (j) { return (j.albums && j.albums.items) || []; }).catch(function () { return []; }); }
 function featuredPlaylists(type, limit) { return api("playlist/getFeatured?type=" + type + "&limit=" + (limit || 18)).then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
@@ -182,17 +191,21 @@ function repaintFavAll() {
   });
 }
 // flip a favourite and update every matching heart on screen. Optimistic: Set + UI first, revert on failure.
+var _favBusy = {};   // (kind:id) -> 1 while a write is in flight, so a rapid double-tap can't fire two opposite writes
 function toggleFavorite(kind, id) {
   var spec = FAV_KINDS[kind]; if (!spec || id == null) return Promise.resolve();
+  var bk = kind + ":" + id; if (_favBusy[bk]) return Promise.resolve();   // ignore re-taps until this one settles
+  _favBusy[bk] = 1;
   var want = !isFav(kind, id);
   markFav(kind, id, want); paintFav(kind, id);
   var route = (want ? "favorite/create" : "favorite/delete") + "?type=" + spec.type + "&" + spec.param + "=" + encodeURIComponent(id);
   return Q.api(route).then(function () {
+    invalidateApi("favorite/getUserFavorites");   // Library list is now stale -> refetch on next visit
     qToast(kind === "artist" ? (want ? "Following" : "Unfollowed") : (want ? "Added to favourites" : "Removed from favourites"));
   }).catch(function () {
     markFav(kind, id, !want); paintFav(kind, id);   // revert
     qToast("Couldn't update, try again");
-  });
+  }).then(function () { _favBusy[bk] = 0; });
 }
 // playlist "favourite" == subscribe (distinct route). Playlists aren't in getUserFavoriteIds, so subscribed state
 // is seeded from getUserPlaylists (own + subscribed) filtered to not-owned.
@@ -200,7 +213,7 @@ var cachedMe = null, mePromise = null;
 function me() {
   if (mePromise) return mePromise;
   mePromise = Q.api("user/get").then(function (u) { cachedMe = (u && (u.id || (u.user && u.user.id))) || 0; return cachedMe; })
-    .catch(function () { cachedMe = 0; return 0; });
+    .catch(function () { mePromise = null; return null; });   // don't cache a failed lookup as uid 0 (kills ownership gates); retry next call
   return mePromise;
 }
 function loadPlaylistSubs() {
@@ -213,12 +226,16 @@ function loadPlaylistSubs() {
 }
 function togglePlaylistSub(id) {
   if (id == null) return Promise.resolve();
+  var bk = "playlist:" + id; if (_favBusy[bk]) return Promise.resolve();
+  _favBusy[bk] = 1;
   var want = !isFav("playlist", id);
   markFav("playlist", id, want); paintFav("playlist", id);
   var route = (want ? "playlist/subscribe" : "playlist/unsubscribe") + "?playlist_id=" + encodeURIComponent(id);
   return Q.api(route).then(function () {
+    invalidateApi("playlist/getUserPlaylists"); subsPromise = null;   // Library playlists list is now stale
     qToast(want ? "Added to library" : "Removed from library");
-  }).catch(function () { markFav("playlist", id, !want); paintFav("playlist", id); qToast("Couldn't update, try again"); });
+  }).catch(function () { markFav("playlist", id, !want); paintFav("playlist", id); qToast("Couldn't update, try again"); })
+   .then(function () { _favBusy[bk] = 0; });
 }
 
 // ------------------------------------------------------------------ quality (display-only; not settable)
@@ -266,24 +283,35 @@ function nrmFull(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g
 function nativeRows() { return [].slice.call(document.querySelectorAll(".ListItem")).filter(function (r) { return r.querySelector(".ListItem__title") && r.querySelector(".ListItem__player"); }); }
 function nativePath() { try { return Q.getState().router.location.pathname || ""; } catch (e) { return ""; } }
 
-var playBusy = false;
+var playBusy = false, _navIv = null;
+// Serialize the native-click engine: playFromAlbum / navClickRow / queueViaMenu each Q.navigate the invisible
+// native page and poll the SAME router, so two in flight at once fight over it. Cancel any in-flight nav-loop
+// when a new one starts (last tap wins) rather than letting concurrent setIntervals race.
+function _navCancel() { if (_navIv) { clearInterval(_navIv); _navIv = null; } }
 function playFromAlbum(albumId, title, num, tid, done) {
   if (!albumId) return;
-  playBusy = true;
+  _navCancel(); playBusy = true;
   Q.navigate("/album/" + albumId);
-  var tries = 0;
-  var iv = setInterval(function () {
+  var scroller = null, tries = 0;
+  var iv = _navIv = setInterval(function () {
     tries++;
     if (nativePath().indexOf(String(albumId)) >= 0) {
+      if (!scroller) scroller = document.querySelector(".ui-layout--root--scroll-main, .ReactVirtualized__Grid, .ReactVirtualized__List");
       var rows = nativeRows();
       if (rows.length) {
-        var target = matchRow(rows, title, num, tid) || rows[0];
-        var hit = target.querySelector(".ListItem__player") || target.querySelector(".ListItem__number");
-        if (hit) { fireClick(hit); clearInterval(iv); playBusy = false; if (done) done(); return; }
+        // hold out for the real target while there's still list to scroll; only settle for rows[0] once the
+        // hunt is exhausted, so a track below the initial virtualized mount window isn't misfired as track 1.
+        var target = matchRow(rows, title, num, tid) || (tries > 45 ? rows[0] : null);
+        if (target) {
+          var hit = target.querySelector(".ListItem__player") || target.querySelector(".ListItem__number");
+          if (hit) { fireClick(hit); return fin(); }
+        }
       }
+      if (scroller && tries % 3 === 0) scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + scroller.clientHeight * 0.85);
     }
-    if (tries > 45) { clearInterval(iv); playBusy = false; if (done) done(); }
+    if (tries > 60) fin();
   }, 130);
+  function fin() { clearInterval(iv); if (_navIv === iv) _navIv = null; playBusy = false; if (done) done(); }
 }
 // Does this native Qobuz row render OUR target track id? Read it off the React fiber props (the row is a
 // React component; its track object carries the numeric id). An exact id match is unambiguous where the
@@ -335,10 +363,18 @@ function findSeekInstance() {
   try {
     if (_seekInst && _seekInst.props && typeof _seekInst.props.seek === "function") return _seekInst;
     var input = seekInput(); if (!input) return null;
-    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactInternalInstance$") === 0; });
+    // Match BOTH fiber keys: the app runs React 17+ (key = __reactFiber$...), so the old React<=16-only
+    // __reactInternalInstance$ check never matched and the primary (geometry-free) seek path silently no-op'd.
+    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0; });
     if (!fk) return null;
     var f = input[fk], d = 0;
-    while (f && d++ < 40) { var sn = f.stateNode; if (sn && sn.props && typeof sn.props.seek === "function") { _seekInst = sn; return sn; } f = f.return; }
+    while (f && d++ < 40) {
+      var sn = f.stateNode;
+      if (sn && sn.props && typeof sn.props.seek === "function") { _seekInst = sn; return sn; }   // class component
+      var mp = f.memoizedProps;
+      if (mp && typeof mp.seek === "function") { _seekInst = { props: mp }; return _seekInst; }      // function component
+      f = f.return;
+    }
   } catch (e) {}
   return null;
 }
@@ -355,6 +391,7 @@ function seekToMs(ms) {
   var clientX = Math.max(rect.left + 1, Math.min(rect.left + rect.width - 1, rect.left + 7.5 + ms * (rect.width - 15) / d));
   var clientY = input.getBoundingClientRect().top + 6;
   var o = { bubbles: true, cancelable: true, view: window, clientX: clientX, clientY: clientY, button: 0 };
+  input.dispatchEvent(new MouseEvent("mousedown", o));   // start the drag so the handler engages before the move
   bar.dispatchEvent(new MouseEvent("mousemove", o));
   input.dispatchEvent(new MouseEvent("mouseup", o));
   return true;
@@ -405,10 +442,10 @@ function matchRowByPos(rows, pos, title) {
 // navigate the invisible native page, poll for the target row (scrolling the virtualized list if needed),
 // click its .ListItem__player. Never hangs (header-Play last resort so the queue is at least the right context).
 function navClickRow(path, pick) {
-  playBusy = true;
+  _navCancel(); playBusy = true;
   Q.navigate(path);
   var scroller = null, tries = 0, id = path.split("/").pop();
-  var iv = setInterval(function () {
+  var iv = _navIv = setInterval(function () {
     tries++;
     if (nativePath().indexOf(id) < 0) { if (tries > 45) done(); return; }
     if (!scroller) scroller = document.querySelector(".ui-layout--root--scroll-main, .ReactVirtualized__Grid, .ReactVirtualized__List");
@@ -420,7 +457,7 @@ function navClickRow(path, pick) {
     if (scroller && tries % 3 === 0) scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + scroller.clientHeight * 0.85);
     if (tries > 60) { var hb = document.querySelector("[class*='PageHeader'] button[aria-label='Play']"); if (hb) fireClick(hb); return done(); }
   }, 130);
-  function done() { clearInterval(iv); playBusy = false; }
+  function done() { clearInterval(iv); if (_navIv === iv) _navIv = null; playBusy = false; }
 }
 function playInContext(el) {
   var kind = el.getAttribute("data-ctx-kind"), cid = el.getAttribute("data-ctx-id"),
@@ -471,22 +508,22 @@ function clickQueueMenuItem(mode, done) {
 
 // Navigate the invisible native page, find the row, open its kebab, click the menu item.
 function queueViaMenu(path, pick, mode, done) {
-  playBusy = true;
+  _navCancel(); playBusy = true;
   Q.navigate(path);
   var scroller = null, tries = 0, id = path.split("/").pop();
-  var iv = setInterval(function () {
+  var iv = _navIv = setInterval(function () {
     tries++;
     if (nativePath().indexOf(id) < 0) { if (tries > 45) finish(false); return; }
     if (!scroller) scroller = document.querySelector(".ui-layout--root--scroll-main, .ReactVirtualized__Grid, .ReactVirtualized__List");
     var rows = nativeRows(), target = rows.length ? pick(rows) : null;
     if (target) {
       var keb = target.querySelector(".track-action.pct-more, .pct-more, .ListItem__menu, [class*='pct-more']");
-      if (keb) { clearInterval(iv); fireClick(keb); clickQueueMenuItem(mode, finish); return; }
+      if (keb) { clearInterval(iv); if (_navIv === iv) _navIv = null; fireClick(keb); clickQueueMenuItem(mode, finish); return; }
     }
     if (scroller && tries % 3 === 0) scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + scroller.clientHeight * 0.85);
     if (tries > 60) finish(false);
   }, 120);
-  function finish(ok) { playBusy = false; if (done) done(ok); }
+  function finish(ok) { clearInterval(iv); if (_navIv === iv) _navIv = null; playBusy = false; if (done) done(ok); }
 }
 
 // Public: queue/play-next an arbitrary track described by {albumId,title,num}. mode = "queue" | "next".
@@ -534,9 +571,11 @@ function radioPool(artistId) {
 function createRadioPlaylist(name, ids) {
   return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false").then(function (c) {
     var pid = String(c.id);
+    // Record + reclaim the previous radio BEFORE adding tracks: if addTracks fails mid-way, mob:radio still
+    // points at this new playlist, so the next radio run deletes it instead of orphaning it in the library.
+    var old = Q.storage.get("mob:radio", null); Q.storage.set("mob:radio", pid);   // keep one radio playlist
+    if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
     return addTracksBatched(pid, ids).then(function () {
-      var old = Q.storage.get("mob:radio", null); Q.storage.set("mob:radio", pid);   // keep one radio playlist
-      if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
       qToast("Radio started");
       navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });           // proven native play
     });
@@ -1308,7 +1347,10 @@ function searchScreen() {
           pl: (j.playlists && j.playlists.items) || [] };
         showFacetBar(true);
         paintResults();
-      }).catch(function () { showFacetBar(false); out.innerHTML = '<p class="qz-empty">Search failed. Try again.</p>'; });
+      }).catch(function () {
+        if (input.value.trim() !== q) return;           // stale: a newer query (or a clear) already owns the view
+        showFacetBar(false); out.innerHTML = '<p class="qz-empty">Search failed. Try again.</p>';
+      });
     }
     function commit(q) {                                 // Enter / history-pick = intentional search -> record + reset to All
       hxRecord(q);
@@ -1359,8 +1401,18 @@ function searchScreen() {
   } };
 }
 
+// per-tab client-side sort/filter chips (all over the already-loaded cache[which] array; zero extra fetches)
+var LIB_SORTS = {
+  albums:    [{ k: "orig", label: "Added" }, { k: "az", label: "A-Z" }, { k: "artist", label: "Artist" }, { k: "rel", label: "Release" }],
+  tracks:    [{ k: "orig", label: "Added" }, { k: "az", label: "A-Z" }, { k: "artist", label: "Artist" }],
+  artists:   [{ k: "az", label: "A-Z" }, { k: "orig", label: "Added" }],
+  playlists: [{ k: "orig", label: "Recent" }, { k: "az", label: "A-Z" }]
+};
+function libSortDefault(which) { return which === "artists" ? "az" : "orig"; }
+function libNameOf(o, which) { return (which === "artists" || which === "playlists") ? (o.name || "") : (o.title || o.name || ""); }
+function libIsHires(o) { return !!(o && (o.hires || o.hires_streamable || (o.maximum_bit_depth || 0) >= 24)); }
 function libraryScreen() {
-  var tab = "overview", cache = {}, term = "";  // cache[tab]=loaded items; term=client-side in-scope filter
+  var tab = "overview", cache = {}, term = "", sortState = {};  // cache[tab]=loaded items; term=in-scope filter; sortState[tab]={sort,hires,mine}
   var LOADERS = {
     // Overview = a mixed snapshot of everything saved (songs/artists/playlists/albums), so the Library
     // isn't empty-looking when a user favourites tracks but few albums. Default tab.
@@ -1384,6 +1436,18 @@ function libraryScreen() {
     if (!q) return items;
     return items.filter(function (o) { return hay(o, which).toLowerCase().indexOf(q) >= 0; });
   }
+  // text filter + the active sort chip + any filter chip, over a COPY (never mutate cache[which]).
+  function applyView(which, items) {
+    var list = filtered(which, items).slice();
+    var st = sortState[which] || {};
+    if ((which === "albums" || which === "tracks") && st.hires) list = list.filter(libIsHires);
+    if (which === "playlists" && st.mine && cachedMe) list = list.filter(function (o) { return o.owner && String(o.owner.id) === String(cachedMe); });
+    var s = st.sort || libSortDefault(which);
+    if (s === "az") list.sort(function (a, b) { return libNameOf(a, which).localeCompare(libNameOf(b, which)); });
+    else if (s === "artist") list.sort(function (a, b) { return artistName(a).localeCompare(artistName(b)) || libNameOf(a, which).localeCompare(libNameOf(b, which)); });
+    else if (s === "rel") list.sort(byNewestD);
+    return list;                                  // "orig" keeps the server's order (recently-added / recently-updated)
+  }
   function paint(body, which, items) {
     if (which === "overview") {
       var ov = items || {};
@@ -1400,7 +1464,7 @@ function libraryScreen() {
       body.innerHTML = out || '<p class="qz-empty">' + (term ? "No matches in your library." : "Nothing saved yet — heart some songs to see them here.") + "</p>";
       return;
     }
-    var list = filtered(which, items);
+    var list = applyView(which, items);
     if (which === "playlists") {   // M3: "New playlist" + featured-browse entry always lead the Playlists tab
       var head = newPlaylistBtnHTML() + featEntryHTML();
       body.innerHTML = head + (list.length ? gridHTML(list, "playlist")
@@ -1423,19 +1487,50 @@ function libraryScreen() {
       '<button class="qz-seg" data-lib="tracks">Songs</button>' +
       '<button class="qz-seg" data-lib="artists">Artists</button>' +
       '<button class="qz-seg" data-lib="playlists">Playlists</button></div>' +
+      '<div class="qz-libchips" hidden></div>' +
       '<div class="qz-libbody"></div>';
-    var body = el.querySelector(".qz-libbody"), input = el.querySelector(".qz-libsearch");
+    var body = el.querySelector(".qz-libbody"), input = el.querySelector(".qz-libsearch"), chipsWrap = el.querySelector(".qz-libchips");
     input.value = term;
+    // sort/filter chips: hidden on Overview, otherwise the tab's sorts + any filter (Hi-Res / By you). All client-side.
+    function renderChips(which) {
+      if (!chipsWrap) return;
+      if (which === "overview") { chipsWrap.hidden = true; chipsWrap.innerHTML = ""; return; }
+      var st = sortState[which] || (sortState[which] = { sort: libSortDefault(which), hires: false, mine: false });
+      var html = (LIB_SORTS[which] || []).map(function (s) {
+        return '<button class="qz-lchip' + (st.sort === s.k ? " is-on" : "") + '" type="button" data-lsort="' + s.k + '">' + esc(s.label) + "</button>";
+      }).join("");
+      if (which === "albums" || which === "tracks") html += '<button class="qz-lchip qz-lchip--f' + (st.hires ? " is-on" : "") + '" type="button" data-lfilter="hires">Hi-Res</button>';
+      if (which === "playlists" && cachedMe) html += '<button class="qz-lchip qz-lchip--f' + (st.mine ? " is-on" : "") + '" type="button" data-lfilter="mine">By you</button>';
+      chipsWrap.innerHTML = html; chipsWrap.hidden = false;
+    }
+    chipsWrap.addEventListener("click", function (e) {
+      var c = e.target.closest("[data-lsort],[data-lfilter]"); if (!c) return;
+      var st = sortState[tab] || (sortState[tab] = { sort: libSortDefault(tab), hires: false, mine: false });
+      if (c.hasAttribute("data-lsort")) st.sort = c.getAttribute("data-lsort");
+      else { var fk = c.getAttribute("data-lfilter"); if (fk === "hires") st.hires = !st.hires; else if (fk === "mine") st.mine = !st.mine; }
+      renderChips(tab);
+      if (cache[tab]) paint(body, tab, cache[tab]);
+    });
+    me().then(function (uid) { if (uid && tab === "playlists") renderChips(tab); });   // reveal "By you" once the user id resolves
+    function libEmpty(which, items) {
+      if (!items) return true;
+      if (which === "overview") return !["tracks", "artists", "playlists", "albums"].some(function (k) { return (items[k] || []).length; });
+      return !items.length;
+    }
     function load(which) {
       tab = which;
       [].forEach.call(el.querySelectorAll(".qz-seg"), function (s) { s.classList.toggle("is-on", s.getAttribute("data-lib") === which); });
+      renderChips(which);
       if (cache[which]) { paint(body, which, cache[which]); return; }   // cached -> instant, no refetch
       loading(body);
       LOADERS[which]().then(function (items) {
-        cache[which] = items || [];
         if (tab !== which) return;                                      // user switched away mid-fetch
+        // Never cache an empty/failed load (favorites() catches errors to []): a transient failure would
+        // otherwise pin "Nothing saved yet" for the whole session. Render it, but leave it re-fetchable.
+        if (libEmpty(which, items)) { paint(body, which, items || (which === "overview" ? {} : [])); return; }
+        cache[which] = items;
         paint(body, which, cache[which]);
-      });
+      }).catch(function () { if (tab === which) paint(body, which, which === "overview" ? {} : []); });
     }
     el.querySelector(".qz-segbar").addEventListener("click", function (e) { var s = e.target.closest("[data-lib]"); if (s) load(s.getAttribute("data-lib")); });
     body.addEventListener("click", function (e) { var m = e.target.closest(".qz-ovmore"); if (m) { e.preventDefault(); e.stopPropagation(); load(m.getAttribute("data-lib")); } });   // Overview "See all" -> that tab
@@ -1444,6 +1539,32 @@ function libraryScreen() {
   } };
 }
 
+// "About this release": tech specs, credits and the editorial review Qobuz is known for — all from the SINGLE
+// album/get response already in flight (no extra fetch). Every field renders only when present.
+function albumAboutHTML(o) {
+  var chips = [];
+  var q = qFmt(o.maximum_bit_depth, o.maximum_sampling_rate);
+  if (q) chips.push('<span class="qz-about__chip qz-about__chip--hr">' + esc(q) + "</span>");
+  else if (o.hires || (o.maximum_bit_depth || 0) >= 24) chips.push('<span class="qz-about__chip qz-about__chip--hr">Hi-Res</span>');
+  ((o.awards && o.awards.length) ? o.awards : []).forEach(function (aw) {
+    var nm = aw && (aw.name || aw.award_slug); if (nm) chips.push('<span class="qz-about__chip qz-about__chip--aw">' + esc(String(nm).replace(/[-_]+/g, " ")) + "</span>");
+  });
+  var rows = [];
+  function row(k, v) { if (v) rows.push('<div class="qz-about__row"><span class="qz-about__k">' + esc(k) + '</span><span class="qz-about__v">' + esc(v) + "</span></div>"); }
+  row("Label", o.label && o.label.name);
+  row("Genre", o.genre && o.genre.name);
+  row("Released", o.release_date_original || "");
+  if (o.tracks_count) row("Tracks", String(o.tracks_count));
+  if (o.duration) row("Duration", fmtLong(o.duration));
+  row("Copyright", o.copyright);
+  var rev = stripHtml(o.description || "");
+  var revHTML = rev ? '<div class="qz-about__rev' + (rev.length > 260 ? " is-clamp" : "") + '">' + esc(rev) + "</div>" : "";
+  if (!chips.length && !rows.length && !revHTML) return "";
+  return '<section class="qz-sec qz-about"><h3 class="qz-shelf__h">About this release</h3>' +
+    (chips.length ? '<div class="qz-about__specs">' + chips.join("") + "</div>" : "") +
+    (rows.length ? '<div class="qz-about__meta">' + rows.join("") + "</div>" : "") +
+    revHTML + "</section>";
+}
 function detailScreen(kind, id) {
   return { title: "", mount: function (el) {
     loading(el);
@@ -1462,7 +1583,20 @@ function detailScreen(kind, id) {
         (kind === "album" ? favBtnHTML("album", id, "qz-dhead__fav")
           : (kind === "playlist" && o.owner && String(o.owner.id) !== String(cachedMe) ? favBtnHTML("playlist", id, "qz-dhead__fav") : "")) +
         "</div>" +
-        "</div>" + trackListHTML(items, { kind: kind, id: id, cover: img });   // [M2] ctx.cover lets album-detail rows (no per-track cover) fall back to the album art
+        "</div>" + trackListHTML(items, { kind: kind, id: id, cover: img }) +   // [M2] ctx.cover lets album-detail rows (no per-track cover) fall back to the album art
+        (kind === "album" ? albumAboutHTML(o) + '<div class="qz-dmorehost"></div>' : "");
+      // (review tap-to-expand is handled by the delegated onContentTap, bound once on contentEl)
+      if (kind === "album" && o.artist && o.artist.id) {
+        // dead-end fix: a "More from {artist}" rail so the album page keeps a session going (lazy, self-removing on empty).
+        // Capture THIS mount's host node; if the user navigated away before the fetch resolved it's disconnected -> skip
+        // (so a slow fetch can't inject the previous album's rail onto whatever page is showing now).
+        var moreHost = el.querySelector(".qz-dmorehost");
+        artistAlbumsD(o.artist.id).then(function (more) {
+          if (!moreHost || !moreHost.isConnected) return;
+          more = dedupeById((more || []).filter(function (x) { return String(x.id) !== String(id); })).sort(byNewestD).slice(0, 12);
+          if (more.length) moreHost.innerHTML = shelfHTML("More from " + (who || "this artist"), more, "album");
+        });
+      }
     }).catch(function () { el.innerHTML = '<p class="qz-empty">Couldn\'t load this ' + kind + ".</p>"; });
   } };
 }
@@ -1471,8 +1605,12 @@ function artistScreen(id) {
   return { title: "", mount: function (el) {
     loading(el);
     artistGet(id).then(function (a) {
-      var albums = (a.albums && a.albums.items) || [], tracks = (a.tracks && a.tracks.items) || [];
+      var albums = dedupeById((a.albums && a.albums.items) || []).sort(byNewestD);   // discography newest-first
+      var tracks = (a.tracks && a.tracks.items) || [];
       var img = cover(a);
+      var bioRaw = a.biography ? stripHtml(a.biography.content || a.biography.summary || a.biography) : "";
+      var bioHTML = bioRaw ? '<section class="qz-sec qz-about"><h3 class="qz-shelf__h">Biography</h3>' +
+        '<div class="qz-about__rev' + (bioRaw.length > 260 ? " is-clamp" : "") + '">' + esc(bioRaw) + "</div></section>" : "";
       el.innerHTML =
         '<div class="qz-dhead qz-dhead--artist">' +
         '<div class="qz-dhead__art qz-dhead__art--round">' + (img ? '<img src="' + esc(img) + '">' : ph("artist")) + "</div>" +
@@ -1480,7 +1618,17 @@ function artistScreen(id) {
         '<div class="qz-dhead__actions">' + favBtnHTML("artist", id, "qz-dhead__fav") + "</div>" +
         "</div>" +
         (tracks.length ? '<section class="qz-sec"><h3 class="qz-shelf__h">Top tracks</h3>' + trackListHTML(tracks.slice(0, 10), null) + "</section>" : "") +
-        (albums.length ? '<section class="qz-sec"><h3 class="qz-shelf__h">Albums</h3>' + gridHTML(albums, "album") + "</section>" : "");
+        '<div class="qz-fanshost"></div>' +
+        (albums.length ? '<section class="qz-sec"><h3 class="qz-shelf__h">Discography</h3>' + gridHTML(albums, "album") + "</section>" : "") +
+        bioHTML;
+      // (bio tap-to-expand is handled by the delegated onContentTap, bound once on contentEl)
+      // "Fans also like" rail (lazy; capture THIS mount's host + bail if navigated away, so it can't inject onto another page)
+      var fansHost = el.querySelector(".qz-fanshost");
+      similarArtistsD(id).then(function (sim) {
+        if (!fansHost || !fansHost.isConnected) return;
+        sim = dedupeById(sim || []).slice(0, 12);
+        if (sim.length) fansHost.innerHTML = shelfHTML("Fans also like", sim, "artist");
+      });
     }).catch(function () { el.innerHTML = '<p class="qz-empty">Couldn\'t load this artist.</p>'; });
   } };
 }
@@ -1633,7 +1781,7 @@ function stgApplyToggleEffect(key, on) {
     var cover = null; try { if (hasTrack()) cover = (Q.player.getTrack() || {}).cover || null; } catch (e) {}
     applyTint(cover);
   } else if (key === "mobile-wbw") {
-    if (lyState.open) lyRender();   // re-render open lyrics in the new (line vs word) mode
+    if (lyState.open && !lyraActive()) { lyState.active = -1; lyRender(); }   // homegrown only; Lyra always renders word-by-word so the toggle is a no-op for it (and lyRender would wipe Lyra's DOM)
   } else if (key === "feat-lyrics") {
     document.documentElement.classList.toggle("qz-hide-lyrics", !on);
     if (!on && lyState.open) closeLyrics();
@@ -1784,15 +1932,21 @@ function qzFindLogoutItem() {
   }
   return null;
 }
+function qzAuthed() { try { var u = Q.getState().user || {}; return !!(u.token || (u.infos && u.infos.id) || u.id); } catch (e) { return true; } }
 function qzConfirmNativeLogout() {                                   // click Qobuz's confirm-modal validate button (last .bt6)
-  var tries = 0;
+  var tries = 0, clicked = false;
   var iv = setInterval(function () {
     tries++;
-    try {
-      var btns = document.querySelectorAll(".modal-footer .bt6, .modal-dialog .bt6, .modal .bt6");
-      if (btns && btns.length >= 2) { clearInterval(iv); fireClick(btns[btns.length - 1]); qToast("Logged out"); return; }
-    } catch (e) {}
-    if (tries > 50) clearInterval(iv);                              // no confirm modal (direct logout / other UI) -> leave it
+    if (!clicked) {
+      try {
+        var btns = document.querySelectorAll(".modal-footer .bt6, .modal-dialog .bt6, .modal .bt6");
+        if (btns && btns.length >= 2) { fireClick(btns[btns.length - 1]); clicked = true; }
+      } catch (e) {}
+    }
+    // Only declare success once auth ACTUALLY clears (don't toast unconditionally on the wrong dialog), then tear
+    // our full-screen overlay down so the native login page is reachable again - otherwise the app locks the user out.
+    if (!qzAuthed()) { clearInterval(iv); qToast("Logged out"); try { unmount(); } catch (e) {} return; }
+    if (tries > 80) clearInterval(iv);                              // ~4.8s: no confirm / didn't clear -> leave it, no false toast
   }, 60);
 }
 function qzLogoutFallback() {
@@ -2080,6 +2234,10 @@ function setTab(id) {
 
 // one delegated tap handler for every card / row / play button in the content area
 function onContentTap(e) {
+  // tap an editorial review / artist bio to expand it (delegated here, bound ONCE on contentEl, so it can't
+  // accumulate per screen visit). Not a data-act element, so handle it before the data-act dispatch.
+  var rv = e.target.closest && e.target.closest(".qz-about__rev.is-clamp");
+  if (rv) { rv.classList.toggle("is-open"); return; }
   var t = e.target.closest("[data-act]"); if (!t) return;
   var act = t.getAttribute("data-act"), id = t.getAttribute("data-id");
   if (act === "album") go(detailScreen("album", id));
@@ -2115,6 +2273,12 @@ function flashTap(el) { el.classList.add("is-loading"); setTimeout(function () {
 //   renderTransport()  - cheap; flips just the play/pause glyph when the state flips
 //   tickProgress()     - the 500ms poll; moves the progress fill + time labels only
 var lastTrackId = null, lastPlaying = null;
+// Bug-fix (lyrics/meta cache poison): the store's currentTrack.id flips BEFORE React repaints the .player bar,
+// so a synchronous getTrack() during that window pairs the NEW id with the PREVIOUS track's title/artist (a torn
+// scrape). onChange already defers past that window; tickProgress' own detector must too, or it feeds the torn
+// scrape into renderTrack->lyLoad and pins the wrong lyrics onto the new track for the whole session. These two
+// vars let the tick detector require a scrape that's stable across two ticks (same guarantee onChange gives).
+var _tickSettleId = null, _tickSettleTitle = "", _tickSettleN = 0;
 function hasTrack() { try { var ct = Q.getState().player.currentTrack; return !!(ct && ct.id); } catch (e) { return false; } }
 function curDurMs() { try { return (Q.getState().player.currentTrack || {}).duration || 0; } catch (e) { return 0; } } // duration is ms here
 function isPlaying() { try { return Q.player.isPlaying(); } catch (e) { return false; } }
@@ -2261,14 +2425,34 @@ function renderTransport(force) {
 }
 function tickProgress() {
   if (!mounted) return;
-  // detect a track change here too (covers cases onChange might miss), then progress + transport
+  // detect a track change here too (covers cases onChange might miss), then progress + transport.
+  // But NEVER paint from a torn scrape: the settle-gated onChange (see mount) owns the normal track-change
+  // paint and sets lastTrackId itself. This backstop only fires when the scrape is settled - null id (nothing
+  // to scrape), or a title that's non-empty, matches the current store id, and is stable across two ticks.
   var id = null; try { var ct = Q.getState().player.currentTrack; id = ct && ct.id; } catch (e) {}
-  if (id !== lastTrackId) { lastTrackId = id; renderTrack(); }
+  if (id !== lastTrackId) {
+    if (id == null) { lastTrackId = id; _tickSettleId = null; _tickSettleTitle = ""; _tickSettleN = 0; renderTrack(); }
+    else {
+      var stk = null; try { stk = Q.player.getTrack(); } catch (e) {}
+      var stitle = (stk && stk.id === id && stk.title) ? stk.title : "";
+      if (_tickSettleId !== id) { _tickSettleId = id; _tickSettleTitle = stitle; _tickSettleN = 1; }
+      else {
+        _tickSettleN++;
+        var stableTitle = stitle && stitle === _tickSettleTitle;   // same non-empty title 2 ticks running = settled (not torn)
+        _tickSettleTitle = stitle;
+        // Paint when the scrape SETTLES (stable non-empty title), OR when it stays EMPTY for ~1s: a genuinely-empty
+        // scrape must still paint so renderTrack's trackMetaCache/metaFromApi API fallback backfills (onChange is
+        // unreliable on autoplay advance, so this backstop is the real paint path there). Only the torn scrape
+        // (new id + previous non-empty title) is held off, by the 2-tick stability gate.
+        if (stableTitle || _tickSettleN >= 4) { lastTrackId = id; renderTrack(); }
+      }
+    }
+  }
   renderTransport(false);
   syncQueue();                        // refresh shuffle/repeat + queue panel when the store moves
   if (!hasTrack()) return;
   var pos = 0; try { pos = Q.player.getPositionMs(); } catch (e) {}
-  if (lyState.open) lyTick(pos);
+  if (lyState.open && !lyraActive()) lyTick(pos);   // Lyra drives its own RAF; only the homegrown renderer needs poll-ticks
   var dur = curDurMs(), frac = dur ? Math.max(0, Math.min(1, pos / dur)) : 0;
   if (miniEl) { var mb = miniEl.querySelector(".qz-mini__bar > i"); if (mb) mb.style.width = (frac * 100) + "%"; }
   // skip the NP-bar write while the user is scrubbing it (and briefly after) so the poll doesn't fight the finger
@@ -2287,8 +2471,8 @@ function closeNP() { if (npEl) npEl.classList.remove("is-open"); closeLyrics(); 
 // third-party provider name reaches the client. Our own WORD-BY-WORD karaoke renderer: active line brightens,
 // each word lights as it's sung, smooth auto-scroll; line-sync + plain are fallbacks. Swappable source via LYRICS_SRC.
 var LYRICS_SRC = "https://api.qobuzify.app/v1/lyrics";
-var lyState = { id: null, lines: null, plain: null, active: -1, open: false, userHold: 0, selfScrollUntil: 0, hasTr: false, showTr: false };
-var lyCache = {}; // trackId -> {lines}|{plain}|{none:true}
+var lyState = { id: null, key: "", lines: null, plain: null, active: -1, open: false, userHold: 0, selfScrollUntil: 0, hasTr: false, showTr: false };
+var lyCache = {}; // trackId -> {lines|plain|none, _key}   (_key = "title|artist" that produced it, for torn-scrape validation)
 
 // --- M4 lyrics affordances: translate glyph + recenter target (monochrome, currentColor) ---
 var LY_TR_IC = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 5h7M7.5 5v1.2c0 3.4-2 6.3-4.5 7.8M5 9.2c.9 2 2.6 3.6 4.8 4.4M13 20l3.5-9 3.5 9M14.2 17h4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -2338,20 +2522,60 @@ function lyApplyTrClass() {
   var lab = btn.querySelector(".qz-ly__tr-lab"); if (lab) lab.textContent = lyState.showTr ? "Original" : "Translation";
 }
 function lyToggleTr() { lyState.showTr = !lyState.showTr; lyApplyTrClass(); }  // showTr persists across tracks (session pref)
+// "Wrong lyrics?" pill (Lyra's onRefetch): re-resolve EXCLUDING the current provider, swap in the replacement.
+// Returns a Promise<toast-string> per Lyra's contract.
+function lyRefetch() {
+  var tk = null; try { tk = Q.player.getTrack(); } catch (e) {}
+  if (!tk || !tk.title || !tk.artist) return Promise.resolve("No track to refetch");
+  var u = LYRICS_SRC.replace("/v1/lyrics", "/v1/refetch") + "?qz=1&name=" + encodeURIComponent(tk.title) + "&artist=" + encodeURIComponent(tk.artist);
+  if (tk.album) u += "&album=" + encodeURIComponent(tk.album);
+  if (tk.durationMs) u += "&durationMs=" + tk.durationMs;
+  return fetch(u).then(function (r) {
+    if (r.status === 429) return "Try again in a moment";
+    return r.json().then(function (pr) {
+      if (pr && pr.ok && pr.alternative && pr.lyrics) {
+        var key = (tk.title || "") + "|" + (tk.artist || "");
+        var ex = lyExtract(pr.lyrics, null) || { none: true }; ex._key = key;
+        lyCache[tk.id] = { raw: pr.lyrics, ex: ex, _key: key };   // replace the cached entry
+        if (_lyra) { try { _lyra.load(pr.lyrics); _lyra.start(); } catch (e) {} }
+        return "Switched to a different version";
+      }
+      if (pr && pr.alternative === false) return "That's the only version available";
+      return "Couldn't check for another version";
+    });
+  }).catch(function () { return "Couldn't check for another version"; });
+}
+function lyFetchOnce(u, ms) {
+  return Promise.race([
+    fetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+    new Promise(function (res) { setTimeout(function () { res("__t"); }, ms); })   // "__t" sentinel = timed out (distinct from a null response)
+  ]);
+}
 function lyFetch(tk) {
   if (!tk || !tk.title || !tk.artist) return Promise.resolve(null);
   var u = LYRICS_SRC + "?qz=1&name=" + encodeURIComponent(tk.title) + "&artist=" + encodeURIComponent(tk.artist);
   if (tk.album) u += "&album=" + encodeURIComponent(tk.album);
   if (tk.durationMs) u += "&durationMs=" + tk.durationMs;
-  return fetch(u).then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) {
-      if (!(j && j.ok && j.hasLyrics && j.lyrics)) return null;
-      // NOTE: our proxy does NOT return a translation today (verified). This just future-proofs: read it
-      // from wherever the server might add it so the toggle lights up automatically without a client ship.
-      var tr = j.translation || j.translations || (j.lyrics && j.lyrics.Translation) || null;
-      return { ly: j.lyrics, tr: tr };
-    })
-    .catch(function () { return null; });
+  function shape(j) {
+    if (!(j && j.ok && j.hasLyrics && j.lyrics)) return null;
+    // NOTE: our proxy does NOT return a translation today (verified). This just future-proofs: read it
+    // from wherever the server might add it so the toggle lights up automatically without a client ship.
+    var tr = j.translation || j.translations || (j.lyrics && j.lyrics.Translation) || null;
+    return { ly: j.lyrics, tr: tr };
+  }
+  // A cold (uncached) resolve can take 6-9s server-side; the Worker still finishes + caches even if we give up,
+  // so a retry usually lands on the warm cache (this is why "skip away + back" worked - we now do it ourselves).
+  // Retry only on a timeout / network error / transient server flag; a genuine no-lyrics ({hasLyrics:false}) has
+  // no recheck/errored and shapes to null immediately.
+  var retriable = function (j) { return j === "__t" || j == null || j.recheck || j.errored; };
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  return lyFetchOnce(u, 11000).then(function (j) {
+    if (!retriable(j)) return shape(j);
+    return wait(1800).then(function () { return lyFetchOnce(u, 12000); }).then(function (j2) {
+      if (!retriable(j2)) return shape(j2);
+      return wait(2500).then(function () { return lyFetchOnce(u, 12000); }).then(shape);
+    });
+  });
 }
 // structured ly -> {lines:[{t,text,words,tr}], hasTr} (synced) or {plain:[...]} (untimed). Times in ly are SECONDS.
 function lyExtract(ly, tr) {
@@ -2377,17 +2601,70 @@ function lyExtract(ly, tr) {
   if (ly.Lines && ly.Lines.length) return { plain: ly.Lines.map(function (l) { return (l.Text || "").trim(); }).filter(Boolean) };
   return null;
 }
-function lyLoad(tk) {
-  if (!tk || !tk.id) { lyState.id = null; lyState.lines = lyState.plain = null; lyState.hasTr = false; lyState.active = -1; lyRender(); return; }
-  if (lyState.id === tk.id) return;
-  lyState.id = tk.id; lyState.lines = lyState.plain = null; lyState.hasTr = false; lyState.active = -1;
-  var cached = lyCache[tk.id];
-  if (cached) { lyApply(tk.id, cached); return; }
-  if (lyBody) lyBody.innerHTML = '<div class="qz-load"><span class="qz-spin"></span></div>';
-  lyFetch(tk).then(function (r) { var ex = lyExtract(r && r.ly, r && r.tr) || { none: true }; lyCache[tk.id] = ex; lyApply(tk.id, ex); });
+// ---- Lyra karaoke renderer (bundled into the Android payload as window.Lyra; see android/bake.js). PREFERRED
+// over the homegrown lyRender/lyTick below. Lyra self-drives (its own RAF), owns scroll + tap-to-seek, and eats
+// the raw {Type,Content} lyric object via r.load(). If Lyra is absent or fails to mount on this WebView we fall
+// back to the homegrown path automatically (LYRA_ON flips false). Mount = lyBody, confined by CSS .qz-ly--lyra.
+var LYRA_ON = false; try { LYRA_ON = !!(window.Lyra && window.Lyra.create); } catch (e) {}
+var _lyra = null;
+function lyraActive() { return !!(LYRA_ON && _lyra); }
+function lyEnsureLyra() {
+  if (_lyra || !LYRA_ON || !lyBody) return _lyra;
+  var panel = lyBody.parentNode;   // .qz-ly
+  try {
+    if (panel) panel.classList.add("qz-ly--lyra");   // CSS strips lyBody's homegrown padding/scroll + hides recenter/tr controls
+    lyBody.innerHTML = "";
+    _lyra = window.Lyra.create({
+      mount: lyBody,
+      getPos: function () { try { return Q.player.getPositionMs(); } catch (e) { return 0; } },
+      isPlaying: function () { try { return Q.player.isPlaying(); } catch (e) { return false; } },
+      onSeek: function (ms) { seekToMs(ms); },
+      onRefetch: lyRefetch,
+      settings: { background: false, closeButton: false, glow: true, cascade: true, depthBlur: true,
+                  fontFamily: '"Qobuz Sans",-apple-system,system-ui,"Segoe UI",Roboto,sans-serif' }
+    });
+  } catch (e) { _lyra = null; LYRA_ON = false; if (panel) panel.classList.remove("qz-ly--lyra"); }
+  return _lyra;
 }
-function lyApply(id, ex) {
+function lyLoad(tk) {
+  if (!tk || !tk.id) {
+    lyState.id = null; lyState.key = ""; lyState.lines = lyState.plain = null; lyState.hasTr = false; lyState.active = -1;
+    if (lyraActive()) { try { _lyra.stop(); _lyra.status(""); } catch (e) {} } else lyRender();
+    return;
+  }
+  var key = (tk.title || "") + "|" + (tk.artist || "");
+  if (lyState.id === tk.id && lyState.key === key) return;     // same track AND same scraped identity -> nothing to do
+  lyState.id = tk.id; lyState.key = key; lyState.lines = lyState.plain = null; lyState.hasTr = false; lyState.active = -1;
+  var keyKnown = !!(tk.title && tk.artist);
+  var cached = lyCache[tk.id];
+  // Use the cache UNLESS we have a known identity that disagrees with the identity that produced it (i.e. the
+  // cache was written from a torn scrape). That lets a later settled load overwrite a poisoned entry.
+  if (cached && !(keyKnown && cached._key && cached._key !== key)) { lyApply(tk.id, cached); return; }
+  if (!lyraActive() && lyBody) lyBody.innerHTML = '<div class="qz-load"><span class="qz-spin"></span></div>';
+  lyFetch(tk).then(function (r) {
+    if (lyState.id !== tk.id || lyState.key !== key) return;   // superseded by a newer/settled load; don't cache under a stale identity
+    var raw = (r && r.ly) || null;
+    var entry = { raw: raw, ex: lyExtract(raw, r && r.tr) || { none: true }, _key: key };
+    lyCache[tk.id] = entry; lyApply(tk.id, entry);
+  });
+}
+function lyApply(id, entry) {
   if (lyState.id !== id) return;                               // track changed while fetching
+  var ex = entry.ex || entry;                                  // tolerate an older cache shape (the ex object directly)
+  if (LYRA_ON) {
+    var r = lyEnsureLyra();
+    if (r) {
+      var raw = entry.raw || null;
+      if (raw) {
+        try { r.load(raw); r.start(); return; }
+        catch (e) {   // Lyra load threw -> fully revert to homegrown (destroy + drop the .qz-ly--lyra CSS, else the fallback can't scroll)
+          LYRA_ON = false;
+          if (_lyra) { try { _lyra.destroy(); } catch (x) {} _lyra = null; }
+          var pnl = lyBody && lyBody.parentNode; if (pnl) pnl.classList.remove("qz-ly--lyra");
+        }
+      } else { try { r.status("No lyrics for this track"); return; } catch (e) {} }
+    }
+  }
   lyState.lines = ex.lines || null; lyState.plain = ex.plain || null; lyState.hasTr = !!ex.hasTr; lyState.active = -1; lyRender();
 }
 function lyRender() {
@@ -2430,8 +2707,14 @@ function lyTick(posMs) {
   // recenter pill visibility tracks the hold window (auto-hides when the hold lapses)
   if (lyBody.parentNode) lyBody.parentNode.classList.toggle("is-holding", Date.now() < lyState.userHold);
 }
-function openLyrics() { if (!hasTrack() || !npEl) return; closeQueue(); lyState.open = true; npEl.classList.add("qz-np--lyrics"); lyLoad(Q.player.getTrack() || {}); var p = 0; try { p = Q.player.getPositionMs(); } catch (e) {} lyTick(p); }
-function closeLyrics() { lyState.open = false; if (npEl) npEl.classList.remove("qz-np--lyrics"); }
+function openLyrics() {
+  if (!hasTrack() || !npEl) return;
+  closeQueue(); lyState.open = true; npEl.classList.add("qz-np--lyrics");
+  lyLoad(Q.player.getTrack() || {});
+  if (lyraActive()) { try { _lyra.start(); _lyra.resync(); } catch (e) {} }   // closeLyrics stopped its RAF; restart + re-align (start is a no-op if already running)
+  else { var p = 0; try { p = Q.player.getPositionMs(); } catch (e) {} lyTick(p); }
+}
+function closeLyrics() { lyState.open = false; if (npEl) npEl.classList.remove("qz-np--lyrics"); if (lyraActive()) { try { _lyra.stop(); } catch (e) {} } }
 
 // ------------------------------------------------------------------ QUEUE PANEL + SHUFFLE/REPEAT SYNC
 // Reads the live play queue straight from the Redux store (playqueue slice) and shows current + upcoming
@@ -2540,16 +2823,18 @@ function syncQueue() {
 // Sample the cover, take a saturation-weighted dominant color, darken it to the beta's lightness band, and wash
 // the whole app + Now Playing with it (via --qz-tint-* CSS vars). CORS-guarded: if the CDN taints the canvas we
 // fall back to a neutral near-black so it never breaks.
-var _tintCache = {}, _tintCanvas = null;
+var _tintCache = {}, _tintCanvas = null, _tintSeq = 0;
 function applyTint(url) {
   // Settings > Appearance "Album-art tint" toggle (mobile-tint): when off, wash the app in the neutral
   // near-black fallback and skip the canvas colour-sampling entirely.
+  var seq = ++_tintSeq;   // any image load still in flight from a previous track is now stale
   if (!stgTogOn("mobile-tint")) { setTintVars(null); return; }
   if (!url) { setTintVars(null); return; }
   if (_tintCache[url]) { setTintVars(_tintCache[url]); return; }
   var img = new Image();
   img.crossOrigin = "anonymous";
   img.onload = function () {
+    if (seq !== _tintSeq) return;   // a newer track's tint superseded this load - don't repaint the old colour
     try {
       var n = 24;
       if (!_tintCanvas) _tintCanvas = document.createElement("canvas");
@@ -2565,10 +2850,10 @@ function applyTint(url) {
         R += r * w; G += g * w; B += b * w; Wt += w;
       }
       var stops = tintStops(R / Wt, G / Wt, B / Wt);
-      _tintCache[url] = stops; setTintVars(stops);
-    } catch (e) { setTintVars(null); }
+      _tintCache[url] = stops; if (seq === _tintSeq) setTintVars(stops);
+    } catch (e) { if (seq === _tintSeq) setTintVars(null); }
   };
-  img.onerror = function () { setTintVars(null); };
+  img.onerror = function () { if (seq === _tintSeq) setTintVars(null); };
   img.src = url;
 }
 function tintStops(r, g, b) {
@@ -2927,10 +3212,31 @@ function buildShell() {
       flashTap(row); queueJumpTo(idx);
     });
   }
-  // ignore our OWN smooth-scroll; real gestures (wheel/drag) always count as a manual hold
-  lyBody.addEventListener("scroll", function () { if (Date.now() < lyState.selfScrollUntil) return; lyHold(); });
-  lyBody.addEventListener("wheel", lyHold, { passive: true });
-  lyBody.addEventListener("touchmove", lyHold, { passive: true });
+  // Distinguish a real user gesture from our own smooth-scroll: mark a short window on touch/wheel, and only
+  // let a raw `scroll` event count as a manual hold when it lands inside that window. Otherwise a long smooth
+  // auto-scroll's momentum tail (which outlasts selfScrollUntil) was being misread as a user drag -> 3.5s freeze.
+  var _lyTouchUntil = 0;
+  function _lyUserGesture() { _lyTouchUntil = Date.now() + 1200; lyHold(); }
+  lyBody.addEventListener("touchstart", function () { _lyTouchUntil = Date.now() + 1200; }, { passive: true });
+  lyBody.addEventListener("wheel", _lyUserGesture, { passive: true });
+  lyBody.addEventListener("touchmove", _lyUserGesture, { passive: true });
+  lyBody.addEventListener("scroll", function () {
+    if (Date.now() < lyState.selfScrollUntil) return;   // our own smooth scroll
+    if (Date.now() > _lyTouchUntil) return;             // no recent real gesture -> this is the animation tail, ignore
+    lyHold();
+  });
+  // tap a synced line to jump playback there (word-by-word: tap a word to land right on that word). Uses `click`,
+  // which the browser suppresses after a scroll-drag, so scrolling the lyrics never fires an accidental seek.
+  lyBody.addEventListener("click", function (e) {
+    if (!lyState.lines || !e.target.closest) return;
+    var line = e.target.closest(".qz-ly__line"); if (!line) return;   // plain (untimed) lyrics have no .qz-ly__line
+    var w = e.target.closest(".qz-ly__w"), ms = null;
+    if (w && w.getAttribute("data-wt") != null) ms = +w.getAttribute("data-wt");
+    else { var i = +line.getAttribute("data-i"); if (lyState.lines[i]) ms = lyState.lines[i].t; }
+    if (ms == null || isNaN(ms)) return;
+    seekToMs(ms); lyState.userHold = 0; lyCenter(line, true);         // seek, then resume auto-scroll from here
+    if (lyBody.parentNode) lyBody.parentNode.classList.remove("is-holding");
+  });
   lyBody.parentNode.querySelector(".qz-ly__tr-toggle").addEventListener("click", lyToggleTr);
   lyBody.parentNode.querySelector(".qz-ly__recenter").addEventListener("click", lyRecenter);
   bindSeek(npEl.querySelector(".qz-np__bar"));
@@ -3043,6 +3349,22 @@ html.qz-has-track .qz-content{ padding-bottom:calc(var(--nav-h) + var(--mini-h) 
 /* shelves + cards */
 .qz-shelf, .qz-sec{ margin:6px 0 24px; }
 .qz-shelf__h{ font-size:17px; font-weight:700; margin:0 0 12px; padding:0 16px; letter-spacing:-.2px; color:var(--qz-c1); }
+/* About this release / Biography */
+.qz-about{ padding:0 20px; }
+.qz-about .qz-shelf__h{ padding:0; }
+.qz-about__specs{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.qz-about__chip{ font:600 12px/1 var(--qz-font); padding:7px 11px; border-radius:8px; letter-spacing:.02em; }
+.qz-about__chip--hr{ color:var(--qz-brand,#dea442); background:rgba(222,164,66,.14); }
+.qz-about__chip--aw{ color:rgba(255,255,255,.82); background:rgba(255,255,255,.08); text-transform:capitalize; }
+.qz-about__meta{ display:flex; flex-direction:column; gap:9px; margin-bottom:14px; }
+.qz-about__row{ display:flex; gap:12px; font-size:13.5px; line-height:1.35; }
+.qz-about__k{ flex:0 0 92px; color:var(--qz-c-dim); }
+.qz-about__v{ flex:1 1 auto; min-width:0; color:var(--qz-c2); }
+.qz-about__rev{ font-size:14px; line-height:1.62; color:var(--qz-c2); white-space:pre-line; }
+.qz-about__rev.is-clamp{ display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; position:relative; }
+.qz-about__rev.is-clamp::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:2.6em; background:linear-gradient(transparent, var(--qz-tint-bot,#0a0a0c)); pointer-events:none; }
+.qz-about__rev.is-clamp.is-open{ display:block; -webkit-line-clamp:none; overflow:visible; }
+.qz-about__rev.is-clamp.is-open::after{ display:none; }
 .qz-ovh{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:0 16px; margin:0 0 12px; }
 .qz-ovh .qz-shelf__h{ margin:0; padding:0; }
 .qz-ovmore{ flex:0 0 auto; background:none; color:var(--qz-brand); font-size:13px; font-weight:600; padding:2px 0; }
@@ -3051,6 +3373,14 @@ html.qz-has-track .qz-content{ padding-bottom:calc(var(--nav-h) + var(--mini-h) 
 .qz-libsegs{ overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
 .qz-libsegs::-webkit-scrollbar{ display:none; }
 .qz-libsegs .qz-seg{ flex:0 0 auto; padding:0 14px; }
+/* library sort/filter chips (client-side) */
+.qz-libchips{ display:flex; gap:8px; padding:0 16px 14px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+.qz-libchips::-webkit-scrollbar{ display:none; }
+.qz-lchip{ flex:0 0 auto; height:30px; padding:0 13px; border-radius:15px; font:600 12.5px/30px var(--qz-font); letter-spacing:.01em;
+  color:rgba(255,255,255,.72); background:rgba(255,255,255,.07); border:1px solid transparent; white-space:nowrap; cursor:pointer; }
+.qz-lchip.is-on{ color:#0b0f16; background:#fff; }
+.qz-lchip--f{ color:var(--qz-brand,#dea442); background:rgba(222,164,66,.12); }
+.qz-lchip--f.is-on{ color:#0b0f16; background:var(--qz-brand,#dea442); }
 .qz-shelf__row{ display:flex; gap:14px; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; padding:0 16px; }
 .qz-shelf__row::-webkit-scrollbar{ display:none; }
 .qz-shelf__row .qz-card{ flex:0 0 42vw; max-width:180px; scroll-snap-align:start; }
@@ -3270,10 +3600,19 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 .qz-ly{ position:absolute; inset:0; z-index:1; padding:calc(var(--safe-t) + 58px) 22px calc(var(--safe-b) + 24px); opacity:0; pointer-events:none; transition:opacity .25s; overflow:hidden;
   background:linear-gradient(180deg, var(--qz-tint-top), var(--qz-tint-bot)), var(--qz-base); }
 .qz-np--lyrics .qz-ly{ opacity:1; pointer-events:auto; }
+/* Lyra active: it mounts into .qz-ly__body and owns scroll/centering, so strip the homegrown padding/scroll/mask
+   (lyBody stays inside .qz-ly's padding, so Lyra respects the top inset) and hide the homegrown-only controls. */
+.qz-ly--lyra .qz-ly__body{ padding:0 !important; overflow:hidden !important; -webkit-mask-image:none !important; mask-image:none !important; }
+.qz-ly--lyra .qz-ly__recenter, .qz-ly--lyra .qz-ly__tr-toggle{ display:none !important; }
+/* Lyra sizes for desktop (its 3.3vw line collapses to the 26px floor on a phone). Scale the type up for mobile;
+   the more-specific selector beats Lyra's own .lyra-line without !important. em-based dots/bg-vocals follow. */
+.qz-ly--lyra .lyra-line{ font-size:clamp(30px, 8.6vw, 44px); line-height:1.22; margin-bottom:.5em; }
+.qz-ly--lyra .lyra-content{ padding:0 18px; }
 .qz-ly__body{ position:relative; height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch; text-align:left; padding:46vh 0 56vh;
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); }   /* M4 FIX: position:relative so lyCenter's offsetTop isn't inflated by .qz-ly padding-top. Field FIX: top/bottom runway (~half-screen) so line 1 (and the last line) can reach true center instead of clamping to scrollTop 0 and clipping under the top mask */
 .qz-ly__body::-webkit-scrollbar{ display:none; }
-.qz-ly__line{ margin:0 0 18px; font-size:24px; font-weight:700; line-height:1.3; letter-spacing:-.3px; color:var(--qz-c-dim); transition:color .2s, transform .26s cubic-bezier(.2,.72,.2,1.28); }
+.qz-ly__line{ margin:0 0 18px; font-size:24px; font-weight:700; line-height:1.3; letter-spacing:-.3px; color:var(--qz-c-dim); transition:color .2s, transform .26s cubic-bezier(.2,.72,.2,1.28); cursor:pointer; }
+.qz-ly__line:active{ opacity:.6; }
 .qz-ly__line.is-active{ color:var(--qz-c1); }
 .qz-ly__plain p{ margin:0 0 12px; font-size:17px; line-height:1.5; color:var(--qz-c2); }
 
@@ -3643,7 +3982,12 @@ function mount() {
   loadPlaylistSubs().then(repaintFavAll);    // + subscribed-playlist state (also seeds cachedMe for owner checks)
   // onChange fires on track change; the 500ms poll owns progress + play/pause-state (no store-wide subscribe,
   // which would fire hundreds of times a second during playback).
-  if (!offPlay) offPlay = Q.player.onChange(function () { renderTrack(); renderTransport(true); });
+  if (!offPlay) offPlay = Q.player.onChange(function (t) {
+    // onChange only fires with a SETTLED scrape, so let it own the track-change sentinel: this keeps
+    // tickProgress' backstop from re-painting the same change off a torn scrape (see _tickSettleId).
+    lastTrackId = (t && t.id != null) ? t.id : null;
+    renderTrack(); renderTransport(true);
+  });
   if (!poll) poll = setInterval(tickProgress, 250);   // 250ms keeps the word-by-word karaoke tight
 }
 function unmount() {
@@ -3655,14 +3999,28 @@ function unmount() {
   var s = document.getElementById(CSS_ID); if (s) s.remove();
   if (offPlay) { offPlay(); offPlay = null; }
   if (poll) { clearInterval(poll); poll = null; }
+  if (_extReloadT) { clearTimeout(_extReloadT); _extReloadT = null; }   // don't let a pending ext-toggle reload fire after teardown
+  if (_lyra) { try { _lyra.destroy(); } catch (e) {} _lyra = null; }   // tear down the Lyra instance (lyBody is about to be nulled)
   sleepTimer.cancel();                 // clear any armed timer/interval so a resize-to-desktop doesn't leak it
   closeQMenu(); if (typeof closeSheet === "function") closeSheet();   // tear down quality menu + track sheet
-  lyState.open = false; lyState.id = null; lyState.hasTr = false; lyState.selfScrollUntil = 0; seeking = false; qState.open = false;
+  lyState.open = false; lyState.id = null; lyState.key = ""; lyState.hasTr = false; lyState.selfScrollUntil = 0; seeking = false; qState.open = false;
+  lastTrackId = null; lastPlaying = null; _tickSettleId = null; _tickSettleTitle = ""; _tickSettleN = 0;
   discoverRailCache = {};   // M4 FIX: drop the Discover rail cache so a remount re-fetches (transient empties don't persist across sessions)
   stack = []; root = headerEl = contentEl = miniEl = navEl = npEl = lyBody = qBody = null;
 }
 function evaluate() {
-  if (want()) { mount(); if (mounted && !document.getElementById(ROOT_ID)) { document.body.appendChild(buildShell()); setTab(curTab); } }
+  if (want()) {
+    mount();
+    if (mounted && !document.getElementById(ROOT_ID)) {
+      // buildShell reassigns lyBody to a fresh node; the old Lyra instance is bound to the detached one, so
+      // tear it down first (else lyEnsureLyra returns the stale instance and lyrics render into dead DOM).
+      if (_lyra) { try { _lyra.destroy(); } catch (e) {} _lyra = null; }
+      document.body.appendChild(buildShell()); setTab(curTab);
+      // self-heal rebuilt a fresh shell; the sentinels are stale so tickProgress wouldn't repaint -> force it,
+      // otherwise the mini/Now-Playing bar stays blank until the next track change.
+      lastTrackId = null; lastPlaying = null; renderTrack(); renderTransport(true);
+    }
+  }
   else unmount();
 }
 
@@ -3675,5 +4033,6 @@ return function cleanup() {
   window.removeEventListener("resize", onResize);
   clearTimeout(rzT);
   if (obs) { obs(); obs = null; }
+  try { if (window.__qzBack === qzHandleBack) delete window.__qzBack; } catch (e) {}   // don't leave a global closing over torn-down state
   unmount();
 };

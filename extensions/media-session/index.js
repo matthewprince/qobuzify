@@ -64,10 +64,19 @@ function findSeekInstance() {
   try {
     if (_seekInst && _seekInst.props && typeof _seekInst.props.seek === "function") return _seekInst;
     var input = seekInput(); if (!input) return null;
-    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactInternalInstance$") === 0; });
+    // Match BOTH fiber keys (the app is React 17+, key __reactFiber$...): the old __reactInternalInstance$-only
+    // check never matched, so the OS-scrubber / hardware-key seek fell through to the synthetic drag, which
+    // needs real geometry and fails while the player bar is hidden on mobile.
+    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0; });
     if (!fk) return null;
     var f = input[fk], d = 0;
-    while (f && d++ < 40) { var sn = f.stateNode; if (sn && sn.props && typeof sn.props.seek === "function") { _seekInst = sn; return sn; } f = f.return; }
+    while (f && d++ < 40) {
+      var sn = f.stateNode;
+      if (sn && sn.props && typeof sn.props.seek === "function") { _seekInst = sn; return sn; }
+      var mp = f.memoizedProps;
+      if (mp && typeof mp.seek === "function") { _seekInst = { props: mp }; return _seekInst; }
+      f = f.return;
+    }
   } catch (e) {}
   return null;
 }

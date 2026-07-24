@@ -1,4 +1,4 @@
-/* Lyra lyric renderer - built 2026-07-22T08:51:55Z */
+/* Lyra lyric renderer - built 2026-07-23T08:27:55Z */
 // Lyra parsers - TTML / lyrics-JSON / LRC in, one internal model out.
 // All times in MILLISECONDS (upstream JSON is seconds, converted here).
 //
@@ -453,8 +453,11 @@
     graceMs: 350,           // hold a line active this long past its end
     interludeMinMs: 2600,   // min silent gap that earns interlude dots
     interludeLeadMs: 4000,  // dots before the first line if it starts later than this
-    lineRipple: true,       // line-timed tracks: synthesize a word stagger so lines
-                            // type in word-by-word instead of flipping on at once
+    lineRipple: false,      // line-timed tracks: synthesize a word stagger (typing
+                            // ripple). OFF: tried it, reads choppy - line mode looks
+                            // best as one clean whole-line brighten
+    letterWave: true,       // held words split into letters and a swell travels
+                            // across them (the big-note treatment)
     fontFamily: null,
     background: true,       // drive Lyra.Background if present
     closeButton: true,      // rendered when onClose is provided; set false to suppress
@@ -501,11 +504,17 @@
 // words are plain containers, the paint tricks live on syllables. NO transitions on
 // word lift - it's a per-frame envelope from the engine. transition pops looked like
 // a pogo stick on gapless tracks (Alone Pt. II, ~4 words/s contiguous).
-".lyra-w{position:relative;display:inline-block;transform-origin:center 80%;}" +
+// idle words rest slightly SMALL (.96) and grow to 1.0 as they're sung - the
+// grow-arc is most of what makes a sung word feel alive
+".lyra-w{position:relative;display:inline-block;transform-origin:center 80%;scale:.96;}" +
 // syllables: dim future / bright sung / gradient on the current one. do NOT put
 // scale back on these - the old 1.09 hold swell grew long words ~10px sideways
 // and glued them to their neighbors ("thatsomeone"). swell lives in the envelope now.
 ".lyra-s,.lyra-gs{display:inline-block;}" +
+// wave exit: when a letter-wave word ends, per-frame writes stop and this class
+// lets the letters ease home + the glow fade out in its bell shape (instead of
+// the whole word flashing to full bloom then cutting - the old exit bug)
+".lyra-w-waveout .lyra-s,.lyra-w-waveout .lyra-gs{transition:scale .3s ease,translate .3s ease,opacity .35s ease;}" +
 ".lyra-line .lyra-s{color:var(--lyra-dim,rgba(255,255,255,.92));}" +
 ".lyra-line.lyra-active .lyra-s{color:var(--lyra-unsung,rgba(255,255,255,.34));}" +
 ".lyra-line.lyra-active .lyra-w-sung .lyra-s,.lyra-line.lyra-active .lyra-s.lyra-s-sung{color:var(--lyra-sung,#fff);}" +
@@ -515,6 +524,13 @@
 // RTL sweeps travel right-to-left (pairs with dir=auto on lines)
 ".lyra-line:dir(rtl) .lyra-s.lyra-s-cur{" +
 "background-image:linear-gradient(270deg,var(--lyra-sung,#fff) calc(var(--fill) - 18%),var(--lyra-unsung,rgba(255,255,255,.34)) var(--fill));}" +
+// line-timed DEFAULT: the whole active line brightens as one unit (the line
+// opacity/scale transitions carry the motion). No per-word anything.
+".lyra-linemode .lyra-line.lyra-active .lyra-s{color:var(--lyra-sung,#fff);}" +
+".lyra-linemode .lyra-line.lyra-active .lyra-s.lyra-s-cur{background-image:none;color:var(--lyra-sung,#fff);}" +
+// opt-in line ripple (lineRipple:true): words pop in staggered, still no sweep
+".lyra-ripple .lyra-line.lyra-active .lyra-s.lyra-s-cur{background-image:none;color:var(--lyra-sung,#fff);}" +
+".lyra-ripple .lyra-line .lyra-gs.lyra-s-cur{background-image:none;color:var(--lyra-sung,#fff);}" +
 // static sheets (unsynced lyrics): a plain readable list, no states
 ".lyra-static .lyra-line{opacity:.85;scale:1;filter:none!important;cursor:default;}" +
 // glow overlay = duplicate glyphs clipped to the sung part, static drop-shadow,
@@ -565,10 +581,24 @@
 ".lyra-resume.lyra-resume-on{opacity:1;pointer-events:auto;}" +
 ".lyra-resume:not(.lyra-resume-on){translate:-50% 12px;}" +
 ".lyra-resume:hover{background:rgba(255,255,255,.2);}" +
+// "wrong lyrics" pill (only exists when the host passes onRefetch)
+".lyra-refetch{position:absolute;right:20px;bottom:22px;z-index:6;border:0;border-radius:999px;" +
+"padding:9px 15px;font-size:13px;font-weight:600;font-family:inherit;color:var(--lyra-text,#fff);cursor:pointer;" +
+"background:rgba(255,255,255,.09);backdrop-filter:blur(10px);opacity:.4;transition:opacity .15s ease,background .15s ease;display:none;}" +
+".lyra-refetch.lyra-refetch-on{display:block;}" +
+".lyra-refetch:hover{opacity:1;background:rgba(255,255,255,.18);}" +
+".lyra-refetch.lyra-refetch-busy{opacity:.9;cursor:default;animation:lyra-refetch-pulse 1s ease-in-out infinite alternate;}" +
+"@keyframes lyra-refetch-pulse{from{opacity:.35;}to{opacity:.9;}}" +
+// toast: one small transient message, opacity/translate only
+".lyra-toast{position:absolute;left:50%;bottom:70px;translate:-50% 8px;z-index:8;padding:9px 16px;border-radius:10px;" +
+"background:rgba(18,18,24,.88);backdrop-filter:blur(8px);color:var(--lyra-text,#fff);font-size:13px;font-weight:600;" +
+"opacity:0;pointer-events:none;transition:opacity .2s ease,translate .25s ease;}" +
+".lyra-toast.lyra-toast-on{opacity:1;translate:-50% 0;}" +
 // snap mode: kills every transition for the resync frame(s)
 ".lyra-cut .lyra-line,.lyra-cut .lyra-w,.lyra-cut .lyra-wg,.lyra-cut .lyra-s,.lyra-cut .lyra-gs,.lyra-cut .lyra-int{transition:none!important;}" +
 "@media (prefers-reduced-motion:reduce){" +
 ".lyra-line,.lyra-w,.lyra-s,.lyra-gs{transition-duration:.01s!important;}" +
+".lyra-w{scale:1!important;}" + // no grow-arc under reduced motion, so no small idle either
 ".lyra-int-dots,.lyra-enter{animation:none!important;}}";
 
   function injectCSS() {
@@ -588,6 +618,11 @@
     var isPlaying = opts.isPlaying || function () { return true; };
     var onSeek = opts.onSeek || function () {};
     var onClose = opts.onClose || null;
+    // host hook for "these lyrics are wrong": Lyra renders the button + busy state
+    // + toast, the host does the actual re-fetching (and calls load() with the
+    // replacement). Return a Promise resolving to a short message string to toast
+    // (or null/undefined for silence).
+    var onRefetch = opts.onRefetch || null;
     var S = {};
     for (var dk in DEFAULTS) S[dk] = DEFAULTS[dk];
     for (var ok in (opts.settings || {})) S[ok] = opts.settings[ok];
@@ -605,6 +640,8 @@
     var scrollAnchor = -1;       // like anchor, but on the LEADING clock (pos + scrollLeadMs)
     var staticMode = false;      // unsynced lyrics: plain sheet, no states/follow
     var resumeEl = null, resumeShown = false;
+    var refetchEl = null, refetchBusy = false, toastEl = null, toastTimer = null;
+    var waveSylMin = 650;        // per-track: held means exceptional FOR THIS SONG
     var marked = [];             // items currently carrying distance/near classes
     var vh = 0, maxScroll = 0, measured = false, measureQueued = false;
     var ro = null;
@@ -657,6 +694,27 @@
         retarget(false);
       });
       root.appendChild(resumeEl);
+      if (onRefetch) {
+        refetchEl = el("button", "lyra-refetch");
+        refetchEl.type = "button";
+        refetchEl.textContent = "Wrong lyrics?";
+        refetchEl.title = "Fetch a different version of these lyrics";
+        refetchEl.addEventListener("click", function () {
+          if (refetchBusy) return;
+          refetchBusy = true;
+          refetchEl.classList.add("lyra-refetch-busy");
+          refetchEl.textContent = "Fetching…";
+          var settle = function (msg) {
+            refetchBusy = false;
+            if (!refetchEl) return; // destroyed mid-flight
+            refetchEl.classList.remove("lyra-refetch-busy");
+            refetchEl.textContent = "Wrong lyrics?";
+            if (msg && typeof msg === "string") toast(msg);
+          };
+          Promise.resolve().then(onRefetch).then(settle, function () { settle("Something went wrong"); });
+        });
+        root.appendChild(refetchEl);
+      }
       mount.appendChild(root);
       if (S.background && Lyra.Background) { try { bg = Lyra.Background.attach(root); } catch (e) { bg = null; } }
       if (bg && pendingCover) { try { bg.setCover(pendingCover[0], pendingCover[1]); } catch (e) {} pendingCover = null; }
@@ -670,6 +728,15 @@
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueMeasure);
     }
 
+    function toast(msg) {
+      if (destroyed || !root) return;
+      if (!toastEl) { toastEl = el("div", "lyra-toast"); root.appendChild(toastEl); }
+      toastEl.textContent = msg;
+      toastEl.classList.add("lyra-toast-on");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { if (toastEl) toastEl.classList.remove("lyra-toast-on"); }, 2600);
+    }
+
     function status(msg) {
       if (destroyed) return;
       if (!root) scaffold();
@@ -679,24 +746,53 @@
     }
 
     // build
+    var RTL_CHARS = /[֑-ࣿיִ-﷿ﹰ-﻿]/; // joining scripts: never letter-split
     function buildWord(word, withGlow) {
       var w = el("span", "lyra-w");
       // lift amplitude from word duration: <=~180ms -> 0.25 (barely moves), >=600ms -> 1
       var pop = reduced ? 0 : Math.max(0.25, Math.min(1, ((word.end - word.start) - 120) / 480));
-      var meta = { el: w, glow: null, start: word.start, end: word.end, pop: pop, syls: [], _ws: -1, _lift: 0 };
-      for (var i = 0; i < word.syllables.length; i++) {
-        var sy = word.syllables[i];
+      // the wave is for held NOTES, not long words: a real melisma lives in one
+      // long syllable. a multi-syllable word that merely adds up past the bar
+      // ("constellation" at a normal pace) must NOT ripple. so: total >= 1s AND
+      // the longest single syllable >= 650ms. letters then subdivide each
+      // syllable's real time (keeps the sung rhythm, not a flat even split).
+      var pieces = word.syllables, wave = false;
+      var longestSyl = 0;
+      for (var g9 = 0; g9 < word.syllables.length; g9++) longestSyl = Math.max(longestSyl, word.syllables[g9].end - word.syllables[g9].start);
+      if (S.letterWave && !reduced && (word.end - word.start) >= 1000 && longestSyl >= waveSylMin && !RTL_CHARS.test(word.text)) {
+        var glyphs = 0;
+        for (var g0 = 0; g0 < word.syllables.length; g0++) glyphs += Array.from(word.syllables[g0].text).length;
+        if (glyphs >= 3 && glyphs <= 12) {
+          pieces = [];
+          for (var g1 = 0; g1 < word.syllables.length; g1++) {
+            var sy0 = word.syllables[g1], chars = Array.from(sy0.text);
+            var lstep = (sy0.end - sy0.start) / Math.max(1, chars.length);
+            for (var g2 = 0; g2 < chars.length; g2++) {
+              pieces.push({
+                start: sy0.start + g2 * lstep,
+                end: g2 === chars.length - 1 ? sy0.end : sy0.start + (g2 + 1) * lstep,
+                text: chars[g2],
+              });
+            }
+          }
+          wave = true;
+        }
+      }
+      var meta = { el: w, glow: null, start: word.start, end: word.end, pop: pop, wave: wave,
+                   syls: [], _ws: -1, _lift: 0, _grow: 0, _glo: 0 };
+      for (var i = 0; i < pieces.length; i++) {
+        var sy = pieces[i];
         var se = el("span", "lyra-s");
         se.textContent = sy.text;
         w.appendChild(se);
-        meta.syls.push({ el: se, gel: null, start: sy.start, end: sy.end, _ss: -1, _f: -1 });
+        meta.syls.push({ el: se, gel: null, start: sy.start, end: sy.end, _ss: -1, _f: -1, _wv: -1, _wg: -1 });
       }
       if (withGlow) {
         var g = el("span", "lyra-wg");
         g.setAttribute("aria-hidden", "true");
-        for (var j = 0; j < meta.syls.length; j++) {
+        for (var j = 0; j < pieces.length; j++) {
           var gs = el("span", "lyra-gs");
-          gs.textContent = word.syllables[j].text;
+          gs.textContent = pieces[j].text;
           g.appendChild(gs);
           meta.syls[j].gel = gs;
         }
@@ -738,8 +834,24 @@
 
       var lines = (model && model.lines) || [];
       var wordMode = model && model.timing === "word";
+      // wave gate is track-relative: a 900ms note is a held note in a fast rap,
+      // background noise in a ballad where every syllable runs long
+      if (wordMode) {
+        var sylDurs = [];
+        for (var sd = 0; sd < lines.length; sd++) {
+          var lw = lines[sd].words || [];
+          for (var sw2 = 0; sw2 < lw.length; sw2++)
+            for (var ss2 = 0; ss2 < lw[sw2].syllables.length; ss2++)
+              sylDurs.push(lw[sw2].syllables[ss2].end - lw[sw2].syllables[ss2].start);
+        }
+        sylDurs.sort(function (a, b) { return a - b; });
+        var medSyl = sylDurs.length ? sylDurs[sylDurs.length >> 1] : 0;
+        waveSylMin = Math.max(650, medSyl * 1.8);
+      }
       staticMode = !!(model && model.timing === "none");
       root.classList.toggle("lyra-static", staticMode);
+      root.classList.toggle("lyra-ripple", !wordMode && !staticMode && !!S.lineRipple);
+      root.classList.toggle("lyra-linemode", !wordMode && !staticMode && !S.lineRipple);
       var prevEnd = 0;
 
       for (var i = 0; i < lines.length; i++) {
@@ -1084,9 +1196,9 @@
     }
     function resetWord(wm) {
       if (wm._ws !== -1) { wm._ws = -1; wm.el.classList.remove("lyra-w-cur", "lyra-w-sung"); }
-      wm.el.classList.remove("lyra-w-hold");
+      wm.el.classList.remove("lyra-w-hold", "lyra-w-waveout");
       uncool(wm);
-      applyLift(wm, 0);
+      applyLift(wm, 0, 0, 0);
       for (var s = 0; s < wm.syls.length; s++) resetSyl(wm.syls[s]);
     }
     function resetSyl(sy) {
@@ -1101,6 +1213,12 @@
         if (sy.gel) sy.gel.style.removeProperty("--fill");
         stat.styleWrites++;
       }
+      if (sy._wv !== -1) {
+        sy._wv = -1;
+        sy.el.style.scale = "";
+        sy.el.style.translate = "";
+      }
+      if (sy._wg !== -1 && sy.gel) { sy._wg = -1; sy.gel.style.opacity = ""; }
     }
     function setSylState(sy, st) {
       if (sy._ss === st) return;
@@ -1116,6 +1234,12 @@
         sy.el.style.removeProperty("--fill");
         if (sy.gel) sy.gel.style.removeProperty("--fill");
       }
+      if (st !== 1 && sy._wv !== -1) { // letter-wave residue
+        sy._wv = -1;
+        sy.el.style.scale = "";
+        sy.el.style.translate = "";
+      }
+      if (st !== 1 && sy._wg !== -1 && sy.gel) { sy._wg = -1; sy.gel.style.opacity = ""; }
     }
     // word lift envelope
     // lift(t): attack -> sustain -> release-after-end (the cooling set). pure
@@ -1130,20 +1254,28 @@
     var SCALE_CAP_PX = 4; // max ABSOLUTE horizontal growth: % scale on a long word
                           // otherwise eats the inter-word space and words clip together
     function smooth(x) { return x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); }
-    function applyLift(wm, v) {
-      var q = Math.round(v * 50) / 50; // 0.02 steps
-      if (wm._lift === q) return;
-      wm._lift = q;
-      if (q <= 0) {
+    // q = arc energy (overshoot), grow = 0.96->1.0 sung growth, glowV = bloom opacity.
+    // a fully-sung word rests at scale 1 (grow 1, q 0); idle words sit at the CSS .96.
+    function applyLift(wm, q, grow, glowV) {
+      var qq = Math.round(q * 50) / 50;
+      var gr = Math.round(grow * 50) / 50;
+      var gl = Math.round((glowV || 0) * 50) / 50;
+      if (wm._lift === qq && wm._grow === gr && wm._glo === gl) return;
+      wm._lift = qq; wm._grow = gr; wm._glo = gl;
+      if (qq <= 0 && gr <= 0 && gl <= 0) {
         wm.el.style.translate = "";
         wm.el.style.scale = "";
         if (wm.glow) wm.glow.style.opacity = "";
       } else {
         var sc = LIFT_SCALE;
         if (wm.px && LIFT_SCALE * wm.px > SCALE_CAP_PX) sc = SCALE_CAP_PX / wm.px;
-        wm.el.style.translate = "0 " + (-(LIFT_EM * q)).toFixed(4) + "em";
-        wm.el.style.scale = (1 + sc * q).toFixed(4);
-        if (wm.glow) wm.glow.style.opacity = Math.min(1, 0.85 * q).toFixed(3);
+        wm.el.style.scale = (0.96 + 0.04 * gr + sc * qq).toFixed(4);
+        var ty = 0.008 * (1 - gr) - LIFT_EM * qq; // starts a hair low, rises with the arc
+        wm.el.style.translate = Math.abs(ty) < 0.001 ? "" : "0 " + ty.toFixed(4) + "em";
+        if (wm.glow) {
+          // wave words carry glow on the per-letter twins instead
+          wm.glow.style.opacity = wm.wave ? (gl > 0 ? "1" : "") : (gl <= 0 ? "" : Math.min(1, gl).toFixed(3));
+        }
       }
       stat.styleWrites++;
     }
@@ -1151,27 +1283,28 @@
       for (var i = 0; i < cooling.length; i++) if (cooling[i].wm === wm) { cooling.splice(i, 1); return; }
     }
     function coolWord(wm, now, deferReset) {
-      if (wm._lift <= 0) return;
+      if (wm._lift <= 0 && wm._glo <= 0) return;
       for (var i = 0; i < cooling.length; i++) {
         if (cooling[i].wm === wm) { // already mid-drop: keep its timing, never restart
           if (deferReset) cooling[i].deferReset = true;
           return;
         }
       }
-      cooling.push({ wm: wm, from: wm._lift, t0: now, deferReset: !!deferReset });
+      cooling.push({ wm: wm, from: wm._lift, glowFrom: wm._glo, t0: now, deferReset: !!deferReset });
     }
     function stepCooling(now) {
       for (var i = cooling.length - 1; i >= 0; i--) {
         var c = cooling[i], k = (now - c.t0) / RELEASE_MS;
         if (k >= 1) {
-          applyLift(c.wm, 0);
+          applyLift(c.wm, 0, 1, 0); // lands fully sung: rests at scale 1
           var wm = c.wm, defer = c.deferReset;
           cooling.splice(i, 1);
-          wm.el.classList.remove("lyra-w-hold"); // held-note bloom ends when the drop lands
+          wm.el.classList.remove("lyra-w-hold", "lyra-w-waveout");
           if (defer) resetWord(wm); // class/fill cleanup we postponed so the drop could play
           continue;
         }
-        applyLift(c.wm, c.from * smooth(1 - k));
+        var s = smooth(1 - k);
+        applyLift(c.wm, c.from * s, 1, c.glowFrom * s);
       }
     }
 
@@ -1203,21 +1336,53 @@
           wm.el.classList.toggle("lyra-w-sung", wstate === 2);
           if (wstate === 1) {
             uncool(wm);
+            wm.el.classList.remove("lyra-w-waveout"); // back mid-drop: per-frame writes resume
             if (en - st >= HOLD_MS) wm.el.classList.add("lyra-w-hold");
-          } else {
-            if (was === 1) coolWord(wm, now); // let it fall on its own
+          } else if (wstate === 0) { // back to idle (seek/jump-back): instant, no drop
+            uncool(wm);
+            wm.el.classList.remove("lyra-w-waveout");
+            applyLift(wm, 0, 0, 0);
+            for (var r0 = 0; r0 < wm.syls.length; r0++) resetSyl(wm.syls[r0]);
+          } else { // sung
+            if (was === 1) {
+              coolWord(wm, now); // finished naturally: let it fall on its own
+              if (wm.wave) { // wave exit: ease the letters home, fade the bell out
+                wm.el.classList.add("lyra-w-waveout");
+                for (var r1 = 0; r1 < wm.syls.length; r1++) {
+                  var Ws = wm.syls[r1];
+                  if (Ws._ss !== -1) {
+                    Ws._ss = -1;
+                    Ws.el.classList.remove("lyra-s-cur", "lyra-s-sung");
+                    if (Ws.gel) Ws.gel.classList.remove("lyra-s-cur", "lyra-s-sung");
+                  }
+                  if (Ws._f !== -1) { Ws._f = -1; Ws.el.style.removeProperty("--fill"); if (Ws.gel) Ws.gel.style.removeProperty("--fill"); }
+                  if (Ws._wv !== -1) { Ws._wv = -1; Ws.el.style.scale = ""; Ws.el.style.translate = ""; }
+                  if (Ws.gel) { Ws._wg = 0; Ws.gel.style.opacity = "0"; } // explicit 0 so the transition has a target
+                }
+                continue;
+              }
+            } else { uncool(wm); applyLift(wm, 0, 1, 0); } // jumped straight to sung: rest at full size
             for (var r = 0; r < wm.syls.length; r++) resetSyl(wm.syls[r]);
           }
         }
         if (wstate !== 1) continue;
         if (wm.pop > 0) {
           var wdur = en - st;
-          var e = smooth((pos - st) / Math.max(1, Math.min(120, wdur * 0.35)));
-          if (wdur >= HOLD_MS) {
-            var hp = smooth((pos - st) / wdur);
+          var p = clamp((pos - st) / wdur, 0, 1);
+          var atk = smooth((pos - st) / Math.max(1, Math.min(120, wdur * 0.35)));
+          // the arc: rise to a peak ~65% through the word, settle to ~55% energy by
+          // its end (the drop then releases the rest). words travel a little
+          // parabola instead of holding a plateau - that's the "alive" feel.
+          var e = atk * (p < 0.65 ? smooth(p / 0.65) : 1 - 0.45 * smooth((p - 0.65) / 0.35));
+          var glowV;
+          if (wdur >= HOLD_MS) { // held notes: swell + shimmer, glow sustained
+            var hp = smooth(p);
             e *= 1 + hp * (0.5 + 0.06 * Math.sin((pos - st) / 175));
+            glowV = Math.min(1, 0.85 * wm.pop * atk * (1 + 0.4 * hp));
+          } else { // normal words: a glow spark - in fast, gone by the word's end
+            glowV = 0.85 * wm.pop * smooth(p / 0.15) * (1 - smooth((p - 0.6) / 0.4));
           }
-          applyLift(wm, wm.pop * e);
+          applyLift(wm, wm.pop * e, smooth(p), glowV);
         }
         // syllable walk inside the current word
         var sPlay = false;
@@ -1231,6 +1396,36 @@
           // 118 not 100: the soft edge (18% wide) fully clears the glyph right as
           // the state flips to sung, so the edge exits instead of popping away
           if (ss === 1) setSylFill(sy, ((pos - sy.start) / Math.max(1, sy.end - sy.start)) * 118);
+        }
+        // letter wave (hold words split into letters): a swell travels across the
+        // word centred on the letter being sung. scale falloff is a sharp bell,
+        // glow a wider one; letters behind keep a low residual glow.
+        if (wm.wave) {
+          var act = -1;
+          for (var l0 = 0; l0 < wm.syls.length; l0++) { if (pos >= wm.syls[l0].start) act = l0; else break; }
+          var wq = Math.min(1, wm._lift);
+          for (var l1 = 0; l1 < wm.syls.length; l1++) {
+            var Ls = wm.syls[l1], d = Math.abs(l1 - act);
+            var f = act < 0 ? 0 : 1 / (1 + Math.pow(d, 2.8));
+            var gf = act < 0 ? 0 : 1 / (1 + 0.9 * d);
+            var lsc = Math.round((1 + 0.14 * f * wm.pop) * 100) / 100;
+            var lty = Math.round(-0.022 * f * wm.pop * 1000) / 1000;
+            var lkey = lsc * 10 + lty;
+            if (Ls._wv !== lkey) {
+              Ls._wv = lkey;
+              Ls.el.style.scale = lsc === 1 ? "" : String(lsc);
+              Ls.el.style.translate = lty === 0 ? "" : "0 " + lty + "em";
+              stat.styleWrites++;
+            }
+            if (Ls.gel) {
+              var lop = Math.round(Math.min(1, (0.2 + 0.8 * gf) * wq) * 50) / 50;
+              if (Ls._wg !== lop) {
+                Ls._wg = lop;
+                Ls.gel.style.opacity = lop <= 0 ? "" : String(lop);
+                stat.styleWrites++;
+              }
+            }
+          }
         }
       }
     }
@@ -1415,10 +1610,12 @@
         content && (content.textContent = "");
         items = [];
         status("No lyrics for this track");
+        if (refetchEl) refetchEl.classList.remove("lyra-refetch-on");
         return false;
       }
       build();
       resync();
+      if (refetchEl) refetchEl.classList.add("lyra-refetch-on");
       return true;
     }
 
@@ -1429,8 +1626,9 @@
       else window.removeEventListener("resize", queueMeasure);
       document.removeEventListener("visibilitychange", onVisibility);
       if (bg && bg.destroy) { try { bg.destroy(); } catch (e) {} }
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
       if (root && root.parentNode) root.parentNode.removeChild(root);
-      root = viewport = canvas = content = resumeEl = null;
+      root = viewport = canvas = content = resumeEl = refetchEl = toastEl = null;
       items = []; lagged = []; marked = []; cooling = [];
     }
 
@@ -1445,6 +1643,7 @@
       remeasure: queueMeasure,
       setCover: function (url, accent) { if (bg && bg.setCover) bg.setCover(url, accent); else pendingCover = [url, accent]; },
       setOffset: function (ms) { S.timingOffsetMs = ms | 0; },
+      toast: toast,
       stats: function () { return { frames: stat.frames, styleWrites: stat.styleWrites, lastMs: stat.lastMs, worstMs: stat.worstMs, items: items.length, anchor: anchor }; },
       get settings() { return S; },
       get lineCount() { return items.length; },

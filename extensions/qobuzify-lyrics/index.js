@@ -180,7 +180,43 @@ function saveCache() {
 // track metadata and gets back pre-parsed, time-aligned lyrics plus a codename in a single
 // round-trip - no client-side parsing, and no upstream is ever contacted from the client.
 var PROXY_BASE = "https://api.qobuzify.app/v1/lyrics";
+var REFETCH_BASE = "https://api.qobuzify.app/v1/refetch";
+// "Wrong lyrics?" pill (Lyra's onRefetch): re-resolve EXCLUDING the current provider, swap in whatever's next.
+// Returns a Promise<toast-string> per Lyra's contract. Uses the SAME params proxyLyrics sends.
+function ownRefetch() {
+  var t = curMeta;
+  if (!t || !t.name || !t.artist) return Promise.resolve("No track to refetch");
+  var u = REFETCH_BASE + "?qz=1&name=" + encodeURIComponent(t.name) + "&artist=" + encodeURIComponent(t.artist);
+  var fts = t.feats || []; if (fts.length) u += "&feats=" + encodeURIComponent(fts.join(","));
+  if (t.album) u += "&album=" + encodeURIComponent(t.album);
+  if (t.durationMs) u += "&durationMs=" + t.durationMs;
+  var isrc = t.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
+  return _origFetch(u).then(function (r) {
+    if (r.status === 429) return "Try again in a moment";
+    return r.json().then(function (pr) {
+      if (pr && pr.ok && pr.alternative && pr.lyrics) {
+        curLyricSource = pr.source || curLyricSource;
+        var key = lyrKey(t);
+        // mirror resolveLyrics' cache policy: persist word-by-word, drop line-level so it stays re-resolvable
+        if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, t: Date.now() }; }
+        else { delete lsCache[key]; }
+        saveCache();
+        if (_own && _own.render) _own.render(pr.lyrics);   // r.load() the replacement
+        return "Switched to a different version";
+      }
+      if (pr && pr.alternative === false) return "That's the only version available";
+      return "Couldn't check for another version";
+    });
+  }).catch(function () { return "Couldn't check for another version"; });
+}
 var USE_PROXY = true; // __QZ_SL_DEBUG.setProxy(false) to force local-only for testing
+function _proxyFetchOnce(u, ms) {
+  return withTimeout(_origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }), ms);
+}
+// null = timed out / network error / non-200 (NOT a real "no lyrics" - that comes back as {ok:true,hasLyrics:false}).
+// recheck/errored = the server told us the result is transient (SL warming / an upstream blipped). Either way, retry.
+function _proxyRetriable(pr) { return !pr || pr.recheck || pr.errored; }
+function _wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 function proxyLyrics(track) {
   if (!USE_PROXY || !track || !track.name || !track.artist) return Promise.resolve(null);
   try {
@@ -193,7 +229,18 @@ function proxyLyrics(track) {
     if (track.album) u += "&album=" + encodeURIComponent(track.album);
     if (track.durationMs) u += "&durationMs=" + track.durationMs;
     var isrc = (curMeta && curMeta.isrc) || track.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
-    return withTimeout(_origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }), 8000);
+    // A COLD (uncached) resolve fans out to ~6 upstreams and can take 6-9s server-side; the old 8s single-shot
+    // often timed out first, showing "no lyrics" even though the Worker ran to completion and CACHED the result -
+    // so skipping away + back (a second request) hit the warm cache. Automate that: on a timeout / transient
+    // response, retry - the retry usually lands on the cache the first attempt just populated. A genuine
+    // no-lyrics ({hasLyrics:false}) is truthy with no recheck/errored, so it returns immediately (no retry).
+    return _proxyFetchOnce(u, 11000).then(function (pr) {
+      if (!_proxyRetriable(pr)) return pr;
+      return _wait(1800).then(function () { return _proxyFetchOnce(u, 12000); }).then(function (pr2) {
+        if (!_proxyRetriable(pr2)) return pr2;
+        return _wait(2500).then(function () { return _proxyFetchOnce(u, 12000); });   // last try; cache is almost certainly warm by now
+      });
+    });
   } catch (e) { return Promise.resolve(null); }
 }
 // Proxy-only resolve: the client asks the proxy and renders whatever it returns; a miss / no-lyrics
@@ -571,7 +618,7 @@ function ownEnsure() {
   if (_own) return _own;
   if (!window.QZLyricsRenderer) return null;
   ensureContainer(); var mount = document.getElementById("qz-sl-root"); if (!mount) return null;
-  _own = window.QZLyricsRenderer.make({ mount: mount, getPos: getPosMs, isPlaying: function () { return Q.player.isPlaying(); }, onSeek: qobuzSeek, onClose: function () { try { var h = window.Spicetify.Platform.History; if (h && h.goBack) h.goBack(); else if (h) h.push({ pathname: "/" }); } catch (e) {} } }); // onClose returns to the previous page, not a blank "/"
+  _own = window.QZLyricsRenderer.make({ mount: mount, getPos: getPosMs, isPlaying: function () { return Q.player.isPlaying(); }, onSeek: qobuzSeek, onRefetch: ownRefetch, onClose: function () { try { var h = window.Spicetify.Platform.History; if (h && h.goBack) h.goBack(); else if (h) h.push({ pathname: "/" }); } catch (e) {} } }); // onClose returns to the previous page, not a blank "/"
   // Prime the just-created renderer with the CURRENT cover. setCoverBg only pushes setCover on a
   // songchange, but _own didn't exist when this song's songchange fired, so without this the album
   // background stays empty until the next track. The renderer queues it (pendingCover) if it's still
