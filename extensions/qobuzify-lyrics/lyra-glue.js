@@ -33,6 +33,9 @@
         destroy: function () { r.destroy(); },
         status: function (m) { r.status(m); },
         setCover: function (url, accent) { r.setCover(url, accent); },
+        // Audio-reactive background: the host fetches /v2/analysis and hands the analysis object straight
+        // through. Lyra tolerates null (it just stops reacting), so a miss needs no special casing here.
+        setAnalysis: function (a) { if (r.setAnalysis) r.setAnalysis(a); },
         // The extension calls scrollToTop() on a track change to reset scroll; Lyra rebuilds and snaps to the
         // new track's anchor inside load(), and resync() re-anchors without a transition catch-up, so this is
         // the right equivalent.

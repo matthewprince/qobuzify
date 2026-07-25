@@ -181,6 +181,53 @@ function saveCache() {
 // round-trip - no client-side parsing, and no upstream is ever contacted from the client.
 var PROXY_BASE = "https://api.qobuzify.app/v1/lyrics";
 var REFETCH_BASE = "https://api.qobuzify.app/v1/refetch";
+// ---- audio-reactive background: /v2/analysis -> Lyra.setAnalysis ----------------------------------------
+// Beat/bar/section/energy data for the renderer's background (bar thump, energy wash, tempo dots). Entirely
+// decorative, so this is strictly best-effort: it NEVER blocks or delays the lyric render, a miss just leaves
+// the background non-reactive, and Lyra tolerates null. Memoised per track so a re-open or a re-render does
+// not re-request; the server serves warm hits in ~60ms and marks them immutable, so this is cheap.
+var ANALYSIS_BASE = "https://api.qobuzify.app/v2/analysis";
+var _anCache = {}, _anFor = null, _anReady = null;
+function analysisKey(t) { return ((t && t.name) || "") + "|" + ((t && t.artist) || ""); }
+// Apply whatever we currently hold. Split out from the fetch because the two happen in EITHER order: lyrics
+// (and therefore the fetch) are resolved on a track change, but `_own` only exists once the lyrics VIEW is
+// built - so a fetch that completes while the view is closed must still land when the view opens, and
+// buildShell calls this after creating the renderer. Idempotent, so calling it twice is harmless.
+function applyAnalysis() {
+  if (!OWN_RENDERER || !_own || !_own.setAnalysis) return;
+  try { _own.setAnalysis(_anReady || null); } catch (e) {}
+}
+function fetchAnalysis(track) {
+  if (!track || !track.name || !track.artist) return Promise.resolve(null);
+  var k = analysisKey(track);
+  if (Object.prototype.hasOwnProperty.call(_anCache, k)) return Promise.resolve(_anCache[k]);
+  // fields matters: segments = the per-hit loudness envelopes Lyra's pump runs on.
+  // the default field set omits them, which left the background inert (only the
+  // slow drift), aka "particles move very subtly"
+  var u = ANALYSIS_BASE + "?qz=1&fields=energy,segments,beats&name=" + encodeURIComponent(track.name) + "&artist=" + encodeURIComponent(track.artist);
+  if (track.album) u += "&album=" + encodeURIComponent(track.album);
+  if (track.durationMs) u += "&durationMs=" + track.durationMs;
+  var isrc = (curMeta && curMeta.isrc) || track.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
+  return _origFetch(u).then(function (r) { return r.json(); }).then(function (j) {
+    var a = (j && j.ok && j.analysis && j.analysis.available) ? j.analysis : null;
+    _anCache[k] = a;                     // cache the null too - a track with no analysis must not be re-asked
+    return a;
+  }).catch(function () { return null; });
+}
+// Fetch (once per track) and apply the current track's analysis. Deliberately does NOT require the renderer to
+// exist yet - see applyAnalysis. Guarded so a late response for a track the user has already skipped past can
+// never apply to the new one (_anFor is the track it was requested for).
+function pushAnalysis(track) {
+  var k = analysisKey(track);
+  if (_anFor === k) { applyAnalysis(); return; }  // same track (re-open / re-render): re-apply what we have
+  _anFor = k; _anReady = null;
+  applyAnalysis();                               // clears the outgoing track's beats
+  fetchAnalysis(track).then(function (a) {
+    if (_anFor !== k) return;                    // superseded by a newer track
+    _anReady = a;
+    applyAnalysis();
+  });
+}
 // "Wrong lyrics?" pill (Lyra's onRefetch): re-resolve EXCLUDING the current provider, swap in whatever's next.
 // Returns a Promise<toast-string> per Lyra's contract. Uses the SAME params proxyLyrics sends.
 function ownRefetch() {
@@ -254,6 +301,7 @@ function resolveLyrics(track) {
   // the proxy (mirrors the server's durationOk). this is what fixed Selena's "Wolves" (193s) cached
   // under Baby Keem's "Wolves" (83s) from before the client started sending duration.
   if (hit && hit.ly && track.durationMs && lyrSpanSec(hit.ly) * 1000 > track.durationMs + 10000) { delete lsCache[key]; saveCache(); hit = null; }
+  pushAnalysis(track); // fire-and-forget: audio-reactive background data, never gates the lyric render
   if (hit && hit.ly) { hit.t = Date.now(); if (hit.src) curLyricSource = hit.src; return Promise.resolve(hit.ly); }
   return proxyLyrics(track).then(function (pr) {
     if (pr && pr.ok && pr.hasLyrics && pr.lyrics) {
@@ -619,6 +667,9 @@ function ownEnsure() {
   if (!window.QZLyricsRenderer) return null;
   ensureContainer(); var mount = document.getElementById("qz-sl-root"); if (!mount) return null;
   _own = window.QZLyricsRenderer.make({ mount: mount, getPos: getPosMs, isPlaying: function () { return Q.player.isPlaying(); }, onSeek: qobuzSeek, onRefetch: ownRefetch, onClose: function () { try { var h = window.Spicetify.Platform.History; if (h && h.goBack) h.goBack(); else if (h) h.push({ pathname: "/" }); } catch (e) {} } }); // onClose returns to the previous page, not a blank "/"
+  // Same hazard as the cover below: this song's analysis was fetched on the songchange, when _own did not
+  // exist yet, so the audio-reactive background would stay inert until the NEXT track. Re-apply it here.
+  applyAnalysis();
   // Prime the just-created renderer with the CURRENT cover. setCoverBg only pushes setCover on a
   // songchange, but _own didn't exist when this song's songchange fired, so without this the album
   // background stays empty until the next track. The renderer queues it (pendingCover) if it's still
@@ -786,7 +837,32 @@ try { var _o0 = parseInt(localStorage.getItem("qz-lyr-fixed"), 10); if (!isNaN(_
 // The codename the server returns for the track (already obfuscated upstream-side); shown verbatim
 // in the footer as "Lyric server: <codename>". Null until the first resolve lands.
 var curLyricSource = null, _tagSong = null, _tagScanned = false; // _tagSong = source the credit tag was last written for (skip the DOM walk once placed); _tagScanned = walked once this song with no anchor (Lyra path) - re-walk only on songchange
-function autoOffsetMs() { return _offOverride != null ? _offOverride : 0; }
+// --- follow the audio you can actually HEAR, not the muted clock element ---
+// With bit-perfect direct mode on, mpv plays the FLAC and the web <audio> element is muted and used only as a
+// clock. The two drift: the muted element competes with mpv's fetch for bandwidth, starves, and its clock
+// falls BEHIND the sound. The transport's drift net tolerates up to 1.5s of that (fine for a progress bar,
+// but 2-3 words of visible lag in word-by-word karaoke, which then "fixed itself" on any pause/seek because
+// that forced a resync). So when the sidecar is the one making sound, steer the lyric clock by the measured
+// mpv-minus-element offset. bpAudioOffset re-samples at most 4x/sec (getPosMs runs up to 144x/sec), snaps on a
+// big change (track change / real seek) and smooths small jitter, and contributes 0 whenever bit-perfect is
+// off or mpv isn't authoritative - so non-wrapper and shared-mode playback behave exactly as before.
+var _bpOff = 0, _bpOffAt = 0;
+function bpAudioOffset() {
+  var now = Date.now();
+  if (now - _bpOffAt < 250) return _bpOff;          // hold between samples
+  _bpOffAt = now;
+  try {
+    var f = window.__QZBP_AUDIOPOS__;
+    if (typeof f !== "function") { _bpOff = 0; return 0; }
+    var ap = f();
+    if (ap == null) { _bpOff = 0; return 0; }        // mpv not authoritative -> element clock is the truth
+    var d = ap - (Q.player.getPositionMs() || 0);
+    if (!isFinite(d) || Math.abs(d) > 10000) return _bpOff;  // nonsense (track-change race) - keep the last
+    _bpOff = Math.abs(d - _bpOff) > 800 ? d : _bpOff + (d - _bpOff) * 0.4; // snap big, smooth small
+  } catch (e) {}
+  return _bpOff;
+}
+function autoOffsetMs() { return _offOverride != null ? _offOverride : bpAudioOffset(); }
 function setLyricServerTag() {
   try {
     var root = document.getElementById("qz-sl-root"); if (!root || root.style.display === "none") return; // skip the full-subtree scan while the lyrics view is closed
