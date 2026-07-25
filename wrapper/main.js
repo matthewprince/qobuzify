@@ -1158,14 +1158,30 @@ function qzbpCommand(msg) {
       qzfu.resolve({ token: msg.token, trackId: msg.trackId, appId: msg.appId, bundleUrl: msg.bundleUrl, formatId: 27 })
         .then((r) => {
           if (dseq !== qzbp.dseq) return;                 // a newer track superseded this resolve
-          if (!r.ok) { bpTrace("directtrack: resolve failed", { reason: r.reason }); qzbpEvt({ type: "directfail", reason: r.reason }); return; }
+          if (!r.ok) {
+            bpTrace("directtrack: resolve failed", { reason: r.reason });
+            // STOP mpv before giving up. It is still holding the PREVIOUS track's URL (--keep-open=yes keeps it
+            // loaded), and the renderer's directfail handler is about to UNMUTE the web element for the NEW
+            // track - so leaving mpv running means two genuinely different songs play at once. Params are
+            // cleared with it so a stale measurement can't keep the badge claiming bit-perfect over browser
+            // audio, and nulling curUrl stops the respawn handler replaying the wrong track. Same set as
+            // `case "stop"` below; deliberately BELOW the dseq guard, since hoisting it above would let a
+            // superseded resolve silence the track that actually won a rapid skip.
+            if (qzbp.enabled) { mpvSend(["stop"]); qzbp.curUrl = null; qzbp.srcParams = null; qzbp.outParams = null; }
+            qzbpEvt({ type: "directfail", reason: r.reason });
+            return;
+          }
           qzbp.curUrl = r.url;
           mpvSend(["loadfile", r.url, "replace"]);
           if (startMs > 250) mpvSend(["seek", startMs / 1000, "absolute"]);
           mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
           bpTrace("directtrack: loaded", { fmt: r.formatId, bit: r.bitDepth, rate: r.rate });
         })
-        .catch((e) => { if (dseq === qzbp.dseq) qzbpEvt({ type: "directfail", reason: "network", detail: String(e && e.message || e) }); });
+        .catch((e) => {
+          if (dseq !== qzbp.dseq) return;
+          if (qzbp.enabled) { mpvSend(["stop"]); qzbp.curUrl = null; qzbp.srcParams = null; qzbp.outParams = null; } // same reason as the !r.ok path above
+          qzbpEvt({ type: "directfail", reason: "network", detail: String(e && e.message || e) });
+        });
       break;
     }
     case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;

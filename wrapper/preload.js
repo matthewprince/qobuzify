@@ -100,10 +100,27 @@ try {
   if (Object.keys(out).length) vendorSrc = "window.__QZ_VENDOR__ = " + JSON.stringify(out) + ";";
 } catch (_) {}
 
-function inject() {
+// The payload runs in the page's MAIN world; this preload is in an ISOLATED world and cannot see
+// window.Qobuzify to know whether it actually booted. The DOM is shared though, so the injected script
+// stamps documentElement when it reaches the end - that attribute is the only honest "it ran" signal here.
+const READY_ATTR = "data-qz-ready";
+const EPILOGUE = "\n;try{document.documentElement.setAttribute('" + READY_ATTR + "','1');}catch(e){}";
+function ranToCompletion() {
+  try { return document.documentElement && document.documentElement.getAttribute(READY_ATTR) === "1"; }
+  catch (_) { return false; }
+}
+
+function inject(force) {
   try {
     if (!document.documentElement) return false;
-    if (document.getElementById("qobuzify-runtime")) return true;
+    // Presence of the TAG used to be treated as success, which was wrong: the script can start, set the
+    // first statement (window.__QOBUZIFY__) and then stop with NO uncaught exception, leaving the tag in
+    // place with nothing defined. The retry loop then saw the tag, declared victory and never tried again,
+    // so the app sat there with no theme, no lyrics and no extensions until a manual reload. Observed live
+    // 2026-07-25. Now the tag only counts when the epilogue also ran.
+    const existing = document.getElementById("qobuzify-runtime");
+    if (existing && !force) return ranToCompletion();
+    if (existing && force) { try { existing.remove(); } catch (_) {} }
     // Vendors first: the payload boots the runtime, which inits extensions immediately, and Lyrics
     // reaches for its renderer during init.
     if (vendorSrc && !document.getElementById("qobuzify-vendors")) {
@@ -114,9 +131,9 @@ function inject() {
     }
     const s = document.createElement("script");
     s.id = "qobuzify-runtime";
-    s.textContent = payload;
+    s.textContent = payload + EPILOGUE;
     document.documentElement.appendChild(s);
-    return true;
+    return ranToCompletion();   // synchronous execution: by now it either finished or it didn't
   } catch (_) { return false; }
 }
 
@@ -126,3 +143,15 @@ if (!inject()) {
   const iv = setInterval(() => { if (inject()) clearInterval(iv); }, 2);
   setTimeout(() => clearInterval(iv), 5000);
 }
+// Backstop for the partial-execution case: if the script is in the DOM but never reached its epilogue, the
+// poll above can never succeed (inject() returns ranToCompletion() and nothing re-runs it). Force a clean
+// re-inject a couple of times, spaced past the page's own heavy parse. Cheap - it no-ops once ready, and
+// the runtime's own re-init guards make a second boot safe.
+let forced = 0;
+const fiv = setInterval(() => {
+  if (ranToCompletion()) { clearInterval(fiv); return; }
+  if (!document.documentElement) return;
+  if (++forced > 3) { clearInterval(fiv); return; }
+  inject(true);
+}, 1500);
+setTimeout(() => clearInterval(fiv), 12000);
