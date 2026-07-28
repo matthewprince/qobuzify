@@ -619,6 +619,30 @@ a.req:hover, a.req-link:hover { border-color: rgba(61, 168, 254, 0.4); color: va
 .dl-other-ico { width: 13px; height: 13px; display: inline-flex; }
 .dl-other-ico svg { width: 100%; height: 100%; }
 
+/* Windows standalone gate: the .exe is not bit-perfect (web-player audio through the OS mixer), so
+   it costs an acknowledgement plus a short wait rather than being a one-click download. */
+.dl-btn-warn {
+  background: linear-gradient(180deg, #f0b34a, #d8912a); color: #1c1204;
+  border: 0; cursor: pointer;
+}
+.dl-btn-wait {
+  background: rgba(255, 255, 255, 0.07); color: var(--body); cursor: default;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); font-variant-numeric: tabular-nums;
+}
+.win-gate {
+  margin-top: 4px; padding: 14px 16px; border-radius: 12px;
+  background: rgba(245, 158, 11, 0.09); box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.32);
+  max-width: 46ch;
+}
+.win-gate-title {
+  margin: 0 0 6px; font-size: 13.5px; font-weight: 700; letter-spacing: 0.01em; color: #f0b34a;
+  text-transform: uppercase;
+}
+.win-gate-body { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--body); }
+.win-gate .dl-btn { margin-top: 2px; }
+.dl-other-gate { display: inline-flex; }
+.dl-other-gate .dl-btn-warn { font-size: 12.5px; padding: 6px 12px; }
+
 /* extensions dense list + search */
 .search {
   width: 100%;
