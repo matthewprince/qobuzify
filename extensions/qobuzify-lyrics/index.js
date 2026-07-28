@@ -595,7 +595,7 @@ function ensureContainer() {
   // MID-SONG WHITE FLASH FIX. The bundle's virtualizer periodically tears down + recreates its rows on scroll
   // (verified via CDP). A freshly recreated row has NO state class yet (Active/Sung/NotSung), and a classless
   // .line defaults to opacity:1 + scale:1 = BRIGHT + FLAT - so for the frame before the bundle re-applies the
-  // class, EVERY visible line flashes highlighted and the active line un-enlarges (Ethan's "all white / flat"
+  // class, EVERY visible line flashes highlighted and the active line un-enlarges (the reported "all white / flat"
   // flash, worst in dense sections that scroll fast). Dim/small only comes from the class. Fix: a classless
   // line inherits the dim inactive look (NotSung opacity + default scale), so a recreated row is invisible
   // instead of a white flash; the instant the bundle assigns a state class this selector stops matching and

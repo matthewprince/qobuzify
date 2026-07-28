@@ -20,7 +20,7 @@
 //     older than ~2 weeks, so most historical plays bounce; we attempt them anyway and report how
 //     many Last.fm accepted.
 //
-// SETUP (Ethan): the key + secret are Worker secrets, not shipped here. Set them once on the worker:
+// SETUP (maintainer): the key + secret are Worker secrets, not shipped here. Set them once on the worker:
 //   wrangler secret put LASTFM_API_KEY   /   wrangler secret put LASTFM_API_SECRET   then deploy.
 // Nothing is sent anywhere before the user connects, and the client stays inert until it holds an sk.
 

@@ -104,7 +104,7 @@ Two macOS-specific realities:
 3. **Decode-parity:** md5 the PCM mpv produces from the captured `file/url` URL against `ffmpeg -i <same URL>` and against a known-good download of the same track — belt-and-suspenders on the §5 master-quality claim.
 4. **Double-audio / sync:** confirm the null-sink route keeps Chromium's `currentTime` advancing and `ended` firing while mpv holds the loopback device exclusively. This validates the §2 contradiction fix.
 
-**Needs Ethan's real USB/SPDIF DAC (VM can't do it):**
+**Needs a real USB/SPDIF DAC (a VM can't do it):**
 - DAC front-panel LED matches per-track rate for a 44.1, a 96, and a 192k track (proves the physical endpoint, not just software).
 - Exclusive-mode hog actually succeeds while PipeWire is running on a real desktop.
 - Relock gap duration on 2-3 DACs (decides whether same-rate queue grouping is worth it).
@@ -157,7 +157,7 @@ Frame: Windows already gets bit-perfect (patches the official app's JUCE/WASAPI-
 
 **Phase 3 — renderer extension:** `extensions/bitperfect/index.js` (capture on `block-trash` fetch chain, mute+null-sink route, store-subscription transport, prefetch enqueue, volume→hw, settings toggle).
 
-**Phase 4 — verify:** null-test + hw_params in CI; then the one-time real-DAC pass on Ethan's hardware (44.1/96/192 front-panel + exclusive-while-PipeWire).
+**Phase 4 — verify:** null-test + hw_params in CI; then the one-time real-DAC pass on physical hardware (44.1/96/192 front-panel + exclusive-while-PipeWire).
 
 **Phase 5 — macOS:** same backend + `coreaudio`; only if a paid Apple Developer ID exists (else defer, ship Linux).
 
