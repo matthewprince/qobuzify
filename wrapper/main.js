@@ -1519,6 +1519,44 @@ async function createWindow() {
     }
   });
 
+  // Back/forward history, for the arrows the runtime injects next to the Qobuz logo. play.qobuz.com
+  // ships no such control (the stock DESKTOP app does), so the wrapper has to provide them. Qobuz routes
+  // with pushState, and Chromium records those as real history entries, so goBack/goForward move through
+  // in-app routes exactly like the desktop app's arrows. navigationHistory is Electron >= 31; fall back to
+  // the legacy methods so an older Electron does not throw.
+  const navHist = () => {
+    const wc = win && !win.isDestroyed() ? win.webContents : null;
+    if (!wc) return null;
+    const h = wc.navigationHistory;
+    return {
+      canBack: h ? h.canGoBack() : wc.canGoBack(),
+      canFwd: h ? h.canGoForward() : wc.canGoForward(),
+      back: () => (h ? h.goBack() : wc.goBack()),
+      fwd: () => (h ? h.goForward() : wc.goForward()),
+    };
+  };
+  const sendNavState = () => {
+    try {
+      const n = navHist();
+      if (n) win.webContents.send("qz:nav-state", { canBack: n.canBack, canFwd: n.canFwd });
+    } catch (_) {}
+  };
+  // did-navigate-in-page is the one that matters here: Qobuz's routing never leaves the document.
+  win.webContents.on("did-navigate", sendNavState);
+  win.webContents.on("did-navigate-in-page", sendNavState);
+  ipcMain.removeAllListeners("qz:nav");
+  ipcMain.removeAllListeners("qz:nav-ask");
+  ipcMain.on("qz:nav", (_e, dir) => {
+    try {
+      const n = navHist();
+      if (!n) return;
+      if (dir === "back" && n.canBack) n.back();
+      else if (dir === "forward" && n.canFwd) n.fwd();
+      setTimeout(sendNavState, 60); // the move is async; report the state it lands in
+    } catch (_) {}
+  });
+  ipcMain.on("qz:nav-ask", sendNavState);
+
   // Tell the page when the window's fullscreen state actually changes, whatever caused it (the lyrics
   // button, F11, or the window manager). The lyrics view draws an expand/collapse icon and only knew
   // about its own clicks, so any other route left the icon lying about the real state.
