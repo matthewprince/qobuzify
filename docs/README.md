@@ -33,7 +33,7 @@ The catch that shapes the whole project: **the audio engine is sealed.** Qobuz p
 
 - A zero-dependency Node CLI (`bin/qobuzify.js`) that installs the runtime and swaps themes
 - The runtime (`runtime/qobuzify-runtime.js`), injected into `app.html`
-- 18 extensions under `extensions/`
+- 29 extensions under `extensions/`
 - 10 themes under `themes/`
 - A lyrics cache-proxy Worker under `server/`
 

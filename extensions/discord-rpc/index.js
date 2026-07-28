@@ -73,6 +73,10 @@ try {
     var playing = false, pos = 0;
     try { playing = Q.player.isPlaying(); } catch (e) {}
     try { pos = Q.player.getPositionMs() || 0; } catch (e) {}
+    // Audible clock: under bit-perfect direct mode mpv makes the sound and the muted element clock
+    // can run ~1.5s behind it. Prefer __QZBP_AUDIOPOS__ (null when mpv is not authoritative) so the
+    // Discord bar tracks what is actually audible - same adoption pattern as qobuzify-lyrics.
+    try { var bpf = window.__QZBP_AUDIOPOS__; var bp = bpf && bpf(); if (bp != null) pos = bp; } catch (e) {}
     var dur = t.durationMs || 0;
     var id = curId(); ensureQuality(id);
     var quality = (id != null && qualCache[id]) || "";

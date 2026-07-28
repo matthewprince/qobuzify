@@ -417,14 +417,22 @@ var unregSettings = Q.registerSettings ? Q.registerSettings({ label: "Blocked & 
 
 // --- auto-skip: sealed engine, so click the native next button. Guard against a runaway if a whole queue
 // is blocked (no more than a handful of skips in a short window). ---
-function clickEl(sel) { var el = document.querySelector(sel); if (el) el.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
+function clickEl(sel) { var el = document.querySelector(sel); if (!el) return false; el.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; }
+// enforcement clicks warn ONCE if the player bar exposes neither the bake (.pct-*) nor the web
+// (.player__action-*) form - a blocked track silently playing on is the one failure we must surface.
+var enforceWarned = false;
+function enforceClick(sel) {
+  if (clickEl(sel)) return true;
+  if (!enforceWarned) { enforceWarned = true; console.warn("[Qobuzify] block-trash: player-bar control not found (" + sel + "); cannot enforce the block/skip"); }
+  return false;
+}
 function safeTrack() { try { return Q.player.getTrack(); } catch (e) { return null; } }
 var skipLog = [], lastNextId = null, lastNextAt = 0, weForcedPause = false;
 function safePlaying() { try { return !!(Q.player.isPlaying && Q.player.isPlaying()); } catch (e) { return false; } }
 // Kill the sound. On a steady track PAUSE is instant (the common "trash the song I'm hearing" case, where
 // `next` alone leaks a fraction of a second); at a track boundary the player ignores it for ~1s, so we keep
 // trying until it takes. safePlaying() guard means we never toggle an already-paused player back to playing.
-function killAudio() { if (safePlaying()) { clickEl(".pct-player-pause"); weForcedPause = true; } }
+function killAudio() { if (safePlaying()) { enforceClick(".pct-player-pause, .player__action-pause"); weForcedPause = true; } }
 function enforce(tr) {
   if (!tr || tr.id == null) return;
   var id = String(tr.id);
@@ -434,7 +442,7 @@ function enforce(tr) {
   if (!deny[id] && !anyBlocked(list)) {
     // landed on a good track. If our own pause left it paused (next-while-paused usually auto-resumes, but
     // guarantee it), resume - so we never leave playback stuck paused. Only un-pauses a pause WE caused.
-    if (weForcedPause) { if (!safePlaying()) clickEl(".pct-player-play"); weForcedPause = false; }
+    if (weForcedPause) { if (!safePlaying()) enforceClick(".pct-player-play, .player__action-play"); weForcedPause = false; }
     lastNextId = null;
     return;
   }
@@ -449,7 +457,7 @@ function enforce(tr) {
   if (skipLog.length >= 20) return; // ultimate backstop: a 100%-blocked queue stops here instead of spinning forever (audio is denied/paused, so it's silent either way)
   lastNextId = id; lastNextAt = now; skipLog.push(now);
   killAudio();
-  clickEl(".pct-player-next");
+  enforceClick(".pct-player-next, .player__action-next");
 }
 // catch-all: a denied track can become (or stay) current without an onChange - clicked while already
 // playing, restored on launch, stalled by the URL deny, or a skip whose `next` got absorbed. Poll and

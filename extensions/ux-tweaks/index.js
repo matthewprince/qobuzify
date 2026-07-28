@@ -10,15 +10,36 @@ var HIDE_ID = "qz-ux-hidehires";
 var LIB_CATS = ["all", "playlists", "tracks", "releases", "artists", "labels"];
 
 // --- double-click a row to play ---
+function fireSeq(el) { ["mousedown", "mouseup", "click"].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); }); }
+var dblWarned = false;
 function onDblClick(e) {
   var row = e.target.closest && e.target.closest(".ListItem");
+  if (row) {
+    // ignore double-clicks on interactive bits (favorite/more buttons, artist links, the number/play cell)
+    if (e.target.closest("a, button, input, [role='button'], .ButtonFavorite, .ListItem__number, .ListItem__actions, .qz-badge")) return;
+    var play = row.querySelector(".ListItem__player");
+    if (!play) return;
+    e.preventDefault();
+    fireSeq(play);
+    return;
+  }
+  // web player (wrapper): album/library rows are .ui-module-track-row with no hover play arrow. The
+  // title itself is click-to-play there, so a dead-space double-click re-fires onto the title (when
+  // the double-click already hit the title, the row's own handler played it - do nothing). If the
+  // row has no title host, fall back to the album header Play.
+  row = e.target.closest && e.target.closest(".ui-module-track-row");
   if (!row) return;
-  // ignore double-clicks on interactive bits (favorite/more buttons, artist links, the number/play cell)
-  if (e.target.closest("a, button, input, [role='button'], .ButtonFavorite, .ListItem__number, .ListItem__actions, .qz-badge")) return;
-  var play = row.querySelector(".ListItem__player");
-  if (!play) return;
-  e.preventDefault();
-  ["mousedown", "mouseup", "click"].forEach(function (t) { play.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); });
+  if (e.target.closest("a, button, input, [role='button'], .ButtonFavorite, .qz-badge")) return;
+  var t = row.querySelector(".cell-group-title span.ui-link") || row.querySelector(".cell-group-title");
+  if (t) {
+    if (t.contains(e.target)) return; // native click-to-play already handled it
+    e.preventDefault();
+    fireSeq(t);
+    return;
+  }
+  var hb = document.querySelector('button[aria-label="Play"].ButtonRoundPrimary--large');
+  if (hb) { e.preventDefault(); fireSeq(hb); return; }
+  if (!dblWarned) { dblWarned = true; console.warn("[Qobuzify] ux-tweaks: double-clicked a .ui-module-track-row with no title host and no header Play; cannot start playback"); }
 }
 
 // --- library remembers your last tab (defaults to Tracks) ---

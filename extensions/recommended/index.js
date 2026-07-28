@@ -78,7 +78,10 @@ function badge(o) { return hires(o) ? '<span class="qz-fy-badge">Hi-Res</span>' 
 // rotation" - the player bar, the previous page mid-transition); a broad selector caught those and
 // played the wrong album.
 function headerPlayBtn() {
-  var cands = document.querySelectorAll("[class*='PageHeader'] button[aria-label='Play']");
+  // Paired selector: the bake renders the header Play inside a PageHeader block; the web player
+  // (wrapper) has no PageHeader - its header Play is the big round primary button (find-available's
+  // proven web form). The visibility check below keeps the wrong-Play hazard out for both.
+  var cands = document.querySelectorAll("[class*='PageHeader'] button[aria-label='Play'], button[aria-label='Play'].ButtonRoundPrimary--large");
   for (var i = 0; i < cands.length; i++) { var r = cands[i].getBoundingClientRect(); if (cands[i].offsetParent && r.width > 4 && r.height > 4) return cands[i]; }
   return null;
 }
@@ -126,10 +129,18 @@ function playTrack(albumId, title, num) {
       if (rows.length) {
         var target = matchTrackRow(rows, title, num);
         if (target) { var p = target.querySelector(".ListItem__player") || target.querySelector(".ListItem__number"); if (p) { ["mousedown", "mouseup", "click"].forEach(function (t) { p.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); }); clearInterval(iv); return; } }
-        if (tries > 12) { var hb = headerPlayBtn(); if (hb) { hb.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); return; } }
+      } else if (document.querySelector(".ui-module-track-row")) {
+        // web player (wrapper): album tracks render as .ui-module-track-row with no per-row play
+        // control (playback is driven internally), so start the album from its header Play right
+        // away - find-available's proven web branch. The user lands on the right album playing.
+        var wb = headerPlayBtn() || document.querySelector('button[aria-label="Play"].ButtonRoundPrimary--large');
+        if (wb) { wb.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); return; }
       }
+      // fallback OUTSIDE the rows-exist gate: it has to fire when the row match fails AND when no
+      // .ListItem rows ever render (the wrapper), or the poll just expires silently.
+      if (tries > 12) { var hb = headerPlayBtn(); if (hb) { hb.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); return; } }
     }
-    if (tries > 40) clearInterval(iv);
+    if (tries > 40) { clearInterval(iv); console.warn("[Qobuzify] recommended: no play control found for album " + albumId + " after ~6s; giving up"); }
   }, 150);
 }
 

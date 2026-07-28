@@ -20,9 +20,41 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Pinned mpv-AppImage release baked into the Linux build. This binary gets exclusive DAC access, so it
+# is pinned by tag AND checksum-verified before extraction (never /latest). To bump: pick the new tag,
+# download its anylinux-x86_64 asset, sha256sum it, update all three values together.
+env:
+  MPV_APPIMAGE_TAG: "v0.41.0@2026-07-01_1782914175"
+  MPV_APPIMAGE_ASSET: "mpv-v0.41.0-anylinux-x86_64.AppImage"
+  MPV_APPIMAGE_SHA256: "9ba489eb78c39fa4d5ef9cfaf9e80b92dcb9f69a05dd365d30255e6dca3c8fbd"
+
 jobs:
+  check-version:
+    name: Tag matches wrapper version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that drifts from wrapper/package.json ships wrongly-named assets and a permanent
+      # update nag (the in-app checker compares package.json's version against the release tag).
+      - name: Assert tag == wrapper/package.json version
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "Not a tag build; skipping the version check."
+            exit 0
+          fi
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          PKG_VER=$(node -p "require('./wrapper/package.json').version")
+          echo "tag=v${TAG_VER} package.json=${PKG_VER}"
+          if [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "::error::Tag v${TAG_VER} does not match wrapper/package.json version ${PKG_VER}. Bump the version or retag."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.os }})
+    needs: check-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,25 +77,21 @@ jobs:
         working-directory: wrapper
         run: npm ci
 
-      - name: Bake Qobuzify payload
-        working-directory: wrapper
-        run: npm run prebuild
-
       # Bundle a portable mpv into the Linux build so the AppImage is self-contained (deb keeps pactl as a
       # dep; mpv is bundled for both). The wrapper spawns mpv as a subprocess for bit-perfect output, so a
       # process-boundary bundle is mere aggregation - unmodified upstream mpv, GPL honored, no libmpv link.
       # anylinux == portable across distros. Extracted tree lands at wrapper/resources/mpv (extraResources).
+      # Runs BEFORE the payload bake: prebuild.js hard-fails a Linux build with no resources/mpv.
+      # Pinned tag + sha256 (env at top of file), verified before extraction.
       - name: Bundle mpv (Linux)
         if: matrix.os == 'ubuntu-latest'
         working-directory: wrapper
         run: |
           set -euo pipefail
-          URL=$(curl -sL https://api.github.com/repos/pkgforge-dev/mpv-AppImage/releases/latest \
-            | grep -oE '"browser_download_url": *"[^"]*anylinux-x86_64\.AppImage"' \
-            | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')
+          URL="https://github.com/pkgforge-dev/mpv-AppImage/releases/download/${MPV_APPIMAGE_TAG//@/%40}/${MPV_APPIMAGE_ASSET}"
           echo "mpv AppImage: $URL"
-          test -n "$URL"
-          curl -sL -o mpv.AppImage "$URL"
+          curl -fsSL -o mpv.AppImage "$URL"
+          echo "${MPV_APPIMAGE_SHA256}  mpv.AppImage" | sha256sum -c -
           chmod +x mpv.AppImage
           ./mpv.AppImage --appimage-extract >/dev/null
           rm -rf resources/mpv && mkdir -p resources
@@ -74,6 +102,10 @@ jobs:
           test -x resources/mpv/AppRun
           resources/mpv/AppRun --version | head -1
           rm -rf mpv.AppImage squashfs-root
+
+      - name: Bake Qobuzify payload
+        working-directory: wrapper
+        run: npm run prebuild
 
       - name: Build installers
         working-directory: wrapper

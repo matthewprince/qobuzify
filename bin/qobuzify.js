@@ -75,8 +75,6 @@ function usage() {
   console.log("  qobuzify update           re-apply the current files, keeping your theme and settings");
   console.log("  qobuzify apply <theme>    set a theme and relaunch (switch live from the Marketplace after)");
   console.log("  qobuzify restore          revert to the stock Qobuz UI");
-  console.log("  qobuzify spotify-login    connect Spotify once (OAuth) so Qobuzify Lyrics gets synced lyrics, auto-renewed");
-  console.log("  qobuzify spotify-token    refresh Qobuzify Lyrics' Spotify token from a running Spotify (debug port)");
 }
 
 async function main() {
@@ -126,34 +124,6 @@ async function main() {
       case "restore": {
         const n = restore(locate());
         console.log(n ? "Restored Qobuz to stock and relaunched." : "No Qobuzify backups found; nothing to restore.");
-        break;
-      }
-      case "spotify-login": {
-        const { spotifyLogin } = require("../lib/spotify-login");
-        let clientId;
-        try { clientId = JSON.parse(fs.readFileSync(path.join(ROOT, ".spotify-creds.json"), "utf8")).client_id; } catch (_) {}
-        if (!clientId || /YOUR_/.test(clientId)) throw new Error("No Spotify client_id in .spotify-creds.json");
-        const port = arg ? parseInt(arg, 10) : 8888;
-        console.log("One-time setup: in your Spotify app (developer.spotify.com/dashboard) add this Redirect URI:");
-        console.log("  https://127.0.0.1:" + port + "/callback");
-        console.log("(Your browser will show a one-time 'not private' warning for the local cert - click through it.)");
-        const tok = await spotifyLogin(clientId, { port });
-        fs.writeFileSync(path.join(ROOT, ".spotify-user-token.json"), JSON.stringify(tok, null, 2));
-        // preserve the user's current theme AND seed so a token refresh doesn't reset the live choice
-        installRuntime(currentTheme() || DEFAULT_THEME, currentSeed() || Date.now());
-        console.log("\nSpotify connected. Qobuzify Lyrics now uses synced lyrics, and the token auto-renews — no further action needed.");
-        break;
-      }
-      case "spotify-token": {
-        const { grabSpotifyToken } = require("../lib/spotify-token");
-        const tok = await grabSpotifyToken(arg ? [parseInt(arg, 10)] : null);
-        if (!tok) throw new Error("No running Spotify with a debug port found.\n  Launch Spotify with --remote-debugging-port=9222 (keep it open), then re-run: qobuzify spotify-token");
-        fs.writeFileSync(path.join(ROOT, ".spotify-user-token.json"), JSON.stringify({ access_token: tok.access_token, expires_at: tok.expires_at }, null, 2));
-        // preserve the user's current theme so a token refresh doesn't reset it
-        // preserve the user's current theme AND seed so a token refresh doesn't reset the live choice
-        installRuntime(currentTheme() || DEFAULT_THEME, currentSeed() || Date.now());
-        console.log("Synced Spotify token (valid until " + new Date(tok.expires_at).toLocaleTimeString() + ") and relaunched Qobuz.");
-        console.log("Qobuzify Lyrics lyrics work until then; re-run this when they stop.");
         break;
       }
       default:

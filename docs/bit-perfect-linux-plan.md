@@ -98,7 +98,7 @@ Two macOS-specific realities:
 
 ## 4. Verification plan (prove it, don't assert it)
 
-**Headless on the Arch VM (192.168.30.220, no real DAC needed):**
+**Headless on a scratch Arch VM (no real DAC needed):**
 1. **snd-aloop null test (gold standard):** `modprobe snd-aloop` (does zero rate/format/channel conversion). Point mpv at `hw:Loopback,0`, simultaneously `arecord -D hw:Loopback,1,0 -f S32_LE -r 192000 -c2` at the track's exact rate. `cmp`/`md5` the captured PCM against the independently `ffmpeg -f s32le`-decoded FLAC. **Byte-identical == the software path is provably bit-perfect.** Runs in CI on every build (pins mpv's locked-down config so a regression trips the null test).
 2. **hw_params introspection:** during playback `cat /proc/asound/card<X>/pcm<Y>p/sub0/hw_params` — confirm format = S24/S32_LE and rate matches the track and is NOT forced to 48000. Through `default` you'd see dmix/resample; through `hw:` you see native. Proves "no resample" negatively.
 3. **Decode-parity:** md5 the PCM mpv produces from the captured `file/url` URL against `ffmpeg -i <same URL>` and against a known-good download of the same track — belt-and-suspenders on the §5 master-quality claim.

@@ -54,6 +54,13 @@ function togglePlay() { clickEl(".player__action-pause, .player__action-play"); 
 function playNext() { clickEl(".pct-player-next, .player__action-next"); }
 function playPrev() { clickEl(".pct-player-prev, .player__action-previous"); }
 function curPosMs() { try { return Q.player.getPositionMs(); } catch (e) { return 0; } }
+// Audible clock: under bit-perfect direct mode mpv makes the sound and the muted element clock can
+// run ~1.5s behind it. __QZBP_AUDIOPOS__ (bitperfect) returns the position of what is actually
+// audible, or null when mpv is not authoritative - same adoption pattern as qobuzify-lyrics.
+function audiblePosMs() {
+  try { var f = window.__QZBP_AUDIOPOS__; var bp = f && f(); if (bp != null) return bp; } catch (e) {}
+  return curPosMs();
+}
 function curDurMs() { try { return (Q.getState().player.currentTrack || {}).duration || 0; } catch (e) { return 0; } } // duration is ms
 
 // ---- seek: React-fiber props.seek({position}) is primary (geometry-independent, works while the bar is
@@ -155,7 +162,7 @@ function publishState() {
   try { var ct = Q.getState().player.currentTrack; id = ct && ct.id; dur = (ct && ct.duration) || 0; } catch (e) {}
   applyMetadata(false);   // cheap: early-returns unless the id or cover changed since last publish
   var playing = isPlaying();
-  var posMs = curPosMs();
+  var posMs = audiblePosMs(); // OS scrubber / MPRIS show what the user HEARS, not the muted clock
   if (ms) {
     try { ms.playbackState = id ? (playing ? "playing" : "paused") : "none"; } catch (e) {}
     if (typeof ms.setPositionState === "function") {
@@ -209,8 +216,8 @@ var ACTIONS = [
   ["stop", function () { if (isPlaying()) togglePlay(); }],
   ["previoustrack", function () { playPrev(); }],
   ["nexttrack", function () { playNext(); }],
-  ["seekbackward", function (d) { var off = (d && d.seekOffset) || 10; seekToMs(curPosMs() - off * 1000); }],
-  ["seekforward", function (d) { var off = (d && d.seekOffset) || 10; seekToMs(curPosMs() + off * 1000); }],
+  ["seekbackward", function (d) { var off = (d && d.seekOffset) || 10; seekToMs(audiblePosMs() - off * 1000); }],
+  ["seekforward", function (d) { var off = (d && d.seekOffset) || 10; seekToMs(audiblePosMs() + off * 1000); }],
   ["seekto", function (d) {
     if (!d || typeof d.seekTime !== "number") return;
     if (d.fastSeek === true && typeof ms.setPositionState === "function") { /* let a fast-seek land as a normal seek */ }
@@ -258,7 +265,7 @@ if (AB) {
 function onMprisCmd(m) {
   if (!m || !m.action) return;
   if (m.action === "seek" || m.action === "setpos") {
-    var t = m.action === "seek" ? curPosMs() + (Number(m.ms) || 0) : (Number(m.ms) || 0);
+    var t = m.action === "seek" ? audiblePosMs() + (Number(m.ms) || 0) : (Number(m.ms) || 0);
     t = Math.max(0, t);
     seekToMs(t);
     try { MPRIS.seeked(t); } catch (e) {}

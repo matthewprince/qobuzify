@@ -184,6 +184,14 @@ The DOM you're scripting against isn't yours and changes between Qobuz versions.
 
 Build against a live Qobuz over the Chrome DevTools Protocol. Hot-load your extension, screenshot, inspect, iterate, then bake it into `app.html` for a faithful final test. The full loop is in [dev-workflow.md](dev-workflow.md).
 
+## Case study: building an EQ (and why it is not shipped)
+
+eq-boost was a prototype equalizer that we removed from the shipped set (a deliberate call: a toggle that does nothing on most platforms is worse than no toggle). The code survives as reference in `docs/examples/eq-boost/`.
+
+What makes an EQ hard is the audio model. In the standalone wrapper, playback is MSE appended into a detached, muted-capable `<audio>` element, not a bare Web Audio graph, so interposing `AudioNode.connect` never fires: there are no nodes to intercept. A real EQ has to claim the element with `createMediaElementSource`, which reroutes the audio through Web Audio's mixer and therefore conflicts with bit-perfect playback (and with the bitperfect extension's muted-element model). On the Windows bake there is nothing to tap at all: audio plays through the native JUCE engine, never the DOM. The honest implementations are `createMediaElementSource` with bit-perfect explicitly off, or, on Linux, filters in the mpv sidecar's `--af` chain, where the audio actually flows.
+
+If you want to build one, start from the reference code and pick a lane first.
+
 ## Submitting it
 
 When it's ready, submit it at [qobuzify.app/submit](https://qobuzify.app/submit) with a link to the source. Approved extensions ship in the bundled catalog, so everyone gets them in the Marketplace. Every submission is reviewed by hand first, because an extension is arbitrary JavaScript running with full access inside Qobuz, so keep the source public until it's merged and don't obfuscate it.

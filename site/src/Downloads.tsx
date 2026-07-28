@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 
 // The single install section. Two honest routes, emphasis driven by the visitor's OS:
-//   Windows -> the installer script patches the Qobuz app you already have (fullest
-//              experience, adds synced lyrics), needs Node.js.
-//   Any OS  -> the standalone app is one download, nothing else needed.
+//   Windows -> the installer script patches the official Qobuz app you already have (you keep
+//              its native bit-perfect playback), needs Node.js.
+//   Any OS  -> the standalone app is one download, nothing else needed. Bit-perfect via the
+//              bundled player is Linux-only for now.
 // Latest version + asset sizes come live from the GitHub releases API so the buttons
 // track whatever is current without redeploying.
 const REPO = "matthewprince/qobuzify";
@@ -82,7 +83,14 @@ export default function Downloads() {
       setTimeout(() => setCopied(false), 1600);
     });
 
-  const find = (id: OSId) => assets?.find((x) => OSES.find((o) => o.id === id)!.is(x.name));
+  // Windows releases carry two exes (-setup = NSIS installer, -portable = single-file stub);
+  // prefer the installer, fall back to whatever exe exists (older releases shipped just one).
+  const find = (id: OSId) => {
+    const matches = assets?.filter((x) => OSES.find((o) => o.id === id)!.is(x.name));
+    if (!matches?.length) return undefined;
+    if (id === "windows") return matches.find((x) => x.name.includes("-setup")) ?? matches[0];
+    return matches[0];
+  };
   const deb = assets?.find((a) => a.name.endsWith(".deb"));
   const primaryOS = OSES.find((o) => o.id === (mine === "windows" ? "windows" : mine))!;
   const primaryAsset = find(primaryOS.id);
@@ -107,8 +115,8 @@ export default function Downloads() {
           <div className="route-badge">Windows, fullest</div>
           <h3>Patch your Qobuz app</h3>
           <p className="route-sub">
-            Adds everything including Windows-only synced lyrics. Patches the Qobuz desktop app you
-            already installed.
+            Patches the official Qobuz desktop app you already installed, keeping its native
+            bit-perfect playback with the full Qobuzify suite on top.
           </p>
           <button className="cmd cmd-lg" onClick={copyCmd} title="Copy install command">
             <code>{INSTALL_CMD}</code>
@@ -132,7 +140,8 @@ export default function Downloads() {
           <h3>Standalone app</h3>
           <p className="route-sub">
             The Qobuz web player wrapped with all themes and the full extension suite, in one
-            download. Nothing else to install.
+            download. Nothing else to install. Bit-perfect output via the bundled player is
+            Linux-only for now; macOS and Windows play through the web player.
           </p>
           <div className="dl-main">
             <div className="dl-os">

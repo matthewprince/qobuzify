@@ -92,7 +92,9 @@ const UPDATE_EVERY_MS = 24 * 60 * 60 * 1000;
 let updateTimer = null, notifiedTag = null;
 
 function semver(v) {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(v || ""));
+  // Anchored: a tag from another product line ("bake-v1.0.0", "android-v0.4.0") must parse as nothing,
+  // not as 1.0.0 - the unanchored form would nag wrapper users toward a release with no wrapper asset.
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v || "").trim());
   return m ? [+m[1], +m[2], +m[3]] : null;
 }
 function isNewer(remote, local) {
@@ -188,8 +190,31 @@ function startVendorServer() {
       }
       res.writeHead(404); res.end("not found");
     });
+    // A bind failure with no 'error' handler is an uncaught exception (or a promise that never settles,
+    // and app.whenReady awaits this before creating any window - a completely dead launch). Start
+    // windowed with vendors unavailable instead, same as qzbpFeedServer does.
+    srv.on("error", () => { vendorPort = 0; resolve(); });
     srv.listen(0, "127.0.0.1", () => { vendorPort = srv.address().port; resolve(); });
   });
+}
+
+// Is there any mpv for the bit-perfect sidecar to run? On mac/win the wrapper ships none (the bundle is
+// Linux-only), so the extension used to show a "Turn on" toggle whose every click ended in a spawn-error
+// toast. The preload asks this synchronously and only exposes __QZBP__ when the answer is yes, which
+// makes the whole extension (badge, settings rows) inert exactly where it cannot work.
+function mpvAvailable() {
+  if (process.env.QZ_MPV) return true;
+  const p = process.platform;
+  const base = process.resourcesPath || path.join(__dirname, "resources");
+  const bundled = p === "win32" ? path.join(base, "mpv", "mpv.exe")
+    : p === "darwin" ? path.join(base, "mpv", "mpv")
+    : path.join(base, "mpv", "AppRun");
+  try { if (fs.existsSync(bundled)) return true; } catch (_) {}
+  try {
+    require("child_process").execFileSync(p === "win32" ? "where" : "which", [p === "win32" ? "mpv.exe" : "mpv"],
+      { timeout: 2000, stdio: "pipe" });
+    return true;
+  } catch (_) { return false; }
 }
 
 // State probe, evaluated in the page and written to the state file.
@@ -314,6 +339,8 @@ async function qzbpFeedStart() {
   qzbp.feed = { token: qzbp.token, chunks: [], res: null, done: false, bytes: 0 };
   qzbp.feedStartedAt = Date.now();   // each track gets its own grace window before the watchdog judges it
   qzbp.curUrl = "http://127.0.0.1:" + port + "/s/" + qzbp.token;
+  qzbp.lastPos = { url: qzbp.curUrl, ms: 0 };
+  qzbp.eofReached = false; qzbp.aoReloads = 0;
   bpTrace("feedStart: loadfile issued", { url: qzbp.curUrl });
   mpvSend(["loadfile", qzbp.curUrl, "replace"]);
   mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
@@ -633,6 +660,98 @@ function soundServerPresent() {
   return false;
 }
 
+// ---- automatic graph rate-following (PipeWire only) ---------------------------------------------
+// Passthrough is byte-exact ONLY when the graph happens to run at the track's rate; before this, any
+// other track was resampled and the badge just said so. Now the graph is asked to FOLLOW the track:
+// `pw-metadata -n settings 0 clock.force-rate <rate>` per track, exactly the mechanism QBZ uses
+// (crates/qbz-audio/pipewire_backend.rs) - it overrides allowed-rates pins, applies within ~100-500ms,
+// and is a runtime setting, never a config file. Discipline, learned from QBZ's own issue #263 leak:
+//  - Only ever reset a force WE applied (rfApplied), so stopping never clobbers another app's force.
+//  - If a force is already set by someone else at enable time, do not rate-follow at all this session.
+//  - Reset to 0 (the user's own policy resumes) on disable/stop/quit/signals - qzbpStop owns it.
+//  - Only force rates the DAC actually supports (read from /proc/asound/cardN/stream0, USB DACs); an
+//    unsupported rate resets the force so the user's own policy decides, and the badge stays honest.
+//  - Re-apply once after ~1.5s when the hardware did not land on the rate (QBZ: USB hubs need a retry;
+//    the graph can also ignore a force applied while no stream is active).
+//  - clock.force-quantum is deliberately never touched (QBZ measured underruns >= 88.2k with it).
+// All async (execFile): a wedged daemon must never block the main thread.
+const qzrf = { foreign: false, checked: false, rate: 0, applied: false, dead: false, verifyT: null };
+function pwMeta(args, cb) {
+  try {
+    require("child_process").execFile("pw-metadata", args, { timeout: 3000, encoding: "utf8" },
+      (err, stdout) => cb(err ? null : stdout));
+  } catch (_) { qzrf.dead = true; cb(null); }
+}
+function qzrfSet(rate) {
+  if (qzrf.dead) return;
+  pwMeta(["-n", "settings", "0", "clock.force-rate", String(rate || 0)], (out) => { if (out == null) qzrf.dead = true; });
+}
+// Union of the "Rates:" lines under Playback across every altset. USB-class devices only; anything
+// without a stream0 (HDA, HDMI) returns null = unknown, and unknown does NOT block forcing - PipeWire
+// clamps to what the device does, same optimistic path QBZ takes when rates can't be read.
+function dacSupportedRates(device) {
+  const c = alsaCardOf(device);
+  if (c == null) return null;
+  try {
+    const txt = fs.readFileSync("/proc/asound/card" + c + "/stream0", "utf8");
+    let inPlayback = false; const rates = {};
+    for (const line of txt.split("\n")) {
+      const t = line.trim();
+      if (t === "Playback:") inPlayback = true;
+      else if (t === "Capture:") inPlayback = false;
+      else if (inPlayback && /^Rates:/.test(t)) {
+        for (const m of t.replace(/^Rates:/, "").split(",")) {
+          const r = parseInt(m.trim(), 10);
+          if (r) rates[r] = 1;
+        }
+      }
+    }
+    const list = Object.keys(rates).map(Number);
+    return list.length ? list : null;
+  } catch (_) { return null; }
+}
+// Called at enable: find out whether someone else is already forcing the clock. Until the answer
+// arrives no force is written (qzrf.checked gates the follower), so there is no race window.
+function qzrfProbeForeign() {
+  qzrf.checked = false; qzrf.foreign = false;
+  pwMeta(["-n", "settings", "0", "clock.force-rate"], (out) => {
+    if (out == null) { qzrf.dead = true; qzrf.checked = true; return; }
+    const m = /value:'(\d+)'/.exec(out);
+    qzrf.foreign = !!(m && parseInt(m[1], 10) > 0);
+    qzrf.checked = true;
+    if (qzrf.foreign) bpTrace("rate-follow OFF: another app already forces the graph clock", { theirs: m[1] });
+  });
+}
+// Called whenever the decoded track rate is (re)known. Idempotent per rate; applies, then verifies
+// against the DAC's real hw_params after 1.5s and re-applies once if the hardware did not follow.
+function qzrfFollow(desired) {
+  if (process.platform !== "linux" || qzrf.dead || qzrf.foreign || !qzrf.checked) return;
+  if (!qzbp.enabled || qzbp.mode !== "passthrough") return;
+  const rates = dacSupportedRates(qzbp.device);
+  const want = (!desired || (rates && rates.indexOf(desired) < 0)) ? 0 : desired;
+  // qzrf.rate is the last value written (0 after an undo, and 0 initially - which also covers "an
+  // unsupported rate arrived before we ever forced anything": nothing written, nothing to undo).
+  if (want === qzrf.rate) return;
+  qzrf.rate = want;
+  if (want !== 0) qzrf.applied = true;
+  bpTrace("rate-follow", { want, desired, dacRates: rates });
+  qzrfSet(want);
+  if (qzrf.verifyT) clearTimeout(qzrf.verifyT);
+  if (want !== 0) {
+    qzrf.verifyT = setTimeout(() => {
+      qzrf.verifyT = null;
+      if (!qzbp.enabled || qzrf.rate !== want) return;
+      const hw = hwRateOf(qzbp.device);
+      if (hw && hw !== want) { bpTrace("rate-follow re-apply: hw did not land", { hw, want }); qzrfSet(want); }
+    }, 1500);
+  }
+}
+function qzrfReset() {
+  if (qzrf.verifyT) { clearTimeout(qzrf.verifyT); qzrf.verifyT = null; }
+  if (qzrf.applied && !qzrf.dead) qzrfSet(0); // only ever undo a force WE applied
+  qzrf.applied = false; qzrf.rate = 0; qzrf.checked = false; qzrf.foreign = false;
+}
+
 // ---- hardware volume ---------------------------------------------------------------------------
 // Bit-perfect means mpv holds the DAC exclusively at unity gain, so the desktop's slider is out of the
 // path entirely. That is not a gap to paper over with software volume: multiplying the samples is
@@ -742,6 +861,29 @@ function qzbpStallCheck() {
     });
   }
   if (!qzbp.enabled || !qzbp.wantPlaying || qzbp.stalled) return;
+  // DIRECT MODE has no feed, so everything below this comment (which reads qzbp.feed) never ran for it:
+  // mpv dying mid-track in direct mode was permanent silence with the badge still up and the renderer
+  // re-muting the element every 300ms. Direct gets its own idle detector: committed (a URL is loaded),
+  // supposed to be playing, socket up, yet core-idle for longer than any honest buffering pause.
+  const isDirect = qzbp.curUrl && !/^http:\/\/127\.0\.0\.1/.test(qzbp.curUrl);
+  if (isDirect) {
+    if (!qzbp.sock) return;              // connecting/respawning: the spawn ladder owns that path
+    if (qzbp.eofReached) return;         // track ended early: the renderer's 'ended' handler resyncs it
+    if (!qzbp.coreIdle) { qzbp.directIdleAt = 0; return; }
+    if (!qzbp.directIdleAt) { qzbp.directIdleAt = Date.now(); return; }
+    const grace = Math.max(qzbp.directIdleAt, qzbp.directLoadedAt || 0, qzbp.enabledAt || 0, qzbp.resumedAt || 0);
+    if (Date.now() - grace < 6000) return; // startup buffering / seek rebuffer: give it room
+    qzbp.stalled = true;
+    bpTrace("STALLED (direct): mpv idle while playing", { url: (qzbp.curUrl || "").slice(0, 40) });
+    try { mpvSend(["stop"]); } catch (_) {}
+    qzbp.srcParams = null; qzbp.outParams = null;
+    qzbpEvt({ type: "stalled", why: "the direct stream stopped producing sound" });
+    return;
+  }
+  // Tap mode: a clean feed EOF (endfeed landed, mpv drained the track) is the healthy end of a track,
+  // not a stall - without this, the boundary window between drain and the next init could false-kill
+  // bit-perfect on slow connections.
+  if (qzbp.eofReached) return;
   // "No media bytes reached mpv" is NO LONGER a failure to alarm on. The renderer now mutes the web element
   // only on the `live` event (real audio in mpv), so "no bytes" simply means bit-perfect has not engaged yet
   // - the browser is still playing the track normally, nothing is silent, nothing needs rescuing. It engages
@@ -758,7 +900,11 @@ function qzbpStallCheck() {
   // 2026-07-20 trace): the page stalled its appends for 10.8s, bytes resumed, and this check fired 41ms
   // after the resume - before mpv could flip core-idle - killing a stream that was actively recovering.
   // A feed that is receiving bytes is by definition not the "went live then sat idle" corpse this hunts.
-  const since = Math.max(qzbp.enabledAt || 0, qzbp.feedStartedAt || 0, qzbp.lastFeedAt || 0);
+  // resumedAt closes a race: resume flips wantPlaying synchronously while mpv's core-idle only clears
+  // after the unpause round-trips, so on a fully-buffered track (all three feed stamps minutes stale) a
+  // watchdog tick landing in that window killed bit-perfect on a healthy unpause. Every resume and seek
+  // re-arms its own grace.
+  const since = Math.max(qzbp.enabledAt || 0, qzbp.feedStartedAt || 0, qzbp.lastFeedAt || 0, qzbp.resumedAt || 0);
   if (Date.now() - since < STALL_MS) return;
   qzbp.stalled = true;
   bpTrace("STALLED: mpv went live then sat idle", { device: qzbp.device, mode: qzbp.mode });
@@ -824,7 +970,15 @@ function mpvArgs(sockPath, mode) {
   // Note the fallback text does NOT match the open-failure patterns watched below, so walking down this
   // list never looks like a refused device and never triggers a mode change.
   if (mode === "passthrough") {
-    a.push("--ao=pipewire,pulse,alsa", "--audio-exclusive=no");
+    // --audio-format=s32: never let the output narrow below the source depth. Measured live 2026-07-27:
+    // a 24-bit stream decoded to s32 while the pulse AO had negotiated s16 output - pipewire-pulse's
+    // default sample spec is s16, and when the stream connect races a device transition ao_pulse can land
+    // on that server default instead of the requested format, silently truncating hi-res to 16-bit. Every
+    // FLAC Qobuz serves is an integer format of 24 bits or fewer, and widening into s32 is bit-exact, so
+    // forcing s32 costs nothing and removes mpv's own discretion. The audio-params handler additionally
+    // watches for a narrowed negotiation and issues ao-reload as the backstop (the force alone cannot help
+    // when the AO itself falls back internally).
+    a.push("--ao=pipewire,pulse,alsa", "--audio-exclusive=no", "--audio-format=s32");
     return a;
   }
   // Exclusive: name the hw: device explicitly. Left to itself mpv opens ALSA "default", which on any
@@ -950,11 +1104,32 @@ function qzbpConnect(s) {
       if (!line.trim()) continue;
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
       if (m.event === "property-change") {
-        if (m.name === "time-pos" && m.data != null) qzbpEvt({ type: "position", ms: Math.round(m.data * 1000) });
+        if (m.name === "time-pos" && m.data != null) {
+          const ms = Math.round(m.data * 1000);
+          qzbp.lastPosAt = Date.now();
+          // URL-bound position memory for the respawn/reconnect restore below. Bound to the URL it was
+          // measured against, or a respawn could seek a NEW track to an OLD track's position.
+          if (qzbp.curUrl) qzbp.lastPos = { url: qzbp.curUrl, ms };
+          qzbpEvt({ type: "position", ms });
+        }
         else if (m.name === "audio-params" || m.name === "audio-out-params") {
           if (m.data) {
-            if (m.name === "audio-params") qzbp.srcParams = m.data; else qzbp.outParams = m.data;
+            if (m.name === "audio-params") {
+              qzbp.srcParams = m.data;
+              // The decoded rate is known: ask the graph to follow it (no-op off Linux/passthrough).
+              qzrfFollow(m.data.samplerate || 0);
+            } else qzbp.outParams = m.data;
             qzbpReportParams();
+            // Narrowing backstop: the AO negotiated FEWER bits than the decode carries (measured live:
+            // s32 decode, s16 out - ao_pulse fell back to the server's default sample spec). ao-reload
+            // renegotiates, which lands s32 in every reproduction; capped so a device that genuinely
+            // cannot do better ends at an honest badge instead of a reload loop.
+            const sp = qzbp.srcParams, op = qzbp.outParams;
+            if (qzbp.mode === "passthrough" && sp && op && fmtBits(op.format) < fmtBits(sp.format) && (qzbp.aoReloads || 0) < 2) {
+              qzbp.aoReloads = (qzbp.aoReloads || 0) + 1;
+              bpTrace("ao-reload: output narrowed below source depth", { src: sp.format, out: op.format, attempt: qzbp.aoReloads });
+              mpvSend(["ao-reload"]);
+            }
           } else {
             // mpv unloaded the stream (stop command, watchdog kill): a cleared property clears our
             // copy, or the re-verify timer keeps treating the dead stream's rates as measurements.
@@ -962,7 +1137,10 @@ function qzbpConnect(s) {
           }
         }
         else if (m.name === "core-idle") qzbp.coreIdle = m.data === true; // true = mpv not producing audio (paused/buffering/idle)
-        else if (m.name === "eof-reached" && m.data === true) qzbpEvt({ type: "ended" });
+        else if (m.name === "eof-reached") {
+          qzbp.eofReached = m.data === true;
+          if (m.data === true) qzbpEvt({ type: "ended" });
+        }
       } else if (m.event === "end-file" && m.reason === "error") {
         qzbpEvt({ type: "error", what: "load" });
       }
@@ -1065,14 +1243,30 @@ function qzbpSpawn(mode) {
       s.removeListener("error", onErr);
       clearInterval(iv);
       qzbpConnect(s);
-      if (qzbp.curUrl) { mpvSend(["loadfile", qzbp.curUrl, "replace"]); mpvSend(["set_property", "pause", !qzbp.wantPlaying]); }
+      if (qzbp.curUrl) {
+        mpvSend(["loadfile", qzbp.curUrl, "replace"]);
+        // Restore the position, URL-bound. A crash respawn / mode-change replay used to restart from
+        // 0:00: in direct mode the song audibly restarted for seconds until the drift net caught it, and
+        // in tap mode (which has NO drift net) the sound played the whole rest of the track offset from
+        // the UI and lyrics. lastPos is stamped against the URL it was measured on (or the startMs the
+        // load was issued with), so a stale position can never be applied to a different track.
+        if (qzbp.lastPos && qzbp.lastPos.url === qzbp.curUrl && qzbp.lastPos.ms > 1000) {
+          mpvSend(["seek", qzbp.lastPos.ms / 1000, "absolute"]);
+        }
+        mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
+        // A tap feed that was already live is served again from its retained chunks; tell the renderer,
+        // whose bpLive was cleared by the mode event, so it re-mutes instead of arming its stall fallback.
+        if (qzbp.feed && qzbp.feed.live) qzbpEvt({ type: "live" });
+      }
     });
   }, 100);
 }
 function qzbpStop() {
   qzbp.enabled = false;
+  qzrfReset(); // hand the graph clock back to the user's own policy (only if WE forced it)
   if (qzbp.stallTimer) { clearInterval(qzbp.stallTimer); qzbp.stallTimer = null; }
   qzbp.stalled = false;
+  qzbp.eofReached = false; qzbp.directIdleAt = 0; qzbp.lastPos = null;
   try { if (qzbp.sock) qzbp.sock.end(); } catch (_) {}
   try { if (qzbp.proc) qzbp.proc.kill(); } catch (_) {}
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
@@ -1112,6 +1306,9 @@ function qzbpCommand(msg) {
         // matching graph rate, byte-identical at the converter.
         const mode = pickMode();
         qzbpEvt({ type: "mode", mode });
+        // Rate-following handshake: find out whether another app already forces the graph clock before
+        // this session writes anything. No force is applied until the probe answers.
+        if (process.platform === "linux" && mode === "passthrough") qzrfProbeForeign();
         // Tell the renderer whether this DAC has a hardware knob, so the slider can go live instead of
         // staying greyed. Report the CURRENT hardware level too: the device keeps its own state across
         // launches, so the slider must adopt the hardware's position rather than assume its own.
@@ -1172,6 +1369,10 @@ function qzbpCommand(msg) {
             return;
           }
           qzbp.curUrl = r.url;
+          // Seed the URL-bound position with the load position: if the reconnect replay fires before the
+          // first time-pos report, it restores the startMs instead of restarting from 0.
+          qzbp.lastPos = { url: r.url, ms: startMs };
+          qzbp.directLoadedAt = Date.now(); qzbp.directIdleAt = 0; qzbp.eofReached = false; qzbp.aoReloads = 0;
           mpvSend(["loadfile", r.url, "replace"]);
           if (startMs > 250) mpvSend(["seek", startMs / 1000, "absolute"]);
           mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
@@ -1184,9 +1385,13 @@ function qzbpCommand(msg) {
         });
       break;
     }
-    case "play": qzbp.wantPlaying = true; mpvSend(["set_property", "pause", false]); break;
+    case "play": qzbp.wantPlaying = true; qzbp.resumedAt = Date.now(); mpvSend(["set_property", "pause", false]); break;
     case "pause": qzbp.wantPlaying = false; mpvSend(["set_property", "pause", true]); break;
-    case "seek": mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;
+    case "seek": qzbp.resumedAt = Date.now(); mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;
+    // Fixed-output DACs (no hardware mixer) leave the Qobuz mute/slider-at-zero with nothing to drive.
+    // mpv's mute is a stream flag, not a sample multiply, so it is the one control that can work there
+    // without breaking bit-perfect while unmuted.
+    case "mute": mpvSend(["set_property", "mute", !!msg.on]); break;
     // Stale params must not outlive the stream they measured (the mpv-side property clear also
     // handles this, but only while the socket is up).
     case "stop": mpvSend(["stop"]); qzbp.curUrl = null; qzbp.feed = null; qzbp.srcParams = null; qzbp.outParams = null; break;
@@ -1205,6 +1410,15 @@ function qzbpCommand(msg) {
 async function createWindow() {
   const ses = session.fromPartition(PARTITION);
 
+  // Electron's default with no handler is to APPROVE every renderer permission request - microphone
+  // included. A music shell needs almost none of them; allow the few Qobuz can plausibly use and deny
+  // the rest without a prompt.
+  const ALLOWED_PERMISSIONS = ["notifications", "fullscreen", "clipboard-sanitized-write"];
+  try {
+    ses.setPermissionRequestHandler((_wc, permission, cb) => cb(ALLOWED_PERMISSIONS.includes(permission)));
+    ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.includes(permission));
+  } catch (_) {}
+
   // Serve extension vendor bundles: the extension asks the page origin for
   // /node_modules/@qobuz/qobuz-dwp-ui/dist/qobuzify-ext-<id>.js (404 on Qobuz's server), so
   // redirect that to the loopback server. Redirect to localhost is allowed from https.
@@ -1214,9 +1428,25 @@ async function createWindow() {
     cb({});
   });
 
+  // Restore the user's window arrangement instead of a hardcoded 1440x900 on the primary display every
+  // launch. Bounds are only honored when they still intersect a connected display, so a session that
+  // ended on a since-unplugged monitor comes back on-screen rather than invisible.
+  const WINSTATE = path.join(app.getPath("userData"), "qz-window.json");
+  let ws = null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(WINSTATE, "utf8"));
+    const { screen } = require("electron");
+    const onScreen = screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return raw.x < a.x + a.width - 40 && raw.x + raw.width > a.x + 40 && raw.y < a.y + a.height - 40 && raw.y >= a.y - 40;
+    });
+    if (onScreen && raw.width >= 640 && raw.height >= 480) ws = raw;
+  } catch (_) {}
+
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: ws ? ws.width : 1440,
+    height: ws ? ws.height : 900,
+    ...(ws && Number.isFinite(ws.x) ? { x: ws.x, y: ws.y } : {}),
     backgroundColor: "#0d0d10",
     title: "Qobuzify",
     // Electron's default application menu ("File Edit View Window Help") lives in the client area, not the
@@ -1247,6 +1477,18 @@ async function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
     return { action: "deny" };
+  });
+
+  // window.open is covered above, but a plain main-frame navigation (a target=_self link in Qobuz's
+  // store/magazine/legal content, a location.assign) was not: it replaced the whole app with the
+  // destination site, stranding the user (the shell has no back button) - and that site then ran inside
+  // persist:qobuz with webSecurity off and every preload bridge exposed. Keep the shell on Qobuz;
+  // everything else opens in the real browser. www.qobuz.com stays allowed: sign-in lives there.
+  win.webContents.on("will-navigate", (e, url) => {
+    if (!/^https:\/\/([a-z0-9-]+\.)*qobuz\.com\//i.test(url)) {
+      e.preventDefault();
+      try { shell.openExternal(url); } catch (_) {}
+    }
   });
 
   // Reliable fullscreen. setFullScreen itself works on Linux (proven), but the trigger was the problem:
@@ -1286,6 +1528,13 @@ async function createWindow() {
 
   // Clean lifecycle: clear the (dev-only) probe interval and drop the window reference when it closes,
   // so nothing runs against a destroyed webContents during teardown.
+  if (ws && ws.maximized) { try { win.maximize(); } catch (_) {} }
+  win.on("close", () => {
+    try {
+      const b = win.getNormalBounds();
+      fs.writeFileSync(WINSTATE, JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized() }));
+    } catch (_) {}
+  });
   win.on("closed", () => {
     if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
     if (updateTimer) { clearInterval(updateTimer); updateTimer = null; } // never outlive the window
@@ -1338,11 +1587,23 @@ async function createWindow() {
       crashResetT = setTimeout(() => { crashReloads = 0; }, 15000);
     }
   });
+  // Unresponsive is capped like the crash path, and given 5s to recover first: the big library page can
+  // block the main thread for a while on slow hardware and come back on its own - reloading instantly
+  // (and without a cap) turned that into an endless reload loop that killed playback every cycle.
+  let unresp = false;
   win.webContents.on("unresponsive", () => {
     saveState({ stage: "unresponsive" });
-    try { if (win) win.webContents.reload(); } catch (_) {}
+    unresp = true;
+    setTimeout(() => {
+      if (!unresp || !win || win.isDestroyed()) return;
+      if (crashReloads++ < 5) {
+        try { win.webContents.reload(); } catch (_) {}
+        clearTimeout(crashResetT);
+        crashResetT = setTimeout(() => { crashReloads = 0; }, 15000);
+      }
+    }, 5000);
   });
-  win.webContents.on("responsive", () => saveState({ stage: "responsive-again" }));
+  win.webContents.on("responsive", () => { unresp = false; saveState({ stage: "responsive-again" }); });
 
   win.loadURL("https://play.qobuz.com/discover");
 
@@ -1381,6 +1642,8 @@ app.whenReady().then(async () => {
   saveState({ stage: "vendor-up", vendorPort });
   ipcMain.on("qzbp:cmd", (_e, msg) => { try { qzbpCommand(msg); } catch (_) {} }); // bit-perfect sidecar control
   ipcMain.on("qzbp:feed", (_e, bytes) => { try { qzbpFeedChunk(bytes); } catch (_) {} }); // decrypted FLAC from MSE
+  // Synchronous by design: the preload decides whether to expose __QZBP__ at all before the page boots.
+  ipcMain.on("qzbp:avail", (e) => { try { e.returnValue = mpvAvailable(); } catch (_) { e.returnValue = false; } });
   // Lyrics-view fullscreen button. Same call F11 makes; it used to go over the loopback bridge, which the
   // https page can't reach, so it silently did nothing (see preload's __QZFS__ note).
   ipcMain.on("qz:fullscreen", (_e, on) => { try { if (win && !win.isDestroyed()) win.setFullScreen(!!on); } catch (_) {} });
