@@ -501,6 +501,54 @@
     a.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); if (spec.onClick) spec.onClick(); });
     return a;
   }
+  // --- back / forward arrows (wrapper only) -------------------------------------------------------
+  // The stock Qobuz DESKTOP app draws history arrows immediately right of its logo. play.qobuz.com has
+  // no equivalent control anywhere, so in the wrapper those arrows simply were not there and users who
+  // came from the desktop app read it as missing functionality. The bake needs nothing: it IS the
+  // desktop app and already has them. Gated on the preload bridge, so this is inert everywhere else.
+  var NAV_SVG = {
+    back: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 4 7 12l8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    forward: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4l8 8-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+  var navHistOff = null;
+  function injectNavHistory() {
+    var NAV = (typeof window !== "undefined" && window.__QZNAV__) || null;
+    if (!NAV) return;                                   // bake, or a build without the bridge
+    var brand = document.querySelector(".NavBar__brand");
+    if (!brand || !brand.parentElement) return;
+    var host = brand.parentElement;
+    if (host.querySelector(".qz-navhist")) return;      // already placed (React re-render kept it)
+    var wrap = document.createElement("div");
+    wrap.className = "qz-navhist";
+    ["back", "forward"].forEach(function (dir) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "qz-navhist-btn";
+      b.setAttribute("data-qz-nav-dir", dir);
+      b.setAttribute("aria-label", dir === "back" ? "Back" : "Forward");
+      b.title = dir === "back" ? "Back" : "Forward";
+      b.innerHTML = NAV_SVG[dir];
+      b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); NAV.go(dir); });
+      wrap.appendChild(b);
+    });
+    // Right of the logo, before the nav links - where the desktop app puts them.
+    if (brand.nextSibling) host.insertBefore(wrap, brand.nextSibling); else host.appendChild(wrap);
+    // Reflect real history state rather than guessing: main is the only side that knows.
+    if (!navHistOff) {
+      navHistOff = NAV.onState(function (s) {
+        try {
+          var w = document.querySelector(".qz-navhist");
+          if (!w || !s) return;
+          var bb = w.querySelector('[data-qz-nav-dir="back"]');
+          var fb = w.querySelector('[data-qz-nav-dir="forward"]');
+          if (bb) bb.disabled = !s.canBack;
+          if (fb) fb.disabled = !s.canFwd;
+        } catch (e) {}
+      });
+    }
+    try { NAV.ask(); } catch (e) {}
+  }
+
   function injectNavItems() {
     if (!navItems.length) return;
     var anchor = document.querySelector(".NavItem:not(.qz-navitem)");
@@ -829,18 +877,18 @@
     injectUiStyle();
     var a = activeSlug();
     if (a) applyTheme(a, false); else liveStyle().textContent = "";
-    injectMenu(); injectNavItems();
+    injectMenu(); injectNavItems(); injectNavHistory();
     // re-inject whenever React re-renders the navbar (setTimeout, not rAF, so it
     // still fires when the window is backgrounded), coalesced to one run per burst.
     var pending;
-    function schedule() { if (pending) return; pending = setTimeout(function () { pending = null; injectMenu(); injectNavItems(); injectPlayerSlots(); }, 80); }
+    function schedule() { if (pending) return; pending = setTimeout(function () { pending = null; injectMenu(); injectNavItems(); injectNavHistory(); injectPlayerSlots(); }, 80); }
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
     // a pure window resize doesn't mutate the DOM, so the observer above won't fire - re-fit the
     // player-bar slots explicitly so buttons re-appear/hide as the window widens or narrows.
     var rzT; window.addEventListener("resize", function () { clearTimeout(rzT); rzT = setTimeout(fitPlayerSlots, 120); });
     // startup guarantee: poll until the navbar mounts, then stop
     var tries = 0;
-    var iv = setInterval(function () { injectMenu(); injectNavItems(); injectPlayerSlots(); if (++tries > 40 || document.querySelector('[data-qz="qobuzify"]')) clearInterval(iv); }, 250);
+    var iv = setInterval(function () { injectMenu(); injectNavItems(); injectNavHistory(); injectPlayerSlots(); if (++tries > 40 || document.querySelector('[data-qz="qobuzify"]')) clearInterval(iv); }, 250);
 
     // bring up the extension API + load enabled extensions once the store is ready
     initExtensionsWhenReady();
@@ -971,6 +1019,15 @@
     ".qz-ext-meta{font-size:11px;color:#7e8796;margin-top:10px;}",
     ".qz-foot{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;border-top:1px solid rgba(255,255,255,.07);font-size:12px;color:#7e8796;}",
     // shared player-bar button slots (Q.playerSlot): auto-spaced zones + a native-sized icon button helper
+    // Back/forward arrows (wrapper only). Sized and spaced to sit between the logo and the nav links
+    // without shifting them; -webkit-app-region:no-drag because the top bar is a window drag handle and
+    // a draggable region swallows clicks.
+    ".qz-navhist{display:inline-flex;align-items:center;gap:2px;margin:0 6px 0 10px;-webkit-app-region:no-drag;}",
+    ".qz-navhist-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;",
+    "border:0;border-radius:999px;background:transparent;color:currentColor;cursor:pointer;opacity:.75;",
+    "transition:background .15s,opacity .15s;}",
+    ".qz-navhist-btn:hover:not(:disabled){background:rgba(255,255,255,.10);opacity:1;}",
+    ".qz-navhist-btn:disabled{opacity:.28;cursor:default;}",
     ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 0 auto;}",
     // Buttons flow in ascending `order` left-to-right, so the highest-order button (Full App Display = 40)
     // sits at the OUTER (right) edge and the lowest (Lyrics = 10) nearest the centred transport. fitPlayerSlots

@@ -86,6 +86,24 @@ try {
   });
 } catch (_) {}
 
+// Bridge for back/forward navigation. The stock Qobuz DESKTOP app draws history arrows next to its
+// logo; play.qobuz.com has no such control at all (verified live: NavBar__leftContainer goes straight
+// from .NavBar__brand to .NavBar__items), so wrapper users lost them. The renderer must not guess at
+// history depth - only the main process knows whether a back/forward entry exists - so it asks, and
+// main pushes the state on every navigation. onState uses the same single-slot pattern as __QZFS__.
+try {
+  let navCb = null;
+  try { ipcRenderer.on("qz:nav-state", (_e, s) => { try { if (navCb) navCb(s); } catch (_) {} }); } catch (_) {}
+  contextBridge.exposeInMainWorld("__QZNAV__", {
+    go: (dir) => { try { ipcRenderer.send("qz:nav", dir); } catch (_) {} },
+    ask: () => { try { ipcRenderer.send("qz:nav-ask"); } catch (_) {} },
+    onState: (cb) => {
+      navCb = typeof cb === "function" ? cb : null;
+      return () => { if (navCb === cb) navCb = null; };
+    },
+  });
+} catch (_) {}
+
 // Identify this shell to the runtime. Without it the runtime reports platform=desktop, which is the
 // BAKE's channel, so wrapper users get the bake's release info (a different product with its own version
 // line). Map to the OS channel names the update endpoint serves.
