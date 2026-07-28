@@ -10,14 +10,27 @@ const path = require("path");
 // Bridge for the bit-perfect audio sidecar. contextIsolation is on, so the injected runtime (main world)
 // can't reach ipcRenderer directly - expose a tiny, explicit channel. The renderer sends transport commands
 // (load/play/pause/seek/volume) to the main process, which relays them to the bundled mpv; mpv's events
-// (position/params/ended/error/mode) come back the other way. Guarded so a non-bitperfect build is unaffected.
+// (position/params/ended/error/mode) come back the other way.
+// Only exposed when an mpv actually exists (bundled, QZ_MPV, or on PATH): the mac/win wrappers ship no
+// mpv, and exposing the bridge there put a "Turn on" toggle in front of users whose every click could
+// only end in a spawn-error toast. No bridge -> the extension is inert -> no toggle, honestly.
+// `on` uses the same single-listener replaceable-slot pattern as __QZFS__/__QZMPRIS__ below (the comment
+// there explains why); a bare ipcRenderer.on per call stacked one permanent listener per Marketplace
+// toggle cycle.
 try {
-  contextBridge.exposeInMainWorld("__QZBP__", {
-    send: (msg) => { try { ipcRenderer.send("qzbp:cmd", msg); } catch (_) {} },
-    // Audio bytes get their own channel: segments run to megabytes and shouldn't ride the command path.
-    feed: (bytes) => { try { ipcRenderer.send("qzbp:feed", bytes); } catch (_) {} },
-    on: (cb) => { try { ipcRenderer.on("qzbp:evt", (_e, m) => { try { cb(m); } catch (_) {} }); } catch (_) {} },
-  });
+  if (ipcRenderer.sendSync("qzbp:avail")) {
+    let bpCb = null;
+    try { ipcRenderer.on("qzbp:evt", (_e, m) => { try { if (bpCb) bpCb(m); } catch (_) {} }); } catch (_) {}
+    contextBridge.exposeInMainWorld("__QZBP__", {
+      send: (msg) => { try { ipcRenderer.send("qzbp:cmd", msg); } catch (_) {} },
+      // Audio bytes get their own channel: segments run to megabytes and shouldn't ride the command path.
+      feed: (bytes) => { try { ipcRenderer.send("qzbp:feed", bytes); } catch (_) {} },
+      on: (cb) => {
+        bpCb = typeof cb === "function" ? cb : null;
+        return () => { if (bpCb === cb) bpCb = null; };
+      },
+    });
+  }
 } catch (_) {}
 
 // Bridge for OS window fullscreen. The lyrics view's fullscreen button used to POST to the loopback
@@ -78,7 +91,10 @@ try {
 // line). Map to the OS channel names the update endpoint serves.
 try {
   const OS = process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux";
-  contextBridge.exposeInMainWorld("__QZWRAP__", { os: OS });
+  // updatesHandled: the wrapper's main process already runs its own release check (notification + in-page
+  // banner), so the runtime must NOT stack its /v1/version toast on top - one release used to produce
+  // three simultaneous prompts. The runtime checks this marker and keeps only its settings-panel entry.
+  contextBridge.exposeInMainWorld("__QZWRAP__", { os: OS, updatesHandled: true });
 } catch (_) {}
 
 let payload = "";

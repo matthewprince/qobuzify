@@ -1,6 +1,6 @@
 # Releasing
 
-Not implemented yet. This is the agreed design, written down while it was fresh so that shipping it later is transcription rather than rediscovery. Nothing in here is live: as of 0.2.2 the updater still reads `/releases/latest` and every release still goes to every platform.
+Not implemented yet. This is the agreed design, written down while it was fresh so that shipping it later is transcription rather than rediscovery. Nothing in here is live: as of 0.3.1 the updater still reads `/releases/latest` and every release still goes to every platform.
 
 ## The problem
 
@@ -24,7 +24,7 @@ One shared version line across linux, win and mac, strictly monotonic. Never for
 The suffix is semver **build metadata** (`+`), not a prerelease identifier (`-`). This matters more than it looks:
 
 - `-linux` sorts *below* `0.3.0` in every semver implementation, and reads as "beta" to a human. `+linux` does neither.
-- The existing version regex, `/(\d+)\.(\d+)\.(\d+)/` at `wrapper/main.js:87`, parses it unchanged.
+- The current version regex, `/(\d+)\.(\d+)\.(\d+)/` at `wrapper/main.js (semver()/RELEASES_API near the top)`, parses it unchanged. But that regex is unanchored, and that is a bug this design leans on fixing: it also "parses" `bake-v1.0.0` and `android-v0.2.0` as wrapper versions, so the tag filter below only works with the anchored replacement in the updater snippet.
 - The existing CI trigger, `tags: ["v*"]`, matches it unchanged.
 
 Suffix atoms are exactly `linux`, `win`, `mac`, dot joined, alphabetical. **No suffix means all three**, which is also a claim that you tested all three.
@@ -53,11 +53,20 @@ This is the load-bearing rule of the whole document. **Never cut a release by ha
 
 ## The updater change
 
-`wrapper/main.js`, replacing the constants at 82 to 83 and the body of `checkForUpdate()` at ~140. `semver()`, `isNewer()`, `tellAboutUpdate()`, `notifiedTag`, the 25s/24h scheduling and `QZ_NO_UPDATE_CHECK` all stay exactly as they are.
+`wrapper/main.js`, replacing the constants at 89 to 90 and the body of `checkForUpdate()` at ~147. `isNewer()`, `tellAboutUpdate()`, `notifiedTag`, the 25s/24h scheduling and `QZ_NO_UPDATE_CHECK` all stay exactly as they are. `semver()` does **not** stay: it must be re-anchored (first block below), or the `bake-v*` / `android-v*` filter never filters anything.
 
 Stop asking "what is the newest release" and start asking "what is the newest release that actually contains something I could install". Filter on **assets, not on the tag**: the tag is intent, the assets are reality. A release whose Windows runner died has no `.exe`, and Windows clients then correctly stay quiet.
 
 ```js
+// ANCHORED, unlike the shipped /(\d+)\.(\d+)\.(\d+)/, which happily reads "bake-v1.0.0" as 1.0.0
+// and would nag wrapper users toward a bake release. The leading-v boundary plus the (\+|$) tail
+// accepts "v0.3.1", "v0.3.1+linux" and a bare "0.3.1" (app.getVersion()), and rejects bake-v*,
+// android-v* and "0.3.1-dev" builds.
+function semver(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\+|$)/.exec(String(v || ""));
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+
 const RELEASES_API  = "https://api.github.com/repos/matthewprince/qobuzify/releases?per_page=100";
 const RELEASES_PAGE = "https://github.com/matthewprince/qobuzify/releases";
 let updateTimer = null, notifiedTag = null, releasesEtag = null;
@@ -125,20 +134,20 @@ In `checkForUpdate()`, send `If-None-Match: releasesEtag` when present and store
 
 ## Fix these at the same time
 
-Three real bugs found while designing this, all verified in the repo. They are latent now and become user visible the moment updates work correctly.
+Three real bugs were found while designing this. Two are fixed since; one is still live.
 
-- **`wrapper/package.json` `artifactName` collides nsis and portable.** It is `Qobuzify-${version}-${os}-${arch}.${ext}`, and the `win` target list is `["nsis", "portable"]`, so both render `Qobuzify-0.2.2-win-x64.exe`. Only one survives upload, which is why v0.2.2 shipped exactly one `.exe`. **The portable build is silently discarded today.** Give each win target its own name (`...-win-${arch}-nsis.exe`, `...-win-${arch}-portable.exe`) and note that the updater matcher above then needs the flavour appended.
+- **STILL LIVE: `wrapper/package.json:27` `artifactName` collides nsis and portable.** It is `Qobuzify-${version}-${os}-${arch}.${ext}`, and the `win` target list is `["nsis", "portable"]`, so both render `Qobuzify-0.2.2-win-x64.exe`. Only one survives upload, which is why v0.2.2 shipped exactly one `.exe`. **The portable build is silently discarded today.** Give each win target its own name (`...-win-${arch}-nsis.exe`, `...-win-${arch}-portable.exe`) and note that the updater matcher above then needs the flavour appended.
 
-- **`server/src/index.js:31` still says `latest: "0.1.9"`** while the app is on 0.2.2. This is exactly the second-source-of-truth rot that argued against serving an update manifest from the Worker, and it is why the `plan` job asserts the tag against `package.json` instead. If `/v1/version` stays mounted, a hint-less `platform=desktop` must resolve to the **bake**, not the Electron line, because those are the un-upgradable installs.
+- **FIXED: the Worker's stale version constant.** `server/src/index.js` said `latest: "0.1.9"` while the app was on 0.2.2; it now tracks the bake line (`latest: "0.2.1"` at `server/src/index.js:38`) with per-platform entries. The lesson stands: this is second-source-of-truth rot, and it is why the `plan` job asserts the tag against `package.json` instead. A hint-less `platform=desktop` must keep resolving to the **bake**, not the Electron line, because those are the un-upgradable installs.
 
-- **`runtime/qobuzify-runtime.js:19`** sets `PLATFORM = IS_ANDROID ? "android" : "desktop"`, which collapses the bake and the Electron wrapper into one bucket. Once anything here is correct, the wrapper will **double-nag**: a main-process banner plus a runtime toast. Have the wrapper's preload set a marker and the runtime suppress its own update UI when it sees it.
+- **FIXED: the bake/wrapper platform collapse.** `runtime/qobuzify-runtime.js` used to set `PLATFORM = IS_ANDROID ? "android" : "desktop"`; it now distinguishes the wrapper (`wrapper-<os>`, `runtime/qobuzify-runtime.js:49`). The remaining double-nag risk (main-process banner plus runtime toast on the wrapper) is handled by the preload-marker suppression described here; verify it whenever the updater lands.
 
 ## Migration sequence
 
-1. Cut **`v0.3.0` as a full, unsuffixed, `--latest=true` release** containing the new updater plus safe shared code only. Do **not** fold platform-specific unverified work into it. This is the bridge that carries the new updater to every platform.
-2. From `v0.3.1+linux` onward, scoped releases are `--latest=false` and only ever move the platforms named in the tag.
+1. Cut **the next full, unsuffixed, `--latest=true` release (`v0.4.0` at the time of writing; 0.3.x shipped without any of this)** containing the new updater plus safe shared code only. Do **not** fold platform-specific unverified work into it. This is the bridge that carries the new updater to every platform.
+2. From the first scoped tag after it (`v0.4.1+linux` style) onward, scoped releases are `--latest=false` and only ever move the platforms named in the tag.
 
-What each stale 0.2.2 client sees: one correct nag toward `v0.3.0` (which does contain an asset for it), and after that it is running per-platform logic. A client that never updates only ever sees full releases, so it is never pulled toward a build that has nothing for it.
+What each stale pre-bridge client sees: one correct nag toward the bridge release (which does contain an asset for it), and after that it is running per-platform logic. A client that never updates only ever sees full releases, so it is never pulled toward a build that has nothing for it.
 
 Note that `notifiedTag` is process scoped, so a user who dismisses a nag is reminded again next launch. That is existing behaviour and is fine.
 

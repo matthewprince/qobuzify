@@ -377,6 +377,10 @@
           if (!j || !j.latest || !verNewer(j.latest, VERSION)) return;
           updateInfo = j;
           refreshSettings(); // surface it in the Qobuzify settings panel too
+          // In the wrapper the MAIN PROCESS already owns update prompting (desktop notification + in-page
+          // banner off the GitHub releases API); stacking this toast on top gave one release three
+          // simultaneous prompts. The settings-panel entry above stays as the quiet second surface.
+          if (WRAP && WRAP.updatesHandled) return;
           if (localStorage.getItem("qobuzify:update-seen") !== j.latest) showUpdateToast(j);
         })
         .catch(function () {});
@@ -555,8 +559,10 @@
   // instead: show a zone, read whether it reaches the transport, hide it if so. The show and the hide
   // happen in one synchronous pass with no paint in between, so there's no flicker.
   function fitPlayerSlots() {
-    var prev = document.querySelector(".pct-player-prev");
-    var next = document.querySelector(".pct-player-next");
+    // paired selectors: bake .pct-* form, web-player (wrapper) .player__action-* form - keyed on the
+    // bake form alone this guard never ran on play.qobuz.com.
+    var prev = document.querySelector(".pct-player-prev, .player__action-previous");
+    var next = document.querySelector(".pct-player-next, .player__action-next");
     if (!prev && !next) return;
     var GAP = 10;
     var pr = prev && prev.getBoundingClientRect();

@@ -1,4 +1,4 @@
-/* Lyra lyric renderer - built 2026-07-25T06:30:52Z */
+/* Lyra lyric renderer - built 2026-07-28T03:17:28Z */
 // Lyra parsers - TTML / lyrics-JSON / LRC in, one internal model out.
 // All times in MILLISECONDS (upstream JSON is seconds, converted here).
 //
@@ -1585,10 +1585,13 @@
 
       // clock smoothing + jump detection (handles coarse position sources)
       if (!playing) {
-        if (Math.abs(raw - est) > 2) {
-          var big = Math.abs(raw - est) > 900;
+        // 80ms, not 2ms: the paused clock can carry a host-supplied offset (Qobuzify's autoOffsetMs)
+        // whose periodic re-samples step by a few ms, and every step over the threshold runs a full
+        // hardPass state pass. Sub-perceptual jitter must not repaint the whole view; a real paused
+        // scrub still clears 80ms by orders of magnitude. And no entrance replay while paused: lyrics
+        // re-rippling with no music playing reads as a glitch, not a transition.
+        if (Math.abs(raw - est) > 80) {
           est = raw; resyncSoft(raw);
-          if (big) replayEntrance();
         }
       } else {
         est += dt;

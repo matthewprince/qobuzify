@@ -1717,16 +1717,16 @@ function stgAppearanceSectionHTML() {
 
 // ---- Extensions section: the Qobuzify extensions that actually FUNCTION on mobile, toggleable ----
 // Determined by reading each extension against the mobile environment (25-way classification), NOT a grep.
-// Only two run standalone on Android: last-fm (scrobbles to the api.qobuzify.app worker off Q.player) and
-// eq-boost (patches Web Audio AudioNode.connect -> a bass-boost EQ at Qobuz's master output; Qobuz plays
-// through an AudioContext, so it colors the sound). Everything else no-ops here: it injects into the HIDDEN
+// Only one runs standalone on Android: last-fm (scrobbles to the api.qobuzify.app worker off Q.player).
+// (eq-boost was the other; it left the shipped catalog 2026-07-27 - reference copy in docs/examples/eq-boost,
+// it never actually fired anywhere.) Everything else no-ops here: it injects into the HIDDEN
 // Qobuz desktop DOM that our #qz-app-root overlay covers, OR mobile-app already reimplements it natively
 // (lyrics, sleep timer, full-screen player, seek, quality badge, genre browse, library, search). discord-rpc
 // needs the desktop localhost:7673 bridge (absent on Android); stats' only surface is a dashboard opened
 // from the hidden desktop nav (unreachable); media-session is infra owned by the Lockscreen toggle above.
 // State lives in localStorage "qobuzify:ext:<id>" (default ON, the key boot() reads); live load/unload isn't
 // on the public Q surface, so a toggle persists + reloads to apply.
-var MOBILE_EXT = { "last-fm": 1, "eq-boost": 1 };
+var MOBILE_EXT = { "last-fm": 1 };
 function extTogOn(id) { try { return localStorage.getItem("qobuzify:ext:" + id) !== "0"; } catch (e) { return true; } }
 function bakedExtensions() {
   try { return (window.__QOBUZIFY__ && window.__QOBUZIFY__.extensions) || []; } catch (e) { return []; }

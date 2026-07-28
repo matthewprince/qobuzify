@@ -28,6 +28,10 @@ var IC = {
 function bigCover(url) { return url ? String(url).replace(/_\d+\.(jpg|jpeg|png|webp)/i, "_600.$1") : ""; }
 function fmt(ms) { ms = Math.max(0, Math.round(ms / 1000)); var m = Math.floor(ms / 60), s = ms % 60; return m + ":" + (s < 10 ? "0" : "") + s; }
 function clickEl(sel) { var el = document.querySelector(sel); if (!el) return false; el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); return true; }
+// Audible clock: under bit-perfect direct mode mpv makes the sound and the element/store clock can
+// run ~1.5s behind it. __QZBP_AUDIOPOS__ (bitperfect) returns the position of what is actually
+// audible, or null when mpv is not authoritative - same adoption pattern as qobuzify-lyrics.
+function bpPosMs() { try { var f = window.__QZBP_AUDIOPOS__; var bp = f && f(); if (bp != null) return bp; } catch (e) {} return null; }
 
 function playerInput() { return document.querySelector(".player__progressbar input[type=range]") || document.querySelector(".player__progressbar input"); }
 function seekToMs(targetMs) {
@@ -145,7 +149,7 @@ function paintQueue() {
   var ids = upcomingIds(), sum = 0, unresolved = 0, i;
   for (i = 0; i < ids.length; i++) { var d = durOf(ids[i]); if (d == null) unresolved++; else sum += d; }
   var curRem = 0;
-  try { var t = Q.player.getTrack() || {}; curRem = Math.max(0, (t.durationMs || 0) - Q.player.getPositionMs()) / 1000; } catch (e) {}
+  try { var t = Q.player.getTrack() || {}; var p = bpPosMs(); if (p == null) p = Q.player.getPositionMs(); curRem = Math.max(0, (t.durationMs || 0) - p) / 1000; } catch (e) {}
   var total = sum + curRem;
   if (!ids.length && curRem < 1) { pill.hidden = true; return; }
   pill.hidden = false;
@@ -176,6 +180,7 @@ function paintProgress() {
   var input = playerInput();
   var dur = input ? (parseInt(input.max, 10) || 0) : ((Q.player.getTrack() || {}).durationMs || 0);
   var pos = input ? (parseInt(input.value, 10) || 0) : Q.player.getPositionMs();
+  var bp = bpPosMs(); if (bp != null) pos = bp; // audible clock wins while mpv makes the sound
   pos = Math.max(0, Math.min(pos, dur || pos));
   root.querySelector(".qz-fad-fill").style.width = dur ? (pos / dur * 100) + "%" : "0%";
   root.querySelector(".qz-fad-cur").textContent = fmt(pos);

@@ -73,7 +73,11 @@ function findSeekInstance() {
     if (_seekInst && _seekInst.props && typeof _seekInst.props.seek === "function") return _seekInst;
     var input = document.querySelector(".player__progressbar input[type=range]") || document.querySelector('input[type="range"]');
     if (!input) return null;
-    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactInternalInstance$") === 0; });
+    // React 16 (the desktop bake's bundle) keys fibers as __reactInternalInstance$; React 17+ (the
+    // play.qobuz.com bundle the wrapper and Android load) uses __reactFiber$. Matching only the old key
+    // made click-to-seek silently dead in the wrapper - the exact bug media-session and mobile-app
+    // already hit and fixed with this same dual check.
+    var fk = Object.keys(input).find(function (k) { return k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0; });
     if (!fk) return null;
     var fiber = input[fk], depth = 0;
     while (fiber && depth++ < 40) {
@@ -88,7 +92,12 @@ function qobuzSeek(ms) {
   try {
     if (ms == null || isNaN(ms)) return;
     var inst = findSeekInstance();
-    if (!inst) return;
+    if (!inst) {
+      // Never silent: a dead click is indistinguishable from a missing feature (bug class this codebase
+      // keeps paying for). One warning per session names the real failure.
+      if (!qobuzSeek._warned) { qobuzSeek._warned = true; try { console.warn("[Qobuzify lyrics] click-to-seek found no seek instance (progress-bar fiber not matched)"); } catch (e) {} }
+      return;
+    }
     var dur = 0;
     try { dur = inst._getDuration ? inst._getDuration() : 0; } catch (e) {}
     if (!dur) { try { dur = (Q.getState().player.currentTrack || {}).duration || (cur && cur.duration ? cur.duration.milliseconds : 0); } catch (e) {} }
@@ -846,7 +855,7 @@ var curLyricSource = null, _tagSong = null, _tagScanned = false; // _tagSong = s
 // mpv-minus-element offset. bpAudioOffset re-samples at most 4x/sec (getPosMs runs up to 144x/sec), snaps on a
 // big change (track change / real seek) and smooths small jitter, and contributes 0 whenever bit-perfect is
 // off or mpv isn't authoritative - so non-wrapper and shared-mode playback behave exactly as before.
-var _bpOff = 0, _bpOffAt = 0;
+var _bpOff = 0, _bpOffAt = 0, _bpLiveAt = 0;
 function bpAudioOffset() {
   var now = Date.now();
   if (now - _bpOffAt < 250) return _bpOff;          // hold between samples
@@ -855,9 +864,22 @@ function bpAudioOffset() {
     var f = window.__QZBP_AUDIOPOS__;
     if (typeof f !== "function") { _bpOff = 0; return 0; }
     var ap = f();
-    if (ap == null) { _bpOff = 0; return 0; }        // mpv not authoritative -> element clock is the truth
+    if (ap == null) {
+      // mpv momentarily quiet: every track change nulls its report, so did any >2s report gap or a
+      // respawn. The measured offset is a property of the AUDIO PATH, not of the track - zeroing it
+      // here stepped the karaoke ~120ms forward at the start of every song and twice per hiccup, then
+      // re-converged through the smoother. Hold the last value briefly; only when mpv stays quiet
+      // (bit-perfect genuinely off/stalled) decay toward the element clock.
+      if (now - _bpLiveAt > 4000) _bpOff += (0 - _bpOff) * 0.4;
+      return _bpOff;
+    }
+    _bpLiveAt = now;
     var d = ap - (Q.player.getPositionMs() || 0);
     if (!isFinite(d) || Math.abs(d) > 10000) return _bpOff;  // nonsense (track-change race) - keep the last
+    // While PAUSED a snap-sized change is never a real latency measurement - it is a stale mpv position
+    // against a scrubbed element (the paused-scrub poisoning). Freeze; playback resyncs on resume.
+    var paused = false; try { paused = !Q.player.isPlaying(); } catch (e) {}
+    if (paused && Math.abs(d - _bpOff) > 800) return _bpOff;
     _bpOff = Math.abs(d - _bpOff) > 800 ? d : _bpOff + (d - _bpOff) * 0.4; // snap big, smooth small
   } catch (e) {}
   return _bpOff;
@@ -949,7 +971,9 @@ var _scrollGuardRAF = null, _onSeekScroll = null, _onUserScroll = null; // scrol
 //      auto-scroll or a deliberate scroll to the top; scoping to the lyrics root means it never touches
 //      Qobuz's own scrollers. (Diagnosed via CDP: the reset is always a rebuild landing at exactly 0, while
 //      normal virtualizer churn preserves position - so gating on the landing position cleanly separates them.)
-if (!window.__QZ_SL_SCROLLGUARD__) { window.__QZ_SL_SCROLLGUARD__ = true; (function installScrollGuard() { // install once (a Marketplace disable->enable re-runs this source)
+// Lyra scrolls via a translate spring and never creates a simplebar wrapper, so every feature in this
+// guard is a permanent no-op under OWN_RENDERER while still polling ~18Hz with layout reads. Vendor-only.
+if (!OWN_RENDERER && !window.__QZ_SL_SCROLLGUARD__) { window.__QZ_SL_SCROLLGUARD__ = true; (function installScrollGuard() { // install once (a Marketplace disable->enable re-runs this source)
   var descTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
   function rawTop(el) { return descTop.get.call(el); }
   function setTop(el, v) { descTop.set.call(el, v); }
@@ -1052,15 +1076,42 @@ if (!window.__QZ_SL_SCROLLGUARD__) { window.__QZ_SL_SCROLLGUARD__ = true; (funct
 // extrapolate with wall-clock between its updates, re-syncing on each fresh value (never
 // snapping backward on a late tick), then add the format-based offset.
 var _clkPos = 0, _clkAt = 0, _clkRaw = -1, _clkSeek = false; // _clkSeek = a click-to-seek just fired -> snap the clock exactly on the next read
+var _clkHoldAt = 0; // when the backward-refusal hold started; bounds it in TIME (see below)
+function anchorAgeMs() {
+  try { var p = Q.getState().player.position; return p && p.timestamp ? (Date.now() - p.timestamp) : -1; } catch (e) { return -1; }
+}
 function getPosMs() {
   if (window.__QZ_SL_DEBUG && window.__QZ_SL_DEBUG._pos != null) return window.__QZ_SL_DEBUG._pos;
   var raw = Q.player.getPositionMs() || 0, now = Date.now();
-  if (!Q.player.isPlaying()) { _clkPos = raw; _clkAt = now; _clkRaw = raw; return raw + autoOffsetMs(); }
-  if (_clkSeek) { _clkSeek = false; _clkRaw = raw; _clkPos = raw; _clkAt = now; return raw + autoOffsetMs(); } // exact snap after a click-to-seek (kills the ~400ms overshoot on a backward re-click)
+  if (!Q.player.isPlaying()) { _clkPos = raw; _clkAt = now; _clkRaw = raw; _clkHoldAt = 0; return raw + autoOffsetMs(); }
+  if (_clkSeek) { _clkSeek = false; _clkRaw = raw; _clkPos = raw; _clkAt = now; _clkHoldAt = 0; return raw + autoOffsetMs(); } // exact snap after a click-to-seek (kills the ~400ms overshoot on a backward re-click)
+  // ENGINE STARVING: when the store's position anchor goes stale while playingState stays "play",
+  // Q.player.getPositionMs() free-runs on wall clock - the singer is frozen but raw keeps sweeping, so
+  // the karaoke ran AHEAD of the sound through every rebuffer (and the ratchet below then kept the
+  // accumulated lead). Freeze the lyric clock with the sound instead. Exception: under bit-perfect
+  // direct mode mpv IS still playing through the element's starve, and __QZBP_AUDIOPOS__ carries the
+  // truth via autoOffsetMs - freezing the base clock there would freeze lyrics over live audio.
+  var aAge = anchorAgeMs();
+  if (aAge > 2000) {
+    var bpLive2 = false;
+    try { bpLive2 = typeof window.__QZBP_AUDIOPOS__ === "function" && window.__QZBP_AUDIOPOS__() != null; } catch (e) {}
+    if (!bpLive2) { _clkAt = now; _clkRaw = raw; return Math.round((_clkPos + autoOffsetMs()) / 16) * 16; }
+  }
   if (raw !== _clkRaw) {
     _clkRaw = raw;
     var ext = _clkPos + (now - _clkAt); // renamed from `cur` (which shadowed the module-level track var)
-    _clkPos = (raw < ext && ext - raw < 500) ? ext : raw; // don't snap backward on a late coarse tick
+    // Don't snap backward on a late coarse tick - but only BRIEFLY. This hold used to be unbounded:
+    // after a rebuffer re-anchored the store backward, ext led raw by a CONSTANT gap on every later
+    // tick, so the condition held forever and any accumulated forward error under 500ms became
+    // permanent. Repeated micro-stalls ratcheted the karaoke monotonically ahead until it crossed
+    // 500ms and snapped - the session-accumulating "lyrics run 2-3x fast in bursts" bug, which pause
+    // or click-to-seek reset (both snap paths above). A late tick is late by tens of ms, not seconds:
+    // hold ext for at most 600ms of wall clock, then adopt raw and bleed the error off.
+    if (raw < ext && ext - raw < 500) {
+      if (!_clkHoldAt) _clkHoldAt = now;
+      if (now - _clkHoldAt < 600) _clkPos = ext;
+      else { _clkPos = raw; _clkHoldAt = 0; }
+    } else { _clkPos = raw; _clkHoldAt = 0; }
     _clkAt = now;
   }
   // Quantize to ~60Hz. On a high-refresh (144Hz) display the bundle re-reads this every frame and repaints
@@ -1164,7 +1215,10 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     offPP = Q.subscribe(function () { var p = Q.player.isPlaying(); if (p !== lastPlaying) { lastPlaying = p; emit("onplaypause", { data: { isPaused: !p } }); var _r = document.getElementById("qz-sl-root"); if (_r) _r.classList.toggle("qz-paused", !p); } }); // freeze the mesh orbits while paused (window never goes document.hidden)
 
     offBtn = ensureButton();
-    _comboIv = setInterval(_comboTick, 75); // drive the combo animation (bloom + clock-synced word glow-pop)
+    // Vendor-only: the bloom driver polls #QzLyricsPage/.line.Active and pulses #qz-cbg, none of which
+    // exist under Lyra (it renders .lyra-line/.lyra-active and pulses its own background on beats via
+    // setAnalysis) - so under OWN_RENDERER this was a 13Hz zombie whose feature was silently dead.
+    if (!OWN_RENDERER) _comboIv = setInterval(_comboTick, 75); // drive the combo animation (bloom + clock-synced word glow-pop)
 
     // debug hook: render lyrics without live playback (audio output may be absent
     // in a headless/CDP session). Harmless in normal use; only does anything when called.

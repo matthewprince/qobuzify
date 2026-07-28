@@ -92,7 +92,30 @@ function paintTrackItems() {
     addBadge(row.querySelector(".track-name") || row, data.albumTier);
   }
 }
-function scan() { try { paintListItems(); } catch (e) {} try { paintTrackItems(); } catch (e) {} }
+// web-player rows (.ui-module-track-row - the wrapper's album/library/search tables). Same rules as
+// .ListItem: a row with its OWN /album/ link uses that album's tier; otherwise it's the route album,
+// per row order (these rows expose no track-number cell). Title host per block-trash's rowInfo.
+var webHostWarned = false;
+function paintWebRows() {
+  var routeId = routeAlbumId();
+  var rows = document.querySelectorAll(".ui-module-track-row");
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]; if (row.querySelector("[data-qz-badge]")) continue;
+    var rid = rowAlbumId(row);
+    var id = rid || routeId; if (!id) continue;
+    var data = albums[id];
+    if (data === undefined) { ensureAlbum(id); continue; }
+    if (!data || data === "loading") continue;
+    var q = rid ? data.albumTier : (data.order[i] || data.albumTier);
+    var host = row.querySelector(".cell-group-title span.ui-link") || row.querySelector(".cell-group-title");
+    if (!host) {
+      if (!webHostWarned) { webHostWarned = true; console.warn("[Qobuzify] quality-badges: .ui-module-track-row has no .cell-group-title host; web rows stay unbadged"); }
+      continue;
+    }
+    addBadge(host, q, false);
+  }
+}
+function scan() { try { paintListItems(); } catch (e) {} try { paintTrackItems(); } catch (e) {} try { paintWebRows(); } catch (e) {} }
 
 var offObs = Q.observe(scan, { debounce: 200 });
 var offRoute = Q.onRoute(scan);

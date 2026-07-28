@@ -22,13 +22,18 @@ const UA = "Mozilla/5.0";
 var cacheDir = null;                 // set by main via setCacheDir()
 var mem = { appId: null, secret: null, candidates: null }; // in-session cache
 
-function setCacheDir(dir) { cacheDir = dir; loadCache(); }
+function setCacheDir(dir) {
+  cacheDir = dir;
+  // The cache holds the extracted signing secret; 0600 it (and repair files written before this fix).
+  try { if (cacheFile()) fs.chmodSync(cacheFile(), 0o600); } catch (_) {}
+  loadCache();
+}
 function cacheFile() { return cacheDir ? path.join(cacheDir, "qz-fileurl.json") : null; }
 function loadCache() {
   try { var j = JSON.parse(fs.readFileSync(cacheFile(), "utf8")); if (j && j.secret) { mem.appId = j.appId; mem.secret = j.secret; } } catch (_) {}
 }
 function saveCache() {
-  try { if (cacheFile()) fs.writeFileSync(cacheFile(), JSON.stringify({ appId: mem.appId, secret: mem.secret }), "utf8"); } catch (_) {}
+  try { if (cacheFile()) fs.writeFileSync(cacheFile(), JSON.stringify({ appId: mem.appId, secret: mem.secret }), { encoding: "utf8", mode: 0o600 }); } catch (_) {}
 }
 
 function md5(s) { return crypto.createHash("md5").update(s).digest("hex"); }

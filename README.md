@@ -12,12 +12,16 @@ npm link                 # or: node bin/qobuzify.js <command>
 qobuzify install         # inject the runtime + Marketplace, relaunch Qobuz
 ```
 
-Open Qobuz, click your avatar, and pick **Marketplace** to switch themes live and toggle extensions. Needs Node 16+ and the Qobuz desktop app. Windows only (macOS planned; Qobuz has no Linux desktop app).
+Open Qobuz, click your avatar, and pick **Marketplace** to switch themes live and toggle extensions. Needs Node 16+ and the Qobuz desktop app, on Windows. On Linux or macOS (or for a no-patching Windows install), use the standalone app below.
+
+## The standalone app (Linux, macOS, Windows)
+
+Qobuzify also ships as a standalone desktop app: the Qobuz web player wrapped in Electron with the same runtime, themes, and extensions baked in. One download, no Node, no patching. Get it from [qobuzify.app](https://qobuzify.app) or the [GitHub releases](https://github.com/matthewprince/qobuzify/releases). On Linux it adds bit-perfect output through a bundled player; macOS and Windows builds play through the web player.
 
 ## What you get
 
 - **10 themes**, switchable live from the Marketplace, from a plain accent swap to full frosted-glass restyles.
-- **18 extensions**, on by default and individually toggleable, including a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, playlist tools, bulk actions, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence.
+- **29 extensions**, on by default and individually toggleable, including a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, Last.fm scrobbling, playlist tools, bulk actions, multi-select, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence. The full list is in [docs/extensions.md](docs/extensions.md).
 
 ## Commands
 

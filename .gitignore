@@ -43,3 +43,4 @@ build-cache/
 
 # bundled mpv is fetched in CI, never committed (210MB)
 wrapper/resources/
+docs-private/

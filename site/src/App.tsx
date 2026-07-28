@@ -19,11 +19,12 @@ const FEATURES = [
 ];
 
 const STEPS = [
-  { n: "1", title: "Install", body: "One command patches your local Qobuz. It backs up the originals and is fully reversible." },
+  { n: "1", title: "Install", body: "One command patches your local Qobuz. It backs up the originals and is fully reversible. A Qobuz app update removes Qobuzify; re-run the installer to restore it (settings survive)." },
   { n: "2", title: "Theme", body: "In Qobuz, click your profile picture (top-right) and open the Marketplace, then pick a theme. Switching is live, no relaunch." },
   { n: "3", title: "Extend", body: "The extensions ship on by default. Toggle any of them in that same Marketplace, or open Qobuzify for settings." },
 ];
 
+const EXTENSION_COUNT = 29; // shipped count (extensions/ dir); EXTENSIONS below is the curated highlights list
 const EXTENSIONS = [
   { name: "Better Search", body: "Instant, ranked, filterable search across albums, tracks, artists and playlists." },
   { name: "For You", body: "A personalized home built from your own favorites and listening. No external services." },
@@ -49,7 +50,7 @@ const EXTENSIONS = [
 const TRUST = [
   { q: "Will it get me banned?", a: "No. Qobuzify runs entirely on your machine and never touches your Qobuz account, password, or subscription. It patches the local app only." },
   { q: "Is it reversible?", a: "Yes. It backs up the originals before patching, and one command restores stock Qobuz." },
-  { q: "Does anything phone home?", a: "No. Themes, For You, and Listening Stats are all computed on your device." },
+  { q: "Does anything phone home?", a: "No account data or listening telemetry, ever. The app contacts qobuzify.app for an update check on launch and, if the lyrics extension is on, to fetch lyrics for the current track (no account identifiers attached). Themes, For You, and Listening Stats are computed on your device." },
   { q: "Is it open source?", a: "Yes. Every line is on GitHub. Read it, fork it, or build your own theme." },
 ];
 
@@ -118,7 +119,7 @@ export default function App() {
             <span>Open source</span>
             {stars != null ? <span>{stars.toLocaleString()} stars</span> : null}
             <span>{THEMES.length} themes</span>
-            <span>{EXTENSIONS.length} extensions</span>
+            <span>{EXTENSION_COUNT} extensions</span>
             <span>MIT</span>
           </div>
 
@@ -137,7 +138,7 @@ export default function App() {
             ))}
           </div>
           <div className="undo">
-            <span>Undo anytime</span>
+            <span>Undo anytime (run it in a new terminal after installing)</span>
             <button className="cmd" onClick={copyRestore} title="Copy command">
               <code>qobuzify restore</code>
               <span className="copy">{copied ? "copied" : "copy"}</span>
@@ -176,7 +177,7 @@ export default function App() {
         <Downloads />
 
         <section className="section" id="extensions">
-          <div className="eyebrow">{EXTENSIONS.length} extensions</div>
+          <div className="eyebrow">{EXTENSION_COUNT} extensions</div>
           <h2 className="h-sec">All built in, on by default</h2>
           <p className="lede">
             Manage them from the in-app Marketplace (your profile picture, top-right). Here is the
@@ -239,7 +240,7 @@ export default function App() {
             <a href="/unban">Unblock IP</a>
           </div>
           <div className="foot-info">
-            {THEMES.length} themes · {EXTENSIONS.length} extensions · runs on your machine · qobuzify.app
+            {THEMES.length} themes · {EXTENSION_COUNT} extensions · runs on your machine · qobuzify.app
           </div>
         </footer>
       </div>

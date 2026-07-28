@@ -68,7 +68,11 @@ while (fiber) {
 }
 ```
 
-One caveat that bit us: Qobuz seeks at whole-second granularity (the engine and the position clock both round to the nearest second). Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. Bias toward the clicked line by rounding up, unless the line starts in the first 150 ms of a second.
+One caveat that bit us: **seeks land on whole seconds** (the engine commits the position rounded to the second). Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. Bias toward the clicked line by rounding up, unless the line starts in the first 150 ms of a second.
+
+Reading the position is a different story. `Q.player.getPositionMs` wall-clock-extrapolates the store's position anchor (`position.value + (now - position.timestamp)` while playing), so reads are millisecond-smooth between refreshes. The anchor itself refreshes coarsely, and how coarsely is **not reliably characterized**: measured claims range from ~250 ms to 1 s. qobuzify-lyrics' smoothing constants assume ~250 ms; pinning down the real cadence is still an open measurement.
+
+(One more wrapper note: the fiber-key snippet above is the bake's React 16 key. play.qobuz.com runs newer React, where the key prefix is `__reactFiber$`; check both, the way media-session and mobile-app do.)
 
 ## Volume
 

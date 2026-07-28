@@ -9,6 +9,21 @@ const { buildPayloadSource, vendorMap } = require("./payload");
 const OUT = __dirname;
 const theme = process.env.QZ_THEME || "electric-blue";
 
+// Hard gate: a Linux build without the bundled mpv silently ships broken bit-perfect (electron-builder
+// logs "file source doesn't exist" for the extraResources entry and exits 0). Fail here instead.
+// QZ_NO_BUNDLED_MPV=1 is the escape hatch for intentionally-unbundled dev builds.
+if (process.platform === "linux" && process.env.QZ_NO_BUNDLED_MPV !== "1") {
+  const mpvDir = path.join(__dirname, "resources", "mpv");
+  let mpvEntries = [];
+  try { mpvEntries = fs.readdirSync(mpvDir); } catch (_) {}
+  if (!mpvEntries.length) {
+    console.error("prebuild: wrapper/resources/mpv is missing or empty. The packaged Linux app would ship");
+    console.error("without its bundled mpv and bit-perfect would always fail. Bundle it first (see the");
+    console.error('"Bundle mpv" step in .github/workflows/build.yml) or set QZ_NO_BUNDLED_MPV=1 to skip.');
+    process.exit(1);
+  }
+}
+
 fs.writeFileSync(path.join(OUT, "qz-payload.js"), buildPayloadSource(theme));
 
 // Copy vendor bundles into ./vendor and write an id -> filename manifest. Lyrics is excluded so this

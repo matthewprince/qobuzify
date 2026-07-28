@@ -9,9 +9,12 @@ var CSS_ID = "qz-kbd-css";
 var helpOpen = false;
 
 function clickEl(sel) { var el = document.querySelector(sel); if (!el) return false; el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); return true; }
+var transportWarned = {};
 function transport(a) {
-  var map = { playpause: ".player__action-pause, .player__action-play", next: ".pct-player-next", prev: ".pct-player-prev", shuffle: ".pct-shuffle", repeat: ".pct-repeat", mute: ".pct-volume", like: ".player .ButtonFavorite" };
-  clickEl(map[a]);
+  // paired selectors (bake .pct-* form, web-player .player__action-* form) - the exact pairings
+  // mobile-app/media-session use. mute stays bare: no proven web form exists in the repo yet.
+  var map = { playpause: ".player__action-pause, .player__action-play", next: ".pct-player-next, .player__action-next", prev: ".pct-player-prev, .player__action-previous", shuffle: ".pct-shuffle, .player__action-shuffle", repeat: ".pct-repeat, .player__action-repeat", mute: ".pct-volume", like: ".player .ButtonFavorite, .player__action-favorite" };
+  if (!clickEl(map[a]) && !transportWarned[a]) { transportWarned[a] = 1; console.warn("[Qobuzify] keyboard-shortcuts: no player-bar control found for '" + a + "' (" + map[a] + ")"); }
 }
 // seek by driving the app's own progress-bar handlers (see seek-controls for the why)
 function seekBy(delta) {
