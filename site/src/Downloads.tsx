@@ -38,6 +38,56 @@ function Penguin() {
   );
 }
 
+// Windows standalone gate. The PowerShell route patches the real Qobuz app and keeps its native
+// exclusive-mode output, so it is the only Windows install that is genuinely bit-perfect. The
+// standalone .exe wraps the web player, whose audio goes through Chromium's resampler and the shared
+// OS mixer: still lossless FLAC end to end, but NOT bit-perfect, and no setting can make it so on
+// Windows. People kept taking the one-click .exe and assuming otherwise, so it now costs a deliberate
+// acknowledgement plus a short wait. Linux and macOS are unaffected.
+const WIN_GATE_SECONDS = 10;
+
+function WindowsGate({ href, label, size }: { href: string; label: string; size: string | null }) {
+  const [open, setOpen] = useState(false);
+  const [left, setLeft] = useState(WIN_GATE_SECONDS);
+  useEffect(() => {
+    if (!open || left <= 0) return;
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [open, left]);
+  if (!open) {
+    return (
+      <button className="dl-btn dl-btn-warn" type="button" onClick={() => setOpen(true)}>
+        {label}
+        {size ? <span className="dl-size">{size}</span> : null}
+      </button>
+    );
+  }
+  return (
+    <div className="win-gate">
+      <p className="win-gate-title">Not recommended on Windows</p>
+      <p className="win-gate-body">
+        Use the PowerShell installer above unless it does not work for you. It patches the real Qobuz
+        app, so you keep its native bit-perfect playback.
+      </p>
+      <p className="win-gate-body">
+        This standalone build wraps the Qobuz web player. Audio still streams as lossless FLAC, but it
+        passes through the browser's resampler and the shared Windows mixer, so it is{" "}
+        <strong>not bit-perfect</strong>. That is a limit of the web player on Windows and no setting
+        changes it.
+      </p>
+      {left > 0 ? (
+        <span className="dl-btn dl-btn-wait" aria-disabled="true">
+          Download available in {left}s
+        </span>
+      ) : (
+        <a className="dl-btn dl-btn-warn" href={href} download>
+          I understand, download anyway{size ? <span className="dl-size">{size}</span> : null}
+        </a>
+      )}
+    </div>
+  );
+}
+
 const OSES: { id: OSId; label: string; Icon: () => JSX.Element; ext: string; is: (n: string) => boolean }[] = [
   { id: "mac", label: "macOS", Icon: Apple, ext: ".dmg", is: (n) => n.endsWith(".dmg") },
   { id: "linux", label: "Linux", Icon: Penguin, ext: ".AppImage", is: (n) => n.endsWith(".AppImage") },
@@ -151,7 +201,13 @@ export default function Downloads() {
               {primaryOS.label}
               {primaryOS.id === mine ? <span className="dl-you">your system</span> : null}
             </div>
-            {primaryAsset ? (
+            {primaryAsset && primaryOS.id === "windows" ? (
+              <WindowsGate
+                href={primaryAsset.url}
+                label={`Download ${primaryOS.ext}`}
+                size={mb(primaryAsset.size)}
+              />
+            ) : primaryAsset ? (
               <a className="dl-btn" href={primaryAsset.url} download>
                 Download {primaryOS.ext} <span className="dl-size">{mb(primaryAsset.size)}</span>
               </a>
@@ -164,6 +220,15 @@ export default function Downloads() {
           <div className="dl-others">
             {others.map((o) => {
               const a = find(o.id);
+              // Windows never gets a bare one-click link, primary or secondary: it routes through the
+              // same acknowledgement, or the gate is trivially sidestepped from a non-Windows visitor.
+              if (o.id === "windows" && a) {
+                return (
+                  <span key={o.id} className="dl-other-gate">
+                    <WindowsGate href={a.url} label={`${o.label} ${o.ext}`} size={null} />
+                  </span>
+                );
+              }
               return (
                 <a
                   key={o.id}
