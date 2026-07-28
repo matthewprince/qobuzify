@@ -1076,42 +1076,15 @@ if (!OWN_RENDERER && !window.__QZ_SL_SCROLLGUARD__) { window.__QZ_SL_SCROLLGUARD
 // extrapolate with wall-clock between its updates, re-syncing on each fresh value (never
 // snapping backward on a late tick), then add the format-based offset.
 var _clkPos = 0, _clkAt = 0, _clkRaw = -1, _clkSeek = false; // _clkSeek = a click-to-seek just fired -> snap the clock exactly on the next read
-var _clkHoldAt = 0; // when the backward-refusal hold started; bounds it in TIME (see below)
-function anchorAgeMs() {
-  try { var p = Q.getState().player.position; return p && p.timestamp ? (Date.now() - p.timestamp) : -1; } catch (e) { return -1; }
-}
 function getPosMs() {
   if (window.__QZ_SL_DEBUG && window.__QZ_SL_DEBUG._pos != null) return window.__QZ_SL_DEBUG._pos;
   var raw = Q.player.getPositionMs() || 0, now = Date.now();
-  if (!Q.player.isPlaying()) { _clkPos = raw; _clkAt = now; _clkRaw = raw; _clkHoldAt = 0; return raw + autoOffsetMs(); }
-  if (_clkSeek) { _clkSeek = false; _clkRaw = raw; _clkPos = raw; _clkAt = now; _clkHoldAt = 0; return raw + autoOffsetMs(); } // exact snap after a click-to-seek (kills the ~400ms overshoot on a backward re-click)
-  // ENGINE STARVING: when the store's position anchor goes stale while playingState stays "play",
-  // Q.player.getPositionMs() free-runs on wall clock - the singer is frozen but raw keeps sweeping, so
-  // the karaoke ran AHEAD of the sound through every rebuffer (and the ratchet below then kept the
-  // accumulated lead). Freeze the lyric clock with the sound instead. Exception: under bit-perfect
-  // direct mode mpv IS still playing through the element's starve, and __QZBP_AUDIOPOS__ carries the
-  // truth via autoOffsetMs - freezing the base clock there would freeze lyrics over live audio.
-  var aAge = anchorAgeMs();
-  if (aAge > 2000) {
-    var bpLive2 = false;
-    try { bpLive2 = typeof window.__QZBP_AUDIOPOS__ === "function" && window.__QZBP_AUDIOPOS__() != null; } catch (e) {}
-    if (!bpLive2) { _clkAt = now; _clkRaw = raw; return Math.round((_clkPos + autoOffsetMs()) / 16) * 16; }
-  }
+  if (!Q.player.isPlaying()) { _clkPos = raw; _clkAt = now; _clkRaw = raw; return raw + autoOffsetMs(); }
+  if (_clkSeek) { _clkSeek = false; _clkRaw = raw; _clkPos = raw; _clkAt = now; return raw + autoOffsetMs(); } // exact snap after a click-to-seek (kills the ~400ms overshoot on a backward re-click)
   if (raw !== _clkRaw) {
     _clkRaw = raw;
     var ext = _clkPos + (now - _clkAt); // renamed from `cur` (which shadowed the module-level track var)
-    // Don't snap backward on a late coarse tick - but only BRIEFLY. This hold used to be unbounded:
-    // after a rebuffer re-anchored the store backward, ext led raw by a CONSTANT gap on every later
-    // tick, so the condition held forever and any accumulated forward error under 500ms became
-    // permanent. Repeated micro-stalls ratcheted the karaoke monotonically ahead until it crossed
-    // 500ms and snapped - the session-accumulating "lyrics run 2-3x fast in bursts" bug, which pause
-    // or click-to-seek reset (both snap paths above). A late tick is late by tens of ms, not seconds:
-    // hold ext for at most 600ms of wall clock, then adopt raw and bleed the error off.
-    if (raw < ext && ext - raw < 500) {
-      if (!_clkHoldAt) _clkHoldAt = now;
-      if (now - _clkHoldAt < 600) _clkPos = ext;
-      else { _clkPos = raw; _clkHoldAt = 0; }
-    } else { _clkPos = raw; _clkHoldAt = 0; }
+    _clkPos = (raw < ext && ext - raw < 500) ? ext : raw; // don't snap backward on a late coarse tick
     _clkAt = now;
   }
   // Quantize to ~60Hz. On a high-refresh (144Hz) display the bundle re-reads this every frame and repaints
