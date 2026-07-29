@@ -1679,9 +1679,10 @@ var STG_CHEV = '<span class="qz-stg-chev"></span>';
 // ---- Appearance section (theme picker + mobile feature toggles) ----
 // Toggle state lives in Q.storage as the string "1"/"0" (default "1" = on) so it survives relaunch.
 function stgTogOn(key) { try { return Q.storage.get(key, "1") !== "0"; } catch (e) { return true; } }
-function stgToggleRowHTML(key, title, sub) {
+function stgToggleRowHTML(key, title, sub, nested) {
   var on = stgTogOn(key);
-  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") + '" data-act="apptoggle" data-tog="' + key + '" type="button">' +
+  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") + (nested ? " is-sub" : "") +
+    '" data-act="apptoggle" data-tog="' + key + '" type="button">' +
     '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(title) + '</span>' +
     '<span class="qz-stg-rs">' + esc(sub) + '</span></span><span class="qz-pf__sw"></span></button>';
 }
@@ -1706,7 +1707,10 @@ function stgAppearanceSectionHTML() {
   // things that actually run on mobile, so this is where the user turns them on/off. Default ON.
   return '<div class="qz-stg-sec"><div class="qz-stg-sech">Features</div>' +
     stgToggleRowHTML("feat-lyrics", "Lyrics", "Show the lyrics button and synced lyrics view") +
-    stgToggleRowHTML("mobile-wbw", "Word-by-word lyrics", "Karaoke-style per-word highlighting") +
+    // Nested under Lyrics on purpose: as two flat sibling rows these read as two competing lyrics
+    // switches, which is exactly how it got reported. It hides with its parent through the existing
+    // html.qz-hide-lyrics class (see the CSS), so no re-render is needed when Lyrics is switched off.
+    stgToggleRowHTML("mobile-wbw", "Karaoke highlighting", "Light each word as it is sung. Off shows whole lines.", true) +
     stgToggleRowHTML("feat-sleep", "Sleep timer", "Show the sleep-timer button in the player") +
     stgToggleRowHTML("feat-radio", "Start radio", "Show the start-radio button in the player") +
     stgToggleRowHTML("feat-quality", "Quality badge", "Show the streaming-quality chip in the player") +
@@ -1726,10 +1730,57 @@ function stgAppearanceSectionHTML() {
 // from the hidden desktop nav (unreachable); media-session is infra owned by the Lockscreen toggle above.
 // State lives in localStorage "qobuzify:ext:<id>" (default ON, the key boot() reads); live load/unload isn't
 // on the public Q surface, so a toggle persists + reloads to apply.
-var MOBILE_EXT = { "last-fm": 1 };
+// EVERY baked extension is accounted for below. The old version of this was `MOBILE_EXT = {"last-fm":1}`
+// and rendered only that one, so 25 of the 26 extensions in the APK had no row and no toggle at all, and
+// the section looked broken because its single entry (Last.fm, which draws with a radio icon) read as a
+// stray. Anything not classified here now lands in the "Other" bucket WITH a working toggle, so an
+// extension can never again be invisible just because nobody added it to a list.
+//   works  : runs standalone on Android -> real toggle
+//   native : mobile-app reimplements it, or it is infra another switch owns -> point at the real control
+//   desktop: injects into the Qobuz desktop layout that this interface replaces -> nothing to toggle
+var EXT_CLASS = {
+  "last-fm":           { kind: "works" },
+  "mobile-app":        { kind: "native", where: "This interface" },
+  "media-session":     { kind: "native", where: "Features > Lockscreen and Live Actions" },
+  "sleep-timer":       { kind: "native", where: "Features > Sleep timer" },
+  "quality-badges":    { kind: "native", where: "Features > Quality badge" },
+  "smart-playback":    { kind: "native", where: "Features > Start radio" },
+  "seek-controls":     { kind: "native", where: "Built into the player" },
+  "full-app-display":  { kind: "native", where: "Built into Now Playing" },
+  "better-search":     { kind: "native", where: "Built into Search" },
+  "genre-filter":      { kind: "native", where: "Built into Browse" },
+  "library-load":      { kind: "native", where: "Built into Library" },
+  "discord-rpc":       { kind: "desktop", why: "Needs the desktop app's local bridge" },
+  "stats":             { kind: "desktop", why: "Opens from the desktop menu" },
+  "bulk-actions":      { kind: "desktop" }, "content-filters": { kind: "desktop" },
+  "copy-share":        { kind: "desktop" }, "feat-artists":    { kind: "desktop" },
+  "find-available":    { kind: "desktop" }, "keyboard-shortcuts": { kind: "desktop", why: "No keyboard" },
+  "multi-select":      { kind: "desktop" }, "playlist-context": { kind: "desktop" },
+  "playlist-power":    { kind: "desktop" }, "playlist-tools":  { kind: "desktop" },
+  "recommended":       { kind: "desktop" }, "simple-client":   { kind: "desktop" },
+  "ux-tweaks":         { kind: "desktop" }
+};
+var EXT_DESKTOP_WHY = "Adds to the Qobuz desktop layout, which this interface replaces";
 function extTogOn(id) { try { return localStorage.getItem("qobuzify:ext:" + id) !== "0"; } catch (e) { return true; } }
 function bakedExtensions() {
   try { return (window.__QOBUZIFY__ && window.__QOBUZIFY__.extensions) || []; } catch (e) { return []; }
+}
+// Rows registered by extensions via Q.registerSettings. The desktop panel renders these; we sit ON TOP of
+// that panel, so if we do not render them the row is unreachable. Last.fm's entire Connect/Disconnect flow
+// is one of these, which is why it had a toggle and no way to sign in.
+function registeredPanels() {
+  try { return (Q.settingsPanels && Q.settingsPanels()) || []; } catch (e) { return []; }
+}
+function stgPanelRowHTML(p, i) {
+  return '<button class="qz-stg-row" data-act="extpanel" data-panel="' + i + '" type="button">' +
+    '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(p.label || "Settings") + '</span>' +
+    (p.sub ? '<span class="qz-stg-rs">' + esc(p.sub) + '</span>' : "") +
+    '</span><span class="qz-stg-rv">' + esc(p.button || "Open") + '</span></button>';
+}
+function stgPanelTap(row) {
+  var i = +row.getAttribute("data-panel");
+  var p = registeredPanels()[i];
+  if (p && typeof p.onClick === "function") { try { p.onClick(); } catch (e) {} }
 }
 function stgExtToggleRowHTML(ext) {
   var on = extTogOn(ext.id);
@@ -1738,14 +1789,53 @@ function stgExtToggleRowHTML(ext) {
     (ext.description ? '<span class="qz-stg-rs">' + esc(ext.description) + '</span>' : "") +
     '</span><span class="qz-pf__sw"></span></button>';
 }
+// A static row: name + description, with a right-hand note instead of a switch. Used for extensions whose
+// real control lives somewhere else and for ones that cannot do anything here. Not a button: nothing to tap
+// is the honest affordance, and a dead switch is worse than no switch.
+function stgExtStaticRowHTML(ext, note) {
+  return '<div class="qz-stg-row is-static">' +
+    '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(ext.name || ext.id) + '</span>' +
+    '<span class="qz-stg-rs">' + esc(note) + '</span></span></div>';
+}
 function stgExtensionsSectionHTML() {
-  var exts = bakedExtensions().filter(function (e) { return e && e.id && MOBILE_EXT[e.id]; })
-    .sort(function (a, b) { return (a.name || a.id).localeCompare(b.name || b.id); });
-  if (!exts.length) return "";
-  return '<div class="qz-stg-sec"><div class="qz-stg-sech">Extensions</div>' +
-    exts.map(stgExtToggleRowHTML).join("") +
-    '<div class="qz-stg-note">Changes apply on reload.</div>' +
-    '</div>';
+  var byName = function (a, b) { return (a.name || a.id).localeCompare(b.name || b.id); };
+  var works = [], native = [], desktop = [], other = [];
+  bakedExtensions().forEach(function (e) {
+    if (!e || !e.id) return;
+    var c = EXT_CLASS[e.id];
+    if (!c) { other.push(e); return; }                 // unclassified: still gets a real toggle
+    if (c.kind === "works") works.push(e);
+    else if (c.kind === "native") native.push([e, c.where || "Built in"]);
+    else desktop.push([e, c.why || EXT_DESKTOP_WHY]);
+  });
+  works.sort(byName); other.sort(byName);
+  native.sort(function (a, b) { return byName(a[0], b[0]); });
+  desktop.sort(function (a, b) { return byName(a[0], b[0]); });
+
+  var html = "";
+  var panels = registeredPanels();
+  if (works.length || other.length) {
+    html += '<div class="qz-stg-sec"><div class="qz-stg-sech">Extensions</div>' +
+      works.concat(other).map(stgExtToggleRowHTML).join("") +
+      // an extension's own settings (Q.registerSettings) sit right under the toggles, which is where you
+      // look for them after switching one on
+      panels.map(stgPanelRowHTML).join("") +
+      '<div class="qz-stg-note">Turning one on or off reloads the app.</div></div>';
+  } else if (panels.length) {
+    html += '<div class="qz-stg-sec"><div class="qz-stg-sech">Extensions</div>' +
+      panels.map(stgPanelRowHTML).join("") + '</div>';
+  }
+  if (native.length) {
+    html += '<div class="qz-stg-sec"><div class="qz-stg-sech">Built into this app</div>' +
+      native.map(function (p) { return stgExtStaticRowHTML(p[0], p[1]); }).join("") +
+      '<div class="qz-stg-note">These ship inside the mobile interface, so they are switched above rather than here.</div></div>';
+  }
+  if (desktop.length) {
+    html += '<div class="qz-stg-sec"><div class="qz-stg-sech">Desktop only</div>' +
+      desktop.map(function (p) { return stgExtStaticRowHTML(p[0], p[1]); }).join("") +
+      '<div class="qz-stg-note">In the build but inactive on a phone. They add to the Qobuz desktop layout that this interface replaces.</div></div>';
+  }
+  return html;
 }
 var _extReloadT = null;
 function stgExtToggleTap(row) {
@@ -1781,10 +1871,22 @@ function stgApplyToggleEffect(key, on) {
     var cover = null; try { if (hasTrack()) cover = (Q.player.getTrack() || {}).cover || null; } catch (e) {}
     applyTint(cover);
   } else if (key === "mobile-wbw") {
-    if (lyState.open && !lyraActive()) { lyState.active = -1; lyRender(); }   // homegrown only; Lyra always renders word-by-word so the toggle is a no-op for it (and lyRender would wipe Lyra's DOM)
+    // Re-render the OPEN lyrics view either way. Lyra needs the model handed to it again (lyraModelFor
+    // decides word vs line at load time); the homegrown renderer just redraws. Do NOT call lyRender()
+    // while Lyra is mounted, it would wipe Lyra's DOM out from under it.
+    if (lyState.open) {
+      if (lyraActive()) {
+        // glow is create-time, so tear the instance down and let lyApply rebuild it with the new setting
+        try { _lyra.destroy(); } catch (e) {}
+        _lyra = null;
+        var pnl2 = lyBody && lyBody.parentNode; if (pnl2) pnl2.classList.remove("qz-ly--lyra");
+        var e2 = lyCache[lyState.id]; if (e2) lyApply(lyState.id, e2);
+      } else { lyState.active = -1; lyRender(); }
+    }
   } else if (key === "feat-lyrics") {
     document.documentElement.classList.toggle("qz-hide-lyrics", !on);
     if (!on && lyState.open) closeLyrics();
+    // the nested Karaoke row rides the same class, so it hides with its parent, no re-render
   } else if (key === "feat-sleep") {
     document.documentElement.classList.toggle("qz-hide-sleep", !on);
   } else if (key === "feat-radio") {
@@ -2249,6 +2351,7 @@ function onContentTap(e) {
   else if (act === "settheme") openThemePicker();                  // settings: Appearance theme picker
   else if (act === "apptoggle") stgToggleTap(t);                   // settings: Mobile feature toggle
   else if (act === "exttoggle") stgExtToggleTap(t);                // settings: extension enable/disable (reloads to apply)
+  else if (act === "extpanel") stgPanelTap(t);                     // settings: an extension's own panel (Q.registerSettings)
   else if (act === "logout") qzConfirmLogout();                    // settings: log out (confirm sheet -> qzLogout)
   else if (act === "pl-menu") openPlaylistSheet(id);               // M3: owner options (Edit details / Delete)
   else if (act === "pl-new") openCreatePlaylistSheet();            // M3: create playlist
@@ -2620,7 +2723,11 @@ function lyEnsureLyra() {
       isPlaying: function () { try { return Q.player.isPlaying(); } catch (e) { return false; } },
       onSeek: function (ms) { seekToMs(ms); },
       onRefetch: lyRefetch,
-      settings: { background: false, closeButton: false, glow: true, cascade: true, depthBlur: true,
+      // glow follows the Karaoke switch. Line mode flattens the per-syllable colour sweep but NOT the
+      // glow twin (.lyra-linemode covers .lyra-s, not .lyra-gs.lyra-s-cur the way .lyra-ripple does), so
+      // with karaoke off a soft bloom still travelled word by word. Creating without glow settles it from
+      // our side. Create-time only, hence the instance teardown in the mobile-wbw toggle.
+      settings: { background: false, closeButton: false, glow: stgTogOn("mobile-wbw"), cascade: true, depthBlur: true,
                   fontFamily: '"Qobuz Sans",-apple-system,system-ui,"Segoe UI",Roboto,sans-serif' }
     });
   } catch (e) { _lyra = null; LYRA_ON = false; if (panel) panel.classList.remove("qz-ly--lyra"); }
@@ -2648,6 +2755,18 @@ function lyLoad(tk) {
     lyCache[tk.id] = entry; lyApply(tk.id, entry);
   });
 }
+// What we hand Lyra to render. Lyra decides word-by-word vs whole-line purely from model.timing, so the
+// "Karaoke highlighting" switch is honoured HERE by parsing the payload and demoting it to line timing,
+// rather than by asking Lyra for anything. Previously that toggle only fed the homegrown renderer, so on
+// Android (where Lyra always renders) flipping it did absolutely nothing.
+function lyraModelFor(raw) {
+  if (stgTogOn("mobile-wbw")) return raw;             // karaoke on: let Lyra parse and sweep per word
+  try {
+    var m = (raw && raw.lines) ? raw : (window.Lyra && Lyra.parse ? Lyra.parse(raw) : null);
+    if (m && m.lines) { m.timing = "line"; return m; }
+  } catch (e) {}
+  return raw;                                        // parse failed: better a karaoke sheet than none
+}
 function lyApply(id, entry) {
   if (lyState.id !== id) return;                               // track changed while fetching
   var ex = entry.ex || entry;                                  // tolerate an older cache shape (the ex object directly)
@@ -2656,7 +2775,7 @@ function lyApply(id, entry) {
     if (r) {
       var raw = entry.raw || null;
       if (raw) {
-        try { r.load(raw); r.start(); return; }
+        try { r.load(lyraModelFor(raw)); r.start(); return; }
         catch (e) {   // Lyra load threw -> fully revert to homegrown (destroy + drop the .qz-ly--lyra CSS, else the fallback can't scroll)
           LYRA_ON = false;
           if (_lyra) { try { _lyra.destroy(); } catch (x) {} _lyra = null; }
@@ -3962,6 +4081,19 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 .qz-stg-tval .qz-stg-rv{ max-width:130px; }
 .qz-stg-tog.is-on .qz-pf__sw{ background:var(--qz-brand); }
 .qz-stg-tog.is-on .qz-pf__sw::after{ transform:translateX(18px); }
+/* a nested sub-option: indented with a rule up to its parent row, so "Karaoke highlighting" reads as
+   part of "Lyrics" rather than a second, competing lyrics switch */
+.qz-stg-tog.is-sub{ padding-left:30px; position:relative; }
+.qz-stg-tog.is-sub::before{ content:""; position:absolute; left:14px; top:0; bottom:50%; width:1px;
+  background:var(--qz-hairline); }
+.qz-stg-tog.is-sub::after{ content:""; position:absolute; left:14px; top:50%; width:8px; height:1px;
+  background:var(--qz-hairline); }
+.qz-stg-tog.is-sub .qz-stg-rt{ font-weight:600; }
+/* the sub-option hides with its parent feature, driven by the same root class feat-lyrics already sets */
+html.qz-hide-lyrics .qz-stg-tog.is-sub[data-tog="mobile-wbw"]{ display:none; }
+/* extension rows whose control lives elsewhere: informational, so no switch and nothing to press */
+.qz-stg-row.is-static{ opacity:.62; }
+.qz-stg-row.is-static .qz-stg-rs{ color:var(--qz-c3); }
 /* theme picker rows inside the shared body-level .qz-sheet (siblings of #qz-app-root -> literals only) */
 .qz-stg-throw .qz-stg-swatch{ width:18px; height:18px; }
 .qz-stg-thn{ flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

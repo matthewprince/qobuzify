@@ -784,6 +784,11 @@
         if (overlay && overlay.style.display !== "none") renderSettings();
         return function () { var i = extSettings.indexOf(entry); if (i >= 0) { extSettings.splice(i, 1); if (overlay && overlay.style.display !== "none") renderSettings(); } };
       },
+      // Read the registered rows back. The desktop panel is not the only settings surface any more: on
+      // Android, mobile-app draws its own screen OVER the desktop DOM, so a row registered above was
+      // rendered into a panel that is physically unreachable. That is how Last.fm shipped with a working
+      // toggle and no way to sign in. Any host-drawn settings UI must render these too.
+      settingsPanels: function () { return extSettings.slice(); },
       // debounced DOM observer; returns an unsubscribe fn
       observe: function (fn, opts) {
         var pending, ms = (opts && opts.debounce) || 120;
