@@ -5,6 +5,9 @@ node_modules/
 dist/
 docs/site.html
 site/public/qobuzify.zip
+# the Android APK is a build artifact too: deployed with the site, never committed (android/ itself is
+# ignored below, so its output has no business being in here either)
+site/public/qobuzify.apk
 
 # local Cloudflare state
 .wrangler/
