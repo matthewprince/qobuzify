@@ -3608,8 +3608,10 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
    the desktop bundle sized itself off vw and floored at 26px on a phone. The Android bake now ships the MOBILE
    Lyra build, which owns both properly: --lyra-size drives lines, interlude dots and interlude rhythm together
    (the old override moved only the lines, so the dots stayed 8px), and .lyra-content is padding:0 4px /
-   max-width:100%. Re-adding `padding:0 18px` here would narrow the measure back from 348px to 299px and undo
+   max-width:100%. Re-adding a padding:0 18px here would narrow the measure back from 348px to 299px and undo
    the fix, so if lyric type ever needs adjusting, set --lyra-size on the panel instead of touching .lyra-line.
+   (No backticks in this block: the whole CSS lives inside a JS template literal, and one stray backtick
+   terminates it and takes the entire extension out. That is exactly how 0.3.0 shipped with no mobile UI.)
    This panel's own 22px side padding is still what keeps the text off the glass edge. */
 .qz-ly__body{ position:relative; height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch; text-align:left; padding:46vh 0 56vh;
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); }   /* M4 FIX: position:relative so lyCenter's offsetTop isn't inflated by .qz-ly padding-top. Field FIX: top/bottom runway (~half-screen) so line 1 (and the last line) can reach true center instead of clamping to scrollTop 0 and clipping under the top mask */
