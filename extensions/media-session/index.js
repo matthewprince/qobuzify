@@ -250,6 +250,13 @@ function runCmd(cmd, arg) {
       case "next": case "nexttrack": playNext(); break;
       case "prev": case "previous": case "previoustrack": playPrev(); break;
       case "seek": case "seekto": seekToMs(typeof arg === "number" ? arg : (parseInt(arg, 10) || 0)); break;
+      // Jump within the published queue. The native session exposes the queue to the lockscreen, Bluetooth
+      // and Android Auto, so a tap over there arrives as an ORDER INDEX into the same list we published.
+      // mobile-app owns the queue and exposes the jump, since only it knows the store's shape.
+      case "queuejump": case "skiptoqueueitem":
+        var qi = typeof arg === "number" ? arg : parseInt(arg, 10);
+        if (!isNaN(qi) && window.__qzQueueJump) window.__qzQueueJump(qi);
+        break;
     }
   } catch (e) {}
   return true;

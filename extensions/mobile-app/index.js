@@ -2322,7 +2322,7 @@ var discoverTab = "foryou";   // remembered Discover sub-tab (survives leaving/r
 var discoverRailCache = {};   // rail key -> Promise<items[]|{title,items}> (session cache)
 var root, headerEl, contentEl, miniEl, navEl, npEl, lyBody;
 // Milestone 1 queue-panel state (see the QUEUE PANEL section below)
-var qBody = null, qState = { open: false, sig: "" }, queueMetaCache = {};
+var qBody = null, qState = { open: false, sig: "", natSig: "" }, queueMetaCache = {};
 
 // ---------------------------------------------------------------------------------------------------
 // Screen stack. Entries are { screen, page, scroll }: `page` is the screen's own DOM node, kept ALIVE
@@ -2459,6 +2459,8 @@ function qzHandleBack() {
   return false;                                                                  // at root: let native minimize/exit
 }
 try { window.__qzBack = qzHandleBack; } catch (e) {}
+// the native session's skip-to-queue-item arrives here via media-session's command dispatcher
+try { window.__qzQueueJump = function (i) { try { queueJumpTo(i); } catch (e) {} }; } catch (e) {}
 // A stack PER TAB. It used to be one shared `stack` that setTab replaced outright, so going three levels
 // into an artist, switching to Search, and coming back landed you at the Library root with those levels
 // gone. Every native tab bar keeps its tab's history. Tapping the tab you are already on pops that tab to
@@ -3061,10 +3063,31 @@ function syncQueueControls() {
 }
 function syncQueue() {
   syncQueueControls();
-  if (!qState.open) return;
   var pq = qPlayqueue(); if (!pq) return;
   var sig = qSig(pq);
+  // Push to the native session on every real change, panel open or not. The session queue is what the
+  // lockscreen, a car head unit and Android Auto read, so gating it on our own sheet being open meant
+  // those surfaces only ever saw a queue if you happened to have opened it.
+  if (sig !== qState.natSig) { qState.natSig = sig; pushQueueToNative(pq); }
+  if (!qState.open) return;
   if (sig !== qState.sig) { qState.sig = sig; qRender(); }   // re-render only when the queue actually moved
+}
+// Hand the queue to the native MediaSession. Capped: a session queue is for glancing at and skipping
+// within, and the whole thing crosses a JS<->native bridge as one string on every queue change.
+var QUEUE_CAP = 50;
+function pushQueueToNative(pq) {
+  try {
+    var AB = window.QZAndroidMedia;
+    if (!AB || !AB.updateQueue) return;
+    var order = qOrder(pq) || [], ci = qIndex(pq);
+    var out = [], start = Math.max(0, ci - 5);          // a little history, then what is coming
+    for (var i = start; i < order.length && out.length < QUEUE_CAP; i++) {
+      var it = order[i], id = it && it.trackId; if (id == null) continue;
+      var m = queueMetaCache[String(id)] || {};
+      out.push({ i: i, t: m.title || "", a: m.artist || "", al: m.album || "" });
+    }
+    AB.updateQueue(JSON.stringify({ items: out, index: ci }));
+  } catch (e) {}
 }
 // M1 FIX: queue tap-to-jump is now bound inside buildShell() on each mount (see qBody binding there), so a fresh
 // qBody after an unmount->remount always gets the delegated tap handler. (Was a one-shot IIFE that never rebound.)
@@ -4322,6 +4345,7 @@ return function cleanup() {
   window.removeEventListener("resize", onResize);
   clearTimeout(rzT);
   if (obs) { obs(); obs = null; }
-  try { if (window.__qzBack === qzHandleBack) delete window.__qzBack; } catch (e) {}   // don't leave a global closing over torn-down state
+  try { if (window.__qzBack === qzHandleBack) delete window.__qzBack; } catch (e) {}
+  try { delete window.__qzQueueJump; } catch (e) {}   // don't leave a global closing over torn-down state
   unmount();
 };
