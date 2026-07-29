@@ -581,10 +581,25 @@ function createRadioPlaylist(name, ids) {
     });
   });
 }
+// Prefer Smart Radio's engine when that extension is switched on. Its picks are materially better than
+// radioPool's: 15 similar artists instead of 6, weighted toward your favourites, deduped, recent plays
+// excluded and unstreamable tracks dropped. It was in the build and unreachable on a phone because its
+// only trigger is a button on the desktop player bar that this interface covers. We take its track list
+// and still write the playlist ourselves, so the toast and the "keep one radio playlist" bookkeeping stay
+// the mobile app's. Falls back to radioPool whenever the extension is off or absent.
+function radioIdsFor(artistId, artistNm) {
+  var sr = null; try { sr = window.__qzSmartRadio; } catch (e) {}
+  if (sr && typeof sr.buildRadio === "function") {
+    return Promise.resolve(sr.buildRadio({ id: artistId, name: artistNm || "Artist" }))
+      .then(function (ids) { return (ids && ids.length) ? ids : radioPool(artistId); })
+      .catch(function () { return radioPool(artistId); });
+  }
+  return radioPool(artistId);
+}
 function startRadioFromArtist(artistId, artistNm) {
   if (!artistId) { qToast("No artist to seed a radio"); return; }
   qToast("Building radio…");
-  radioPool(artistId).then(function (ids) {
+  radioIdsFor(artistId, artistNm).then(function (ids) {
     ids = shuffleIds(dedupe(ids)).slice(0, 100);
     if (!ids.length) { qToast("Couldn't build a radio"); return; }
     return createRadioPlaylist("Radio · " + (artistNm || "Artist"), ids);
@@ -1744,7 +1759,9 @@ var EXT_CLASS = {
   "media-session":     { kind: "native", where: "Features > Lockscreen and Live Actions" },
   "sleep-timer":       { kind: "native", where: "Features > Sleep timer" },
   "quality-badges":    { kind: "native", where: "Features > Quality badge" },
-  "smart-playback":    { kind: "native", where: "Features > Start radio" },
+  // Toggleable and it genuinely does something here now: with it on, the player's Start radio uses its
+  // engine (favourites-weighted, deduped, recent plays excluded) instead of radioPool's plainer picks.
+  "smart-playback":    { kind: "works" },
   "seek-controls":     { kind: "native", where: "Built into the player" },
   "full-app-display":  { kind: "native", where: "Built into Now Playing" },
   "better-search":     { kind: "native", where: "Built into Search" },
@@ -1761,7 +1778,10 @@ var EXT_CLASS = {
   "ux-tweaks":         { kind: "desktop" }
 };
 var EXT_DESKTOP_WHY = "Adds to the Qobuz desktop layout, which this interface replaces";
-function extTogOn(id) { try { return localStorage.getItem("qobuzify:ext:" + id) !== "0"; } catch (e) { return true; } }
+// Ask the runtime instead of reading localStorage ourselves. The default is platform-dependent now
+// (Android loads nothing but the interface and the lockscreen bridge unless you opt in), and a settings
+// screen that reimplements that rule drifts from the loader and shows switches that lie.
+function extTogOn(id) { try { return !!Q.extEnabled(id); } catch (e) { return false; } }
 function bakedExtensions() {
   try { return (window.__QOBUZIFY__ && window.__QOBUZIFY__.extensions) || []; } catch (e) { return []; }
 }
