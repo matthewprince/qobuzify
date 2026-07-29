@@ -1694,9 +1694,9 @@ var STG_CHEV = '<span class="qz-stg-chev"></span>';
 // ---- Appearance section (theme picker + mobile feature toggles) ----
 // Toggle state lives in Q.storage as the string "1"/"0" (default "1" = on) so it survives relaunch.
 function stgTogOn(key) { try { return Q.storage.get(key, "1") !== "0"; } catch (e) { return true; } }
-function stgToggleRowHTML(key, title, sub, nested) {
+function stgToggleRowHTML(key, title, sub) {
   var on = stgTogOn(key);
-  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") + (nested ? " is-sub" : "") +
+  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") +
     '" data-act="apptoggle" data-tog="' + key + '" type="button">' +
     '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(title) + '</span>' +
     '<span class="qz-stg-rs">' + esc(sub) + '</span></span><span class="qz-pf__sw"></span></button>';
@@ -1722,12 +1722,7 @@ function stgAppearanceSectionHTML() {
   // things that actually run on mobile, so this is where the user turns them on/off. Default ON.
   return '<div class="qz-stg-sec"><div class="qz-stg-sech">Features</div>' +
     stgToggleRowHTML("feat-lyrics", "Lyrics", "Show the lyrics button and synced lyrics view") +
-    // Nested under Lyrics on purpose: as two flat sibling rows these read as two competing lyrics
-    // switches, which is exactly how it got reported. It hides with its parent through the existing
-    // html.qz-hide-lyrics class (see the CSS), so no re-render is needed when Lyrics is switched off.
-    stgToggleRowHTML("mobile-wbw", "Karaoke highlighting", "Light each word as it is sung. Off shows whole lines.", true) +
     stgToggleRowHTML("feat-sleep", "Sleep timer", "Show the sleep-timer button in the player") +
-    stgToggleRowHTML("feat-radio", "Start radio", "Show the start-radio button in the player") +
     stgToggleRowHTML("feat-quality", "Quality badge", "Show the streaming-quality chip in the player") +
     stgToggleRowHTML("mobile-tint", "Album-art tint", "Tint the app with the cover art colours") +
     stgToggleRowHTML("mobile-lockscreen", "Lockscreen and Live Actions", "Show playback controls on the lock screen") +
@@ -1878,11 +1873,44 @@ function stgUpdateThemeRow() {
 // Apply a toggle's immediate effect for the current track/state. `on` is the new boolean value.
 // Player-feature toggles hide their button live via a documentElement class (CSS in the block below), so
 // no reload is needed. Called at mount (from the stored flags) and on each toggle.
+// ---- audio output (the Now Playing device pill) ----------------------------------------------------
+// The pill was a <button> with the PHONE's name in it and no click handler at all, so it looked like an
+// output picker and did nothing when tapped. Now it reports where audio is actually going and opens the
+// system's output chooser. Routing is the system's job; we summon its sheet rather than fight it.
+function outputLabel() {
+  try {
+    var s = window.QZAndroidMedia && window.QZAndroidMedia.currentOutput && window.QZAndroidMedia.currentOutput();
+    if (s) return s;
+  } catch (e) {}
+  return window.__QZ_DEVICE_NAME__ || "This phone";
+}
+function openOutputPicker() {
+  try {
+    if (window.QZAndroidMedia && window.QZAndroidMedia.openOutputPicker) { window.QZAndroidMedia.openOutputPicker(); return; }
+  } catch (e) {}
+  qToast("Output switching needs the Android app");
+}
+// Refresh the label: plugging in headphones changes the answer without anything in the page changing, so
+// it is re-read whenever Now Playing opens and on the existing player tick.
+var _outAt = 0;
+function paintOutputLabel(force) {
+  if (!npEl || !npEl.classList.contains("is-open")) return;
+  var now = Date.now();
+  if (!force && now - _outAt < 2000) return;   // crosses the bridge and queries AudioManager: throttle it
+  _outAt = now;
+  var el = npEl.querySelector(".qz-np__device-lbl");
+  if (!el) return;
+  var t = outputLabel();
+  if (el.textContent !== t) el.textContent = t;
+}
 function applyFeatureFlags() {
   var d = document.documentElement.classList;
   d.toggle("qz-hide-lyrics", !stgTogOn("feat-lyrics"));
   d.toggle("qz-hide-sleep", !stgTogOn("feat-sleep"));
-  d.toggle("qz-hide-radio", !stgTogOn("feat-radio"));
+  // Radio has ONE switch: the Smart Radio extension toggle. It used to have two (this class was driven
+  // by a separate "Start radio" feature flag), so turning the extension off left the button sitting
+  // there doing a worse job, which read as the toggle being broken. Off now means gone.
+  d.toggle("qz-hide-radio", !extTogOn("smart-playback"));
   d.toggle("qz-hide-quality", !stgTogOn("feat-quality"));
 }
 function stgApplyToggleEffect(key, on) {
@@ -1890,27 +1918,12 @@ function stgApplyToggleEffect(key, on) {
     // re-run (or clear) the album tint for the current track; applyTint() reads the flag and neutralises when off
     var cover = null; try { if (hasTrack()) cover = (Q.player.getTrack() || {}).cover || null; } catch (e) {}
     applyTint(cover);
-  } else if (key === "mobile-wbw") {
-    // Re-render the OPEN lyrics view either way. Lyra needs the model handed to it again (lyraModelFor
-    // decides word vs line at load time); the homegrown renderer just redraws. Do NOT call lyRender()
-    // while Lyra is mounted, it would wipe Lyra's DOM out from under it.
-    if (lyState.open) {
-      if (lyraActive()) {
-        // glow is create-time, so tear the instance down and let lyApply rebuild it with the new setting
-        try { _lyra.destroy(); } catch (e) {}
-        _lyra = null;
-        var pnl2 = lyBody && lyBody.parentNode; if (pnl2) pnl2.classList.remove("qz-ly--lyra");
-        var e2 = lyCache[lyState.id]; if (e2) lyApply(lyState.id, e2);
-      } else { lyState.active = -1; lyRender(); }
-    }
-  } else if (key === "feat-lyrics") {
+    } else if (key === "feat-lyrics") {
     document.documentElement.classList.toggle("qz-hide-lyrics", !on);
     if (!on && lyState.open) closeLyrics();
-    // the nested Karaoke row rides the same class, so it hides with its parent, no re-render
+    // Lyrics is one switch: on means Lyra, word by word. There is no sub-option to keep in sync.
   } else if (key === "feat-sleep") {
     document.documentElement.classList.toggle("qz-hide-sleep", !on);
-  } else if (key === "feat-radio") {
-    document.documentElement.classList.toggle("qz-hide-radio", !on);
   } else if (key === "feat-quality") {
     document.documentElement.classList.toggle("qz-hide-quality", !on);
   }
@@ -2661,6 +2674,7 @@ function renderTransport(force) {
   if (npEl) npEl.querySelector(".qz-np__pp").innerHTML = ic;
 }
 function tickProgress() {
+  paintOutputLabel();   // throttled inside; keeps the pill honest when the route changes mid-song
   if (!mounted) return;
   // detect a track change here too (covers cases onChange might miss), then progress + transport.
   // But NEVER paint from a torn scrape: the settle-gated onChange (see mount) owns the normal track-change
@@ -2699,7 +2713,7 @@ function tickProgress() {
     npEl.querySelector(".qz-np__dur").textContent = fmtDur(dur / 1000);
   }
 }
-function openNP() { if (!hasTrack()) return; npEl.classList.add("is-open"); renderTrack(); renderTransport(true); tickProgress(); }
+function openNP() { if (!hasTrack()) return; npEl.classList.add("is-open"); renderTrack(); renderTransport(true); tickProgress(); paintOutputLabel(true); }
 function closeNP() { if (npEl) npEl.classList.remove("is-open"); closeLyrics(); closeQueue(); closeQMenu(); }
 
 // ------------------------------------------------------------------ lyrics (OUR api.qobuzify.app; times are SECONDS)
@@ -2857,11 +2871,7 @@ function lyEnsureLyra() {
       isPlaying: function () { try { return Q.player.isPlaying(); } catch (e) { return false; } },
       onSeek: function (ms) { seekToMs(ms); },
       onRefetch: lyRefetch,
-      // glow follows the Karaoke switch. Line mode flattens the per-syllable colour sweep but NOT the
-      // glow twin (.lyra-linemode covers .lyra-s, not .lyra-gs.lyra-s-cur the way .lyra-ripple does), so
-      // with karaoke off a soft bloom still travelled word by word. Creating without glow settles it from
-      // our side. Create-time only, hence the instance teardown in the mobile-wbw toggle.
-      settings: { background: false, closeButton: false, glow: stgTogOn("mobile-wbw"), cascade: true, depthBlur: true,
+      settings: { background: false, closeButton: false, glow: true, cascade: true, depthBlur: true,
                   fontFamily: '"Qobuz Sans",-apple-system,system-ui,"Segoe UI",Roboto,sans-serif' }
     });
   } catch (e) { _lyra = null; LYRA_ON = false; if (panel) panel.classList.remove("qz-ly--lyra"); }
@@ -2889,18 +2899,6 @@ function lyLoad(tk) {
     lyCache[tk.id] = entry; lyApply(tk.id, entry);
   });
 }
-// What we hand Lyra to render. Lyra decides word-by-word vs whole-line purely from model.timing, so the
-// "Karaoke highlighting" switch is honoured HERE by parsing the payload and demoting it to line timing,
-// rather than by asking Lyra for anything. Previously that toggle only fed the homegrown renderer, so on
-// Android (where Lyra always renders) flipping it did absolutely nothing.
-function lyraModelFor(raw) {
-  if (stgTogOn("mobile-wbw")) return raw;             // karaoke on: let Lyra parse and sweep per word
-  try {
-    var m = (raw && raw.lines) ? raw : (window.Lyra && Lyra.parse ? Lyra.parse(raw) : null);
-    if (m && m.lines) { m.timing = "line"; return m; }
-  } catch (e) {}
-  return raw;                                        // parse failed: better a karaoke sheet than none
-}
 function lyApply(id, entry) {
   if (lyState.id !== id) return;                               // track changed while fetching
   var ex = entry.ex || entry;                                  // tolerate an older cache shape (the ex object directly)
@@ -2909,7 +2907,7 @@ function lyApply(id, entry) {
     if (r) {
       var raw = entry.raw || null;
       if (raw) {
-        try { r.load(lyraModelFor(raw)); r.start(); return; }
+        try { r.load(raw); r.start(); return; }
         catch (e) {   // Lyra load threw -> fully revert to homegrown (destroy + drop the .qz-ly--lyra CSS, else the fallback can't scroll)
           LYRA_ON = false;
           if (_lyra) { try { _lyra.destroy(); } catch (x) {} _lyra = null; }
@@ -2923,10 +2921,9 @@ function lyApply(id, entry) {
 function lyRender() {
   if (!lyBody) return;
   if (lyState.lines) {
-    var wbw = stgTogOn("mobile-wbw");   // Settings > Appearance "Word-by-word lyrics" toggle: off -> line-synced only
     lyBody.innerHTML = lyState.lines.map(function (l, i) {
       var tr = l.tr ? '<span class="qz-ly__tr">' + esc(l.tr) + "</span>" : "";
-      if (l.words && wbw) {
+      if (l.words) {
         var inner = l.words.map(function (w) { return '<span class="qz-ly__w" data-wt="' + w.t + '">' + esc(w.text) + "</span>" + (w.glue ? "" : " "); }).join("");
         return '<p class="qz-ly__line qz-ly__line--w" data-i="' + i + '">' + inner + tr + "</p>";
       }
@@ -3405,7 +3402,7 @@ function buildShell() {
     '<div class="qz-np">' +
     '<button class="qz-np__close" aria-label="Close">' + IC.down + "</button>" +
     '<div class="qz-np__art"></div>' +
-    '<button class="qz-np__device"><span class="qz-np__device-ic">' + IC.laptop + '</span><span class="qz-np__device-lbl">' + esc(window.__QZ_DEVICE_NAME__ || "Qobuzify Mobile") + '</span></button>' +
+    '<button class="qz-np__device" data-np="device"><span class="qz-np__device-ic">' + IC.laptop + '</span><span class="qz-np__device-lbl">' + esc(outputLabel()) + '</span></button>' +
     '<div class="qz-np__titlerow">' +
     '<div class="qz-np__titles"><div class="qz-np__t"></div><div class="qz-np__s"></div></div>' +
     '<button class="qz-np__like" aria-label="Favorite">' + IC.heart + "</button>" +
@@ -3450,6 +3447,8 @@ function buildShell() {
   npEl.querySelector('.qz-np__act[data-np="sparkle"]').addEventListener("click", openCurrentArtist);  // sparkle -> current artist (explore)
   npEl.querySelector(".qz-np__act--queue").addEventListener("click", function () { qState.open ? closeQueue() : openQueue(); });
   npEl.querySelector('.qz-np__act[data-np="radio"]').addEventListener("click", startRadioCurrent);     // radio -> seeded queue off the current track
+  var devBtn = npEl.querySelector('.qz-np__device');                                                   // the output pill: was inert, now opens the system chooser
+  if (devBtn) devBtn.addEventListener("click", openOutputPicker);
   npEl.querySelector(".qz-np__sleepbtn").addEventListener("click", function () { sleepTimer.open(); }); // sleep timer picker
   npEl.querySelector(".qz-np__q").addEventListener("click", openQMenu);                                 // quality chip -> tier picker
   lyBody = npEl.querySelector(".qz-ly__body");
@@ -3847,12 +3846,19 @@ html.qz-has-track .qz-mini{ display:flex; }
 .qz-np__ctl button:active{ opacity:.6; transform:scale(.94); }
 
 /* bottom action row — sparkle | info | queue */
-.qz-np__actions{ display:flex; align-items:center; justify-content:space-between; width:100%; padding:0 28px; margin-top:24px; }
+/* centred with a FIXED gap, not space-between. Half these buttons can be switched off in Settings, and
+   with space-between the spacing was a function of how many survived: six sat 28px apart, five sprang to
+   43px. Same row, different rhythm depending on your toggles. A constant gap around a centred group keeps
+   the spacing identical at any count, and the group stays optically centred instead of stretching to the
+   edges. */
+.qz-np__actions{ display:flex; align-items:center; justify-content:center; gap:28px; width:100%; padding:0 28px; margin-top:24px; }
 .qz-np__act{ width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--qz-c2); }
 /* Settings > Features toggles: hide a player button live (no reload) */
 html.qz-hide-lyrics .qz-np__act--lyrics{ display:none; }
 html.qz-hide-sleep .qz-np__sleepbtn{ display:none; }
 html.qz-hide-radio .qz-np__act[data-np="radio"]{ display:none; }
+/* the track/album sheet offers it too; one switch has to hide every affordance or "off" is a lie */
+html.qz-hide-radio .qz-sheet__it[data-s="radio"]{ display:none; }
 html.qz-hide-quality .qz-np__q{ display:none !important; }
 .qz-np__act svg{ width:25px; height:25px; }
 .qz-np__act:active{ opacity:.6; } .qz-np--lyrics .qz-np__act--lyrics{ color:var(--qz-c1); }
@@ -4229,16 +4235,6 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 .qz-stg-tval .qz-stg-rv{ max-width:130px; }
 .qz-stg-tog.is-on .qz-pf__sw{ background:var(--qz-brand); }
 .qz-stg-tog.is-on .qz-pf__sw::after{ transform:translateX(18px); }
-/* a nested sub-option: indented with a rule up to its parent row, so "Karaoke highlighting" reads as
-   part of "Lyrics" rather than a second, competing lyrics switch */
-.qz-stg-tog.is-sub{ padding-left:30px; position:relative; }
-.qz-stg-tog.is-sub::before{ content:""; position:absolute; left:14px; top:0; bottom:50%; width:1px;
-  background:var(--qz-hairline); }
-.qz-stg-tog.is-sub::after{ content:""; position:absolute; left:14px; top:50%; width:8px; height:1px;
-  background:var(--qz-hairline); }
-.qz-stg-tog.is-sub .qz-stg-rt{ font-weight:600; }
-/* the sub-option hides with its parent feature, driven by the same root class feat-lyrics already sets */
-html.qz-hide-lyrics .qz-stg-tog.is-sub[data-tog="mobile-wbw"]{ display:none; }
 /* extension rows whose control lives elsewhere: informational, so no switch and nothing to press */
 .qz-stg-row.is-static{ opacity:.62; }
 .qz-stg-row.is-static .qz-stg-rs{ color:var(--qz-c3); }
