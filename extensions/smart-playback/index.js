@@ -160,7 +160,16 @@ b.innerHTML = '<span class="icon-magic-stars"></span>';
 b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); smartRadio(); });
 var slot = Q.playerSlot({ id: "smart-radio", zone: "left", order: 20, el: b });
 
+// Publish the engine so a host with its own UI can use it. The button above lives on the DESKTOP player
+// bar, so on Android (where mobile-app draws its own interface over that bar) this extension was loaded,
+// working, and completely unreachable: the phone's Radio button ran mobile-app's plainer builder instead,
+// with no favourites weighting, no dedupe and no recent-play exclusion. mobile-app now prefers this when
+// the extension is enabled. buildRadio takes {id,name} and resolves track ids; smartRadio() is the whole
+// flow including the playlist write and playback.
+window.__qzSmartRadio = { buildRadio: buildRadio, run: smartRadio, seedFromCurrent: currentSeed };
+
 return function cleanup() {
+  try { if (window.__qzSmartRadio && window.__qzSmartRadio.run === smartRadio) delete window.__qzSmartRadio; } catch (e) {}
   if (slot) slot.remove();
   var t = document.getElementById("qz-radio-toast"); if (t) t.remove();
   var st = document.getElementById(CSS_ID); if (st) st.remove();

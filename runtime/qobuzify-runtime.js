@@ -789,6 +789,10 @@
       // rendered into a panel that is physically unreachable. That is how Last.fm shipped with a working
       // toggle and no way to sign in. Any host-drawn settings UI must render these too.
       settingsPanels: function () { return extSettings.slice(); },
+      // Is this extension loaded? Host-drawn settings UI must ask rather than reimplement the rule: the
+      // default now depends on the platform, and a settings screen that guesses differently from the
+      // loader shows switches that disagree with reality.
+      extEnabled: function (id) { try { return extEnabled(id); } catch (e) { return false; } },
       // debounced DOM observer; returns an unsubscribe fn
       observe: function (fn, opts) {
         var pending, ms = (opts && opts.debounce) || 120;
@@ -819,7 +823,26 @@
     return Q;
   }
 
-  function extEnabled(id) { return localStorage.getItem("qobuzify:ext:" + id) !== "0"; } // default ON
+  // On ANDROID nothing loads unless the user asks for it, except the two that are not really optional:
+  // mobile-app IS the interface, and media-session is the lockscreen/Bluetooth bridge (its own switch
+  // lives in Features). Everything else on a phone is either inert (it decorates the desktop layout the
+  // mobile UI covers) or a deliberate opt-in, and running ~20 inert extensions on every boot costs
+  // startup time and risk for nothing. Desktop is untouched: still default ON.
+  var ANDROID_DEFAULT_ON = { "mobile-app": 1, "media-session": 1 };
+  function extDefaultOn(id) {
+    if (IS_ANDROID) return !!ANDROID_DEFAULT_ON[id];
+    // manifest.defaultOff was carried in the payload but never consulted here, so it has always been a
+    // dead field. Honour it now; no shipped manifest sets it, so this changes no existing behaviour.
+    var e = (DATA.extensions || []).filter(function (x) { return x.id === id; })[0];
+    return !(e && e.defaultOff);
+  }
+  function extEnabled(id) {
+    var v = null;
+    try { v = localStorage.getItem("qobuzify:ext:" + id); } catch (e) {}
+    if (v === "0") return false;
+    if (v === "1") return true;
+    return extDefaultOn(id);   // never chosen: platform default
+  }
   function loadExtension(ext) {
     if (!window.Qobuzify || extCleanups[ext.id]) return;
     try {
