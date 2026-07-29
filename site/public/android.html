@@ -5,139 +5,467 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <title>Qobuzify for Android</title>
-<meta name="description" content="Qobuzify for Android: the Qobuz web player wrapped in a native shell with its own mobile UI, themes, extensions and word-by-word lyrics." />
+<meta name="description" content="Qobuzify for Android: the Qobuz web player in a native shell, with a mobile interface built for a phone, word-by-word lyrics, and lockscreen controls." />
+<meta name="theme-color" content="#07070b" />
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 20px 48px;
-    background:
-      radial-gradient(620px 420px at 88% -8%, rgba(61,168,254,.16), transparent 60%),
-      radial-gradient(520px 420px at -6% 108%, rgba(129,140,248,.12), transparent 60%),
-      #060a12;
-    color: #f0f6fc; font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased;
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap;
+  src: url("/fonts/Inter.var.woff2") format("woff2");
+}
+
+/* This page commits to ONE visual world on purpose: a music app in a dark room. The palette is pulled
+   off the mock cover in the hero, because the app's signature is a background that tints itself to the
+   album you are playing. That is also why it does not reuse the site's blue. */
+:root {
+  --ink:      #07070b;   /* ground, violet-biased near-black rather than neutral */
+  --ink-2:    #100e19;   /* raised surface */
+  --tint-a:   #7b3fa0;   /* cover violet */
+  --tint-b:   #c2456b;   /* cover magenta */
+  --amber:    #f0a84a;   /* the single accent: download, actives, sung words */
+  --paper:    #f3effa;   /* primary text */
+  --muted:    #a79dba;   /* secondary */
+  --faint:    #6f6683;   /* tertiary, captions */
+  --hair:     rgba(243,239,250,.10);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--ink); color: var(--paper);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+.wrap { position: relative; z-index: 1; }
+
+/* ---------------------------------------------------------------- the album wash, drifting
+   Borrowed from Lyra's ambient background, which is what actually sits behind the lyrics in the app:
+   separate palette blobs on independent counter-orbits, so the composition keeps REORGANISING instead
+   of rigidly rotating (a slow uniform drift reads as static, which was the whole lesson from tuning
+   bg.js against the reference video). There is no music to couple the velocity to on a web page, so it
+   runs at a calm fixed rate.
+
+   Colour shift is a hue-rotate on the wash layer only, never on anything holding text. It is bounded to
+   about -34deg..+66deg rather than a full spin: that keeps it inside the violet / magenta / coral /
+   amber family, so it always harmonises with the amber accent, where a full 360 would swing through
+   greens that fight it.
+
+   Cost: three gradient divs and two compositor-only properties, no blur, no JS, no rAF. */
+@keyframes qz-tint  { 0%,100% { filter: hue-rotate(-34deg); } 50% { filter: hue-rotate(66deg); } }
+@keyframes qz-orb-1 { 0% { translate: 0 0;        scale: 1;    }
+                      100% { translate: 7vw 5vh;  scale: 1.16; } }
+@keyframes qz-orb-2 { 0% { translate: 0 0;        scale: 1.1;  }
+                      100% { translate: -6vw 4vh; scale: .92;  } }
+@keyframes qz-orb-3 { 0% { translate: 0 0;        scale: .95;  }
+                      100% { translate: 4vw -6vh; scale: 1.2;  } }
+
+.wash {
+  position: fixed; inset: -12vh -12vw; z-index: 0; pointer-events: none; overflow: hidden;
+  opacity: .6;
+  animation: qz-tint 96s ease-in-out infinite;
+}
+.wash i { position: absolute; display: block; border-radius: 50%; }
+/* co-prime-ish periods (37 / 53 / 67s) so the three never resynchronise into one shape */
+.wash .b1 { inset: -18% 42% 46% -14%; background: radial-gradient(circle, var(--tint-a), transparent 66%);
+            animation: qz-orb-1 37s ease-in-out infinite alternate; }
+.wash .b2 { inset: -8% -16% 44% 44%;  background: radial-gradient(circle, var(--tint-b), transparent 68%);
+            animation: qz-orb-2 53s ease-in-out infinite alternate; }
+.wash .b3 { inset: 34% 10% -22% 18%;  background: radial-gradient(circle, #2f6f8f, transparent 70%);
+            animation: qz-orb-3 67s ease-in-out infinite alternate; }
+
+a { color: var(--paper); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 6px; }
+
+/* ---------------------------------------------------------------- device / app screen
+   MOBILE-FIRST, and the reason matters: nearly everyone opening this page is holding the phone they
+   are about to install on. A little phone mockup viewed on a phone is absurd, so on small screens the
+   app screen runs edge to edge off the top as though the app were already open. The device frame only
+   appears from 920px, where a screenshot needs something to sit in. */
+.screen {
+  position: relative; overflow: hidden;
+  padding: 26px 20px 30px;
+  background: var(--ink);
+  border-bottom: 1px solid var(--hair);
+}
+/* The phone's own tint lives on a pseudo-element, not on .screen itself, so it can share the page's
+   hue clock without dragging the text colour along with it. In the app this wash IS the album tint,
+   which is exactly why it drifts in step with the page behind it. */
+.screen::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(178deg, rgba(123,63,160,.34), rgba(16,14,25,.86) 62%, var(--ink));
+  animation: qz-tint 96s ease-in-out infinite;
+}
+.screen > * { position: relative; z-index: 1; }
+.screen-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .3px;
+  margin-bottom: 24px;
+}
+.screen-bar .dots { display: inline-flex; gap: 3px; align-items: flex-end; }
+.screen-bar .dots i { width: 3px; background: var(--muted); border-radius: 1px; display: block; }
+.screen-bar .dots i:nth-child(1) { height: 5px; } .screen-bar .dots i:nth-child(2) { height: 7px; }
+.screen-bar .dots i:nth-child(3) { height: 9px; } .screen-bar .dots i:nth-child(4) { height: 11px; opacity: .35; }
+
+.cover {
+  width: min(232px, 62%); aspect-ratio: 1; margin: 0 auto 22px; border-radius: 14px;
+  background:
+    radial-gradient(120% 96% at 22% 14%, rgba(255,255,255,.30), transparent 46%),
+    linear-gradient(146deg, var(--tint-a), var(--tint-b) 58%, #2b1740);
+  box-shadow: 0 26px 60px -18px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07) inset;
+  /* same clock as the wash: the cover is where the tint comes from, so they must never disagree */
+  animation: qz-tint 96s ease-in-out infinite;
+}
+.np-title { font-size: 19px; font-weight: 700; letter-spacing: -.35px; }
+.np-artist { font-size: 14px; color: var(--muted); margin-top: 1px; }
+.np-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.np-row > div { min-width: 0; }
+.hires {
+  flex: 0 0 auto; align-self: center;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--amber); border: 1px solid color-mix(in oklab, var(--amber) 45%, transparent);
+  background: color-mix(in oklab, var(--amber) 12%, transparent);
+  padding: 3px 7px; border-radius: 5px; white-space: nowrap;
+}
+.scrub { height: 3px; border-radius: 2px; background: rgba(243,239,250,.16); position: relative; }
+.scrub i { position: absolute; inset: 0 62% 0 0; background: var(--amber); border-radius: 2px; }
+.scrub b {
+  position: absolute; left: 38%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  background: var(--paper); border-radius: 50%;
+}
+.times { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint);
+         font-variant-numeric: tabular-nums; margin-top: 7px; }
+.transport { display: flex; align-items: center; justify-content: center; gap: 26px; margin: 14px 0 26px; }
+.transport svg { width: 22px; height: 22px; fill: var(--paper); opacity: .85; }
+.transport .play {
+  width: 52px; height: 52px; border-radius: 50%; background: var(--paper);
+  display: flex; align-items: center; justify-content: center;
+}
+.transport .play svg { width: 20px; height: 20px; fill: var(--ink); opacity: 1; }
+
+/* the lyric strip is the point of the whole mock: word-by-word is the app's most distinctive screen,
+   so the hero shows it caught mid-word rather than showing a generic player. */
+.lyr { border-top: 1px solid var(--hair); padding-top: 20px; }
+.lyr-tag {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 12px;
+}
+.lyr p { font-size: 21px; font-weight: 700; letter-spacing: -.4px; line-height: 1.24; margin-bottom: 9px; }
+.lyr .past { opacity: .28; }
+.lyr .next { opacity: .34; }
+.lyr .now { opacity: 1; }
+.lyr .now .sung { color: var(--amber); }
+.lyr .now .mid {                     /* the word currently being sung, filled part of the way across */
+  background-image: linear-gradient(90deg, var(--amber) 46%, rgba(243,239,250,.34) 54%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.lyr .now .todo { color: rgba(243,239,250,.34); }
+.caption { font-size: 10.5px; color: var(--faint); margin-top: 16px; }
+
+/* ---------------------------------------------------------------- content column */
+.body { padding: 34px 20px 56px; max-width: 620px; }
+.brand { height: 26px; width: auto; display: block; opacity: .92; }
+.kicker {
+  display: inline-flex; align-items: center; gap: 7px; margin: 22px 0 12px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; color: var(--amber);
+}
+.kicker::before { content: ""; width: 18px; height: 1px; background: currentColor; opacity: .55; }
+h1 { font-size: clamp(30px, 8vw, 40px); font-weight: 700; letter-spacing: -1.1px; line-height: 1.08;
+     text-wrap: balance; }
+.lede { color: var(--muted); margin-top: 14px; font-size: 15.5px; }
+.lede b { color: var(--paper); font-weight: 600; }
+
+h2 {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase;
+  color: var(--faint); margin: 40px 0 16px;
+  padding-bottom: 9px; border-bottom: 1px solid var(--hair);
+}
+
+.feat { display: flex; flex-direction: column; gap: 16px; }
+.feat > div { display: grid; grid-template-columns: 22px 1fr; gap: 13px; align-items: start; }
+.feat svg { width: 20px; height: 20px; stroke: var(--amber); fill: none; stroke-width: 1.7;
+            stroke-linecap: round; stroke-linejoin: round; margin-top: 2px; }
+.feat h3 { font-size: 14.5px; font-weight: 650; letter-spacing: -.1px; }
+.feat p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+
+/* the caveat is the most important text on the page, so it gets the only boxed treatment */
+.heads-up {
+  margin-top: 34px; padding: 18px 18px 18px 20px; border-radius: 4px;
+  background: rgba(240,168,74,.06);
+  border-left: 2px solid var(--amber);
+  font-size: 13.5px; line-height: 1.6; color: #e6dccb;
+}
+.heads-up strong { color: var(--amber); font-weight: 650; }
+.heads-up p + p { margin-top: 10px; }
+
+.cta { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.get {
+  display: inline-flex; align-items: center; gap: 11px; text-decoration: none;
+  background: var(--amber); color: #1a1206; border-radius: 10px; padding: 15px 22px;
+  font-size: 15px; font-weight: 700; letter-spacing: -.1px;
+  box-shadow: 0 14px 34px -14px color-mix(in oklab, var(--amber) 70%, transparent);
+  transition: transform .12s ease, filter .12s ease;
+}
+.get:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.get:active { transform: translateY(0); }
+.get svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2;
+           stroke-linecap: round; stroke-linejoin: round; }
+.get em { font-style: normal; font-weight: 550; font-size: 12.5px; opacity: .62;
+          font-variant-numeric: tabular-nums; }
+.alt { font-size: 13.5px; color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--hair);
+       padding-bottom: 2px; }
+.alt:hover { color: var(--paper); border-color: var(--muted); }
+
+/* install: a real sequence, so it is numbered and threaded. Nothing else on this page is numbered,
+   because nothing else on this page has an order. */
+.steps { list-style: none; counter-reset: st; }
+.steps li { counter-increment: st; position: relative; padding: 0 0 22px 40px; }
+.steps li::before {
+  content: counter(st); position: absolute; left: 0; top: -1px;
+  width: 25px; height: 25px; border-radius: 50%;
+  background: var(--ink-2); border: 1px solid color-mix(in oklab, var(--amber) 40%, transparent);
+  color: var(--amber); font-size: 11.5px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.steps li::after {                   /* the thread between markers */
+  content: ""; position: absolute; left: 12px; top: 27px; bottom: 4px; width: 1px;
+  background: linear-gradient(180deg, var(--hair), transparent);
+}
+.steps li:last-child { padding-bottom: 0; }
+.steps li:last-child::after { display: none; }
+.steps h3 { font-size: 14.5px; font-weight: 650; margin-bottom: 3px; }
+.steps p { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+
+/* requirements are a spec, not a story: a table, aligned, no bullets */
+.spec { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.spec th, .spec td { text-align: left; padding: 10px 0; border-bottom: 1px solid var(--hair);
+                     vertical-align: baseline; }
+.spec th { color: var(--faint); font-weight: 550; width: 40%; padding-right: 16px; }
+.spec td { color: var(--paper); }
+.spec tr:last-child th, .spec tr:last-child td { border-bottom: 0; }
+
+.verify p { font-size: 13.5px; color: var(--muted); }
+.verify code { font-family: var(--mono); font-size: 12px; color: var(--paper);
+               background: rgba(243,239,250,.07); padding: 2px 6px; border-radius: 4px; }
+.hash { margin-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+.hash div { min-width: 0; }
+.hash dt { font-size: 9.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+           color: var(--faint); margin-bottom: 5px; }
+.hash dd { font-family: var(--mono); font-size: 11px; line-height: 1.75; color: var(--muted);
+           word-break: break-all; }
+
+footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--hair);
+         font-size: 12.5px; color: var(--faint); line-height: 1.65; }
+footer a { color: var(--muted); }
+footer a:hover { color: var(--paper); }
+
+/* ---------------------------------------------------------------- desktop split
+   From 920px the app screen becomes a framed device that stays put while the copy scrolls past it. */
+@media (min-width: 920px) {
+  .wrap { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 64px;
+          max-width: 1120px; margin: 0 auto; padding: 0 40px; align-items: start; }
+  .device { position: sticky; top: 0; height: 100vh; display: flex; align-items: center; }
+  .screen {
+    border: 1px solid rgba(243,239,250,.14); border-radius: 34px; padding: 22px 22px 26px;
+    box-shadow: 0 50px 110px -40px rgba(0,0,0,.9), 0 0 0 8px rgba(243,239,250,.03);
+    width: 100%; max-height: 88vh; overflow: hidden;
   }
-  .card {
-    width: 100%; max-width: 620px; padding: 32px 30px;
-    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 18px;
-    box-shadow: 0 24px 70px rgba(0,0,0,.5); backdrop-filter: blur(12px);
-  }
-  .brand { height: 30px; width: auto; display: block; }
-  .eyebrow {
-    display: inline-block; margin: 20px 0 10px; padding: 4px 10px; border-radius: 999px;
-    font-size: 11px; font-weight: 750; letter-spacing: .6px; text-transform: uppercase;
-    color: #7fc4ff; background: rgba(61,168,254,.12); border: 1px solid rgba(61,168,254,.3);
-  }
-  h1 { font-size: 26px; font-weight: 800; letter-spacing: -.6px; margin-bottom: 10px; }
-  p.lead { color: #9fb0c6; font-size: 14.5px; line-height: 1.6; }
-  h2 { font-size: 13px; font-weight: 750; letter-spacing: .5px; text-transform: uppercase;
-       color: #7c8ba1; margin: 26px 0 10px; }
-  ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-  li { position: relative; padding-left: 18px; font-size: 14px; line-height: 1.55; color: #cbd3df; }
-  li::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 6px;
-               border-radius: 50%; background: rgba(61,168,254,.75); }
-  li b { color: #f0f6fc; font-weight: 650; }
-  .warn {
-    margin-top: 22px; font-size: 13.5px; color: #e8d9c2; line-height: 1.6;
-    background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.3); border-radius: 12px; padding: 14px 16px;
-  }
-  .warn b { color: #fcd34d; }
-  .dl { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-  a.btn {
-    appearance: none; border: 0; border-radius: 12px; padding: 14px 22px; text-decoration: none;
-    font-size: 15px; font-weight: 750; color: #06090a; background: #3da8fe;
-    display: inline-flex; align-items: baseline; gap: 9px; transition: filter .12s;
-  }
-  a.btn:hover { filter: brightness(1.07); }
-  a.btn span { font-size: 12.5px; font-weight: 600; opacity: .65; }
-  a.ghost {
-    text-decoration: none; font-size: 13.5px; font-weight: 650; color: #9fb0c6;
-    border-bottom: 1px solid rgba(159,176,198,.35); padding-bottom: 1px;
-  }
-  a.ghost:hover { color: #f0f6fc; border-color: rgba(240,246,252,.6); }
-  .steps { counter-reset: s; display: flex; flex-direction: column; gap: 10px; }
-  .steps li { padding-left: 30px; }
-  .steps li::before {
-    counter-increment: s; content: counter(s); top: 1px; left: 0;
-    width: 20px; height: 20px; border-radius: 6px; background: rgba(61,168,254,.16);
-    border: 1px solid rgba(61,168,254,.32); color: #7fc4ff;
-    font-size: 11.5px; font-weight: 750; display: flex; align-items: center; justify-content: center;
-  }
-  .fp {
-    margin-top: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11.5px; line-height: 1.7; color: #7c8ba1; word-break: break-all;
-  }
-  .fp b { color: #9fb0c6; font-weight: 600; font-family: inherit; }
-  footer { margin-top: 26px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.08);
-           font-size: 12.5px; color: #6f7b8d; line-height: 1.6; }
-  footer a { color: #9fb0c6; }
+  .screen-bar { margin-bottom: 20px; }
+  .cover { width: min(196px, 58%); margin-bottom: 20px; }
+  .lyr p { font-size: 19px; }
+  .body { padding: 84px 0 96px; max-width: none; }
+  .brand { height: 28px; }
+  h2 { margin-top: 52px; }
+  .hash { flex-direction: row; gap: 34px; }
+}
+@media (min-width: 1180px) { .wrap { gap: 88px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  /* the wash stops dead rather than being removed: it still tints, it just holds one frame */
+  * { transition: none !important; animation: none !important; }
+  .get:hover { transform: none; }
+}
 </style>
 </head>
 <body>
-<div class="card">
-  <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
 
-  <div class="eyebrow">Android &middot; first public release</div>
-  <h1>Qobuzify for Android</h1>
-  <p class="lead">
-    The Qobuz web player in a native shell, with a mobile interface built for it rather than a
-    desktop layout squeezed onto a phone. Themes, the extension suite and word-by-word lyrics come
-    along. It needs your own paid Qobuz subscription: Qobuzify adds to Qobuz, it is not a way to get
-    Qobuz for free.
-  </p>
+<!-- drifting album wash; decorative, so it is hidden from assistive tech -->
+<div class="wash" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
 
-  <h2>What you get</h2>
-  <ul>
-    <li><b>A real mobile UI.</b> Now Playing, queue, library, search and settings, drawn for a phone.</li>
-    <li><b>Word-by-word lyrics.</b> The same karaoke renderer as the desktop app, on the same lyrics API.</li>
-    <li><b>Lockscreen and Bluetooth controls.</b> Native media session, notification, headset buttons.</li>
-    <li><b>Background playback.</b> Audio keeps going with the screen off.</li>
-    <li><b>Themes and extensions.</b> Switched live from the in-app settings panel.</li>
-  </ul>
+<div class="wrap">
 
-  <div class="warn">
-    <b>Read this before installing.</b> This is a sideloaded app, not a Play Store listing, so Android
-    will warn you and you will have to allow it explicitly. It is signed with our own key, which means
-    updates have to come from this page. Audio is <b>lossless FLAC but not bit-perfect</b>: it plays
-    through the web player and the shared Android mixer, and no setting changes that. If bit-perfect
-    output matters to you, that is the desktop app on Linux, or the PowerShell installer on Windows.
+  <!-- the app, as it looks on the phone you are reading this on -->
+  <div class="device">
+    <div class="screen" aria-hidden="true">
+      <div class="screen-bar">
+        <span>9:41</span>
+        <span class="dots"><i></i><i></i><i></i><i></i></span>
+      </div>
+
+      <div class="cover"></div>
+
+      <div class="np-row">
+        <div>
+          <div class="np-title">Northern Light</div>
+          <div class="np-artist">Lyra Demo</div>
+        </div>
+        <span class="hires">24/96 FLAC</span>
+      </div>
+
+      <div class="scrub"><i></i><b></b></div>
+      <div class="times"><span>1:24</span><span>-2:18</span></div>
+
+      <div class="transport">
+        <svg viewBox="0 0 24 24"><path d="M18 5v14l-11-7zM6 5h2v14H6z"/></svg>
+        <span class="play"><svg viewBox="0 0 24 24"><path d="M7 4h4v16H7zM13 4h4v16h-4z"/></svg></span>
+        <svg viewBox="0 0 24 24"><path d="M6 5v14l11-7zM16 5h2v14h-2z"/></svg>
+      </div>
+
+      <div class="lyr">
+        <div class="lyr-tag">Word by word</div>
+        <!-- deliberately placeholder text, not lyrics: the point is the sweep, and a mock that reads
+             like a real song invites people to wonder which song. The middle word is caught mid-fill. -->
+        <p class="past">previous line, already sung</p>
+        <p class="now"><span class="sung">current</span> <span class="mid">line</span> <span class="todo">as it is sung</span></p>
+        <p class="next">next line, still waiting</p>
+      </div>
+
+      <div class="caption">Illustration of the app, not a screenshot.</div>
+    </div>
   </div>
 
-  <div class="dl">
-    <a class="btn" href="/qobuzify.apk" download>Download APK <span>0.3.0 &middot; 465 KB</span></a>
-    <a class="ghost" href="https://qobuzify.app/">All platforms</a>
-  </div>
+  <!-- the copy -->
+  <main class="body">
+    <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
 
-  <h2>Installing</h2>
-  <ol class="steps">
-    <li>Download the APK on the phone, or copy it across.</li>
-    <li>Open it. Android will ask whether to allow installs from this source: allow it for your browser or file manager.</li>
-    <li>Open Qobuzify and sign in with your Qobuz account.</li>
-    <li>Say yes when it offers to exempt itself from battery optimisation. Without that, Android kills background audio.</li>
-  </ol>
+    <div class="kicker">Android &middot; first public release</div>
+    <h1>Your Qobuz library, finally built for the phone.</h1>
+    <p class="lede">
+      Qobuzify for Android runs the Qobuz web player inside a native shell and draws <b>its own mobile
+      interface</b> over the top. Not a desktop layout squeezed onto a small screen: a Now Playing
+      screen, a queue, a library and word-by-word lyrics, all drawn for a phone. It uses your own paid
+      Qobuz subscription, and it is not a way to get Qobuz for free.
+    </p>
 
-  <h2>Requirements</h2>
-  <ul>
-    <li>Android 8.0 or newer.</li>
-    <li>A paid Qobuz subscription.</li>
-    <li>Around 2 MB of storage, plus whatever the system WebView caches.</li>
-  </ul>
+    <div class="cta">
+      <a class="get" href="/qobuzify.apk" download>
+        <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M5 19h14"/></svg>
+        Download APK <em>0.3.0 &middot; 465 KB</em>
+      </a>
+      <a class="alt" href="/">Other platforms</a>
+    </div>
 
-  <h2>Verifying the download</h2>
-  <p class="lead">
-    Every release is signed with the same key. If the signing certificate ever changes, the APK did not
-    come from us. Check it with <code>apksigner verify --print-certs qobuzify.apk</code>.
-  </p>
-  <div class="fp">
-    <b>APK sha256</b><br />16c5368ce0429ea39e0fa1927deac30f8a4f17f170029f80149cba911f4dd916<br />
-    <b>signing cert sha256</b><br />85:22:E9:6A:79:46:0B:23:0D:CE:49:79:65:FB:46:4D:88:4C:64:60:84:9D:58:06:8F:C4:E7:E1:DD:89:52:E9
-  </div>
+    <div class="heads-up">
+      <p>
+        <strong>Two things to know first.</strong> This is a sideloaded app rather than a Play Store
+        listing, so Android will warn you and you will have to allow the install yourself. It is signed
+        with our own key, which means updates come from this page and nowhere else.
+      </p>
+      <p>
+        And on Android the audio is <strong>lossless FLAC but not bit-perfect</strong>. It plays through
+        the web player and the shared Android mixer, and no setting changes that. If bit-perfect output
+        is what you are here for, that is the desktop app on Linux, or the PowerShell installer on
+        Windows.
+      </p>
+    </div>
 
-  <footer>
-    First public Android build, so expect rough edges. Found one?
-    <a href="/issues.html">Report it here</a>. The app checks this page for updates and will tell you
-    when a newer version is out.
-  </footer>
+    <h2>What is in it</h2>
+    <div class="feat">
+      <div>
+        <svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.6 5.6h2.8"/></svg>
+        <div>
+          <h3>An interface made for a phone</h3>
+          <p>Now Playing, queue, library, search and settings, laid out for one thumb.</p>
+        </div>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24"><path d="M4 7h9M4 12h13M4 17h7"/><circle cx="19" cy="17.5" r="2.2"/></svg>
+        <div>
+          <h3>Word-by-word lyrics</h3>
+          <p>The same renderer as the desktop app, on the same lyrics service.</p>
+        </div>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+        <div>
+          <h3>Lockscreen and Bluetooth controls</h3>
+          <p>A real media session, so the notification, your car and your headset buttons all work.</p>
+        </div>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-9 9"/><path d="M12 7v5l3.5 2"/></svg>
+        <div>
+          <h3>Playback that survives the screen going off</h3>
+          <p>A foreground service keeps the music going when you put the phone away.</p>
+        </div>
+      </div>
+      <div>
+        <svg viewBox="0 0 24 24"><path d="M12 3.2 20 7v5.5c0 4.4-3.3 7-8 8.3-4.7-1.3-8-3.9-8-8.3V7z"/><path d="M9.3 12.2 11.4 14.3 15 10.6"/></svg>
+        <div>
+          <h3>Themes and extensions</h3>
+          <p>The whole suite, switched live from the settings panel inside the app.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2>Installing it</h2>
+    <ol class="steps">
+      <li>
+        <h3>Download the APK</h3>
+        <p>Straight onto the phone, or copy it across from a computer.</p>
+      </li>
+      <li>
+        <h3>Open it and allow the install</h3>
+        <p>Android will ask whether it can install apps from this source. Allow it for whichever browser
+           or file manager you used.</p>
+      </li>
+      <li>
+        <h3>Sign in with your Qobuz account</h3>
+        <p>The same account you use everywhere else. Qobuzify never sees your password.</p>
+      </li>
+      <li>
+        <h3>Say yes to the battery prompt</h3>
+        <p>It asks once to be left out of battery optimisation. Without that, Android will kill your
+           music the moment you put the phone in a pocket.</p>
+      </li>
+    </ol>
+
+    <h2>What it needs</h2>
+    <table class="spec">
+      <tr><th>Android version</th><td>8.0 or newer</td></tr>
+      <tr><th>Subscription</th><td>A paid Qobuz plan, any tier</td></tr>
+      <tr><th>Storage</th><td>About 2 MB, plus whatever the system WebView caches</td></tr>
+      <tr><th>Architecture</th><td>Any. There is no native code in the APK</td></tr>
+    </table>
+
+    <h2>Checking what you downloaded</h2>
+    <div class="verify">
+      <p>
+        Every release is signed with the same key. If the signing certificate ever differs from the one
+        below, the file did not come from us. Check it with
+        <code>apksigner verify --print-certs qobuzify.apk</code>.
+      </p>
+      <dl class="hash">
+        <div>
+          <dt>APK SHA-256</dt>
+          <dd>16c5368ce0429ea39e0fa1927deac30f8a4f17f170029f80149cba911f4dd916</dd>
+        </div>
+        <div>
+          <dt>Signing certificate SHA-256</dt>
+          <dd>85:22:E9:6A:79:46:0B:23:0D:CE:49:79:65:FB:46:4D:88:4C:64:60:84:9D:58:06:8F:C4:E7:E1:DD:89:52:E9</dd>
+        </div>
+      </dl>
+    </div>
+
+    <footer>
+      First public Android build, so there will be rough edges. If you find one,
+      <a href="/issues.html">tell us about it</a>. The app checks back here for updates and will let you
+      know when a new version is out.
+    </footer>
+  </main>
+
 </div>
 </body>
 </html>
