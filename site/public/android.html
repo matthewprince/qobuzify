@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <title>Qobuzify for Android</title>
-<meta name="description" content="Qobuzify for Android: the Qobuz web player in a native shell, with a mobile interface built for a phone, word-by-word lyrics, and lockscreen controls." />
+<meta name="description" content="Qobuzify for Android: the Qobuz web player in a native shell with a phone interface of its own, word-by-word lyrics and lockscreen controls." />
 <meta name="theme-color" content="#07070b" />
 <style>
 @font-face {
@@ -341,12 +341,12 @@ footer a:hover { color: var(--paper); }
     <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
 
     <div class="kicker">Android &middot; first public release</div>
-    <h1>Your Qobuz library, finally built for the phone.</h1>
+    <h1>Everything Qobuzify does, on Android.</h1>
     <p class="lede">
-      Qobuzify for Android runs the Qobuz web player inside a native shell and draws <b>its own mobile
-      interface</b> over the top. Not a desktop layout squeezed onto a small screen: a Now Playing
-      screen, a queue, a library and word-by-word lyrics, all drawn for a phone. It uses your own paid
-      Qobuz subscription, and it is not a way to get Qobuz for free.
+      It runs the Qobuz web player inside a native shell, then draws <b>its own interface</b> over the
+      top. Now Playing, the queue, your library, search, settings and word-by-word lyrics, all laid out
+      for one hand rather than a mouse. You will need your own paid Qobuz subscription: Qobuzify adds to
+      Qobuz, it is not a way to get Qobuz for free.
     </p>
 
     <div class="cta">
@@ -359,15 +359,14 @@ footer a:hover { color: var(--paper); }
 
     <div class="heads-up">
       <p>
-        <strong>Two things to know first.</strong> This is a sideloaded app rather than a Play Store
-        listing, so Android will warn you and you will have to allow the install yourself. It is signed
-        with our own key, which means updates come from this page and nowhere else.
+        <strong>Two things to know first.</strong> This is a sideloaded app, not a Play Store listing,
+        so Android will warn you and you will have to allow the install yourself. It is signed with our
+        own key, so updates only ever come from this page.
       </p>
       <p>
-        And on Android the audio is <strong>lossless FLAC but not bit-perfect</strong>. It plays through
-        the web player and the shared Android mixer, and no setting changes that. If bit-perfect output
-        is what you are here for, that is the desktop app on Linux, or the PowerShell installer on
-        Windows.
+        On Android the audio is <strong>lossless FLAC but not bit-perfect</strong>. It goes through the
+        web player and the shared Android mixer, and no setting will change that. If bit-perfect output
+        is what you came for, you want the desktop app on Linux, or the PowerShell installer on Windows.
       </p>
     </div>
 
@@ -376,41 +375,44 @@ footer a:hover { color: var(--paper); }
       <div>
         <svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.6 5.6h2.8"/></svg>
         <div>
-          <h3>An interface made for a phone</h3>
-          <p>Now Playing, queue, library, search and settings, laid out for one thumb.</p>
+          <h3>Every screen redrawn</h3>
+          <p>Now Playing, the queue, your library, search and settings. None of it is the desktop layout
+             shrunk down.</p>
         </div>
       </div>
       <div>
         <svg viewBox="0 0 24 24"><path d="M4 7h9M4 12h13M4 17h7"/><circle cx="19" cy="17.5" r="2.2"/></svg>
         <div>
           <h3>Word-by-word lyrics</h3>
-          <p>The same renderer as the desktop app, on the same lyrics service.</p>
+          <p>The same renderer as the desktop app, on the same lyrics service. It follows the audio, so
+             it does not drift the way a line timer does.</p>
         </div>
       </div>
       <div>
         <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
         <div>
           <h3>Lockscreen and Bluetooth controls</h3>
-          <p>A real media session, so the notification, your car and your headset buttons all work.</p>
+          <p>A proper media session, so your notification, your car stereo and your headset buttons all
+             behave.</p>
         </div>
       </div>
       <div>
         <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-9 9"/><path d="M12 7v5l3.5 2"/></svg>
         <div>
-          <h3>Playback that survives the screen going off</h3>
-          <p>A foreground service keeps the music going when you put the phone away.</p>
+          <h3>Music that keeps playing</h3>
+          <p>Screen off, another app open, phone in a pocket: a foreground service holds the stream.</p>
         </div>
       </div>
       <div>
         <svg viewBox="0 0 24 24"><path d="M12 3.2 20 7v5.5c0 4.4-3.3 7-8 8.3-4.7-1.3-8-3.9-8-8.3V7z"/><path d="M9.3 12.2 11.4 14.3 15 10.6"/></svg>
         <div>
           <h3>Themes and extensions</h3>
-          <p>The whole suite, switched live from the settings panel inside the app.</p>
+          <p>All of them, switched live from settings. No restart.</p>
         </div>
       </div>
     </div>
 
-    <h2>Installing it</h2>
+    <h2>Installing</h2>
     <ol class="steps">
       <li>
         <h3>Download the APK</h3>
@@ -423,16 +425,16 @@ footer a:hover { color: var(--paper); }
       </li>
       <li>
         <h3>Sign in with your Qobuz account</h3>
-        <p>The same account you use everywhere else. Qobuzify never sees your password.</p>
+        <p>The same account you use everywhere else, on Qobuz's own sign-in page.</p>
       </li>
       <li>
         <h3>Say yes to the battery prompt</h3>
-        <p>It asks once to be left out of battery optimisation. Without that, Android will kill your
-           music the moment you put the phone in a pocket.</p>
+        <p>It asks once to be left out of battery optimisation. Without that, Android stops your music
+           the moment the phone goes in a pocket.</p>
       </li>
     </ol>
 
-    <h2>What it needs</h2>
+    <h2>Requirements</h2>
     <table class="spec">
       <tr><th>Android version</th><td>8.0 or newer</td></tr>
       <tr><th>Subscription</th><td>A paid Qobuz plan, any tier</td></tr>
@@ -440,7 +442,7 @@ footer a:hover { color: var(--paper); }
       <tr><th>Architecture</th><td>Any. There is no native code in the APK</td></tr>
     </table>
 
-    <h2>Checking what you downloaded</h2>
+    <h2>Checking the download</h2>
     <div class="verify">
       <p>
         Every release is signed with the same key. If the signing certificate ever differs from the one
@@ -460,9 +462,9 @@ footer a:hover { color: var(--paper); }
     </div>
 
     <footer>
-      First public Android build, so there will be rough edges. If you find one,
-      <a href="/issues.html">tell us about it</a>. The app checks back here for updates and will let you
-      know when a new version is out.
+      First public Android build, so expect a few rough edges. If you hit one,
+      <a href="/issues.html">tell us</a>. The app checks back here for updates and will say so when
+      there is a new version.
     </footer>
   </main>
 
