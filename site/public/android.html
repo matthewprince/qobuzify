@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<title>Qobuzify for Android</title>
+<meta name="description" content="Qobuzify for Android: the Qobuz web player wrapped in a native shell with its own mobile UI, themes, extensions and word-by-word lyrics." />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 20px 48px;
+    background:
+      radial-gradient(620px 420px at 88% -8%, rgba(61,168,254,.16), transparent 60%),
+      radial-gradient(520px 420px at -6% 108%, rgba(129,140,248,.12), transparent 60%),
+      #060a12;
+    color: #f0f6fc; font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%; max-width: 620px; padding: 32px 30px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.5); backdrop-filter: blur(12px);
+  }
+  .brand { height: 30px; width: auto; display: block; }
+  .eyebrow {
+    display: inline-block; margin: 20px 0 10px; padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 750; letter-spacing: .6px; text-transform: uppercase;
+    color: #7fc4ff; background: rgba(61,168,254,.12); border: 1px solid rgba(61,168,254,.3);
+  }
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -.6px; margin-bottom: 10px; }
+  p.lead { color: #9fb0c6; font-size: 14.5px; line-height: 1.6; }
+  h2 { font-size: 13px; font-weight: 750; letter-spacing: .5px; text-transform: uppercase;
+       color: #7c8ba1; margin: 26px 0 10px; }
+  ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  li { position: relative; padding-left: 18px; font-size: 14px; line-height: 1.55; color: #cbd3df; }
+  li::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 6px;
+               border-radius: 50%; background: rgba(61,168,254,.75); }
+  li b { color: #f0f6fc; font-weight: 650; }
+  .warn {
+    margin-top: 22px; font-size: 13.5px; color: #e8d9c2; line-height: 1.6;
+    background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.3); border-radius: 12px; padding: 14px 16px;
+  }
+  .warn b { color: #fcd34d; }
+  .dl { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  a.btn {
+    appearance: none; border: 0; border-radius: 12px; padding: 14px 22px; text-decoration: none;
+    font-size: 15px; font-weight: 750; color: #06090a; background: #3da8fe;
+    display: inline-flex; align-items: baseline; gap: 9px; transition: filter .12s;
+  }
+  a.btn:hover { filter: brightness(1.07); }
+  a.btn span { font-size: 12.5px; font-weight: 600; opacity: .65; }
+  a.ghost {
+    text-decoration: none; font-size: 13.5px; font-weight: 650; color: #9fb0c6;
+    border-bottom: 1px solid rgba(159,176,198,.35); padding-bottom: 1px;
+  }
+  a.ghost:hover { color: #f0f6fc; border-color: rgba(240,246,252,.6); }
+  .steps { counter-reset: s; display: flex; flex-direction: column; gap: 10px; }
+  .steps li { padding-left: 30px; }
+  .steps li::before {
+    counter-increment: s; content: counter(s); top: 1px; left: 0;
+    width: 20px; height: 20px; border-radius: 6px; background: rgba(61,168,254,.16);
+    border: 1px solid rgba(61,168,254,.32); color: #7fc4ff;
+    font-size: 11.5px; font-weight: 750; display: flex; align-items: center; justify-content: center;
+  }
+  .fp {
+    margin-top: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px; line-height: 1.7; color: #7c8ba1; word-break: break-all;
+  }
+  .fp b { color: #9fb0c6; font-weight: 600; font-family: inherit; }
+  footer { margin-top: 26px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.08);
+           font-size: 12.5px; color: #6f7b8d; line-height: 1.6; }
+  footer a { color: #9fb0c6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <img class="brand" src="/qobuzify-wordmark.svg" alt="Qobuzify" />
+
+  <div class="eyebrow">Android &middot; first public release</div>
+  <h1>Qobuzify for Android</h1>
+  <p class="lead">
+    The Qobuz web player in a native shell, with a mobile interface built for it rather than a
+    desktop layout squeezed onto a phone. Themes, the extension suite and word-by-word lyrics come
+    along. It needs your own paid Qobuz subscription: Qobuzify adds to Qobuz, it is not a way to get
+    Qobuz for free.
+  </p>
+
+  <h2>What you get</h2>
+  <ul>
+    <li><b>A real mobile UI.</b> Now Playing, queue, library, search and settings, drawn for a phone.</li>
+    <li><b>Word-by-word lyrics.</b> The same karaoke renderer as the desktop app, on the same lyrics API.</li>
+    <li><b>Lockscreen and Bluetooth controls.</b> Native media session, notification, headset buttons.</li>
+    <li><b>Background playback.</b> Audio keeps going with the screen off.</li>
+    <li><b>Themes and extensions.</b> Switched live from the in-app settings panel.</li>
+  </ul>
+
+  <div class="warn">
+    <b>Read this before installing.</b> This is a sideloaded app, not a Play Store listing, so Android
+    will warn you and you will have to allow it explicitly. It is signed with our own key, which means
+    updates have to come from this page. Audio is <b>lossless FLAC but not bit-perfect</b>: it plays
+    through the web player and the shared Android mixer, and no setting changes that. If bit-perfect
+    output matters to you, that is the desktop app on Linux, or the PowerShell installer on Windows.
+  </div>
+
+  <div class="dl">
+    <a class="btn" href="/qobuzify.apk" download>Download APK <span>0.3.0 &middot; 465 KB</span></a>
+    <a class="ghost" href="https://qobuzify.app/">All platforms</a>
+  </div>
+
+  <h2>Installing</h2>
+  <ol class="steps">
+    <li>Download the APK on the phone, or copy it across.</li>
+    <li>Open it. Android will ask whether to allow installs from this source: allow it for your browser or file manager.</li>
+    <li>Open Qobuzify and sign in with your Qobuz account.</li>
+    <li>Say yes when it offers to exempt itself from battery optimisation. Without that, Android kills background audio.</li>
+  </ol>
+
+  <h2>Requirements</h2>
+  <ul>
+    <li>Android 8.0 or newer.</li>
+    <li>A paid Qobuz subscription.</li>
+    <li>Around 2 MB of storage, plus whatever the system WebView caches.</li>
+  </ul>
+
+  <h2>Verifying the download</h2>
+  <p class="lead">
+    Every release is signed with the same key. If the signing certificate ever changes, the APK did not
+    come from us. Check it with <code>apksigner verify --print-certs qobuzify.apk</code>.
+  </p>
+  <div class="fp">
+    <b>APK sha256</b><br />16c5368ce0429ea39e0fa1927deac30f8a4f17f170029f80149cba911f4dd916<br />
+    <b>signing cert sha256</b><br />85:22:E9:6A:79:46:0B:23:0D:CE:49:79:65:FB:46:4D:88:4C:64:60:84:9D:58:06:8F:C4:E7:E1:DD:89:52:E9
+  </div>
+
+  <footer>
+    First public Android build, so expect rough edges. Found one?
+    <a href="/issues.html">Report it here</a>. The app checks this page for updates and will tell you
+    when a newer version is out.
+  </footer>
+</div>
+</body>
+</html>

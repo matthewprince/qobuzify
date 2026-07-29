@@ -28,6 +28,13 @@ function Windows() {
     </svg>
   );
 }
+function Android() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M6.2 9.4h11.6v7.9a1.5 1.5 0 0 1-1.5 1.5H7.7a1.5 1.5 0 0 1-1.5-1.5zM4.3 9.9a1.1 1.1 0 0 1 1.1 1.1v3.7a1.1 1.1 0 0 1-2.2 0V11a1.1 1.1 0 0 1 1.1-1.1zm15.4 0A1.1 1.1 0 0 1 20.8 11v3.7a1.1 1.1 0 0 1-2.2 0V11a1.1 1.1 0 0 1 1.1-1.1zM9 19.3h1.9v2.1a1 1 0 0 1-1.9 0zm4.1 0H15v2.1a1 1 0 0 1-1.9 0zM8.6 3.1l.9 1.6a5.9 5.9 0 0 1 5 0l.9-1.6a.4.4 0 1 1 .7.4l-.9 1.6a5 5 0 0 1 2.6 3.5H6.2a5 5 0 0 1 2.6-3.5L7.9 3.5a.4.4 0 1 1 .7-.4zM9.6 6.6a.6.6 0 1 0 0 1.2.6.6 0 0 0 0-1.2zm4.8 0a.6.6 0 1 0 0 1.2.6.6 0 0 0 0-1.2z" />
+    </svg>
+  );
+}
 function Penguin() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -186,7 +193,7 @@ export default function Downloads() {
 
         {/* Route B: standalone app, any OS */}
         <div className={"route" + (!winPrimary ? " route-primary" : "")}>
-          <div className="route-badge">macOS, Linux, Windows</div>
+          <div className="route-badge">macOS, Linux, Windows, Android</div>
           <h3>Standalone app</h3>
           <p className="route-sub">
             The Qobuz web player wrapped with all themes and the full extension suite, in one
@@ -246,6 +253,12 @@ export default function Downloads() {
                 <span className="dl-other-ico"><Penguin /></span>Linux .deb
               </a>
             ) : null}
+            {/* Android is NOT a GitHub release asset (the APK ships with the site), so it is a fixed link
+                rather than something `find` can resolve. It points at the /android page, never straight at
+                the APK: sideloading, self-signing and the no-bit-perfect caveat all need saying first. */}
+            <a className="dl-other" href="/android">
+              <span className="dl-other-ico"><Android /></span>Android .apk
+            </a>
           </div>
           <p className="route-note">
             Unsigned for now: on macOS right-click and choose Open the first time; on Windows click
