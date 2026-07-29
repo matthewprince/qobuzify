@@ -812,7 +812,7 @@ function openPlaylistFormSheet(mode, opts) {
       p.then(function (res) {
         invalidatePlaylistCache();
         closeSheet();
-        if (isEdit) { qToast("Playlist updated"); if (opts.onSaved) opts.onSaved(); else render(); }
+        if (isEdit) { qToast("Playlist updated"); if (opts.onSaved) opts.onSaved(); else refresh(); }
         else { qToast('Created "' + nm + '"'); if (opts.onCreated) opts.onCreated(res, nm); else if (res) go(playlistDetailScreen(res)); }
       }).catch(function () {
         b.disabled = false; b.textContent = isEdit ? "Save" : "Create";
@@ -956,7 +956,7 @@ function removeFromPlaylistViaSheet(d) {
   deletePlaylistTrack(d.ctxId, d.ptid).then(function () {
     invalidatePlaylistCache();
     qToast("Removed from playlist");
-    render();                                     // re-mount the owned playlist detail so list + edit state stay in sync
+    refresh();                                    // rebuild the owned playlist detail so list + edit state stay in sync
   }).catch(function () { qToast("Couldn't remove, try again"); });
 }
 
@@ -2311,7 +2311,20 @@ var root, headerEl, contentEl, miniEl, navEl, npEl, lyBody;
 // Milestone 1 queue-panel state (see the QUEUE PANEL section below)
 var qBody = null, qState = { open: false, sig: "" }, queueMetaCache = {};
 
-function render() {
+// ---------------------------------------------------------------------------------------------------
+// Screen stack. Entries are { screen, page, scroll }: `page` is the screen's own DOM node, kept ALIVE
+// (detached, not destroyed) for as long as the entry is on the stack, and `scroll` is where the user was.
+//
+// It used to be one shared contentEl that got `scrollTop = 0; innerHTML = ""` on every navigation, pops
+// included. Two consequences, and between them they were most of why navigation felt fragile:
+//   - your scroll position died on every single back press, so coming out of an album dropped you at the
+//     top of the library you had been halfway down;
+//   - back RE-MOUNTED the parent, and pushed screens fetch inside mount(), so returning to a screen you
+//     were looking at a second ago cost a network round-trip and a spinner. It also let a fetch started
+//     by the screen you just left resolve into a view that no longer existed.
+// Keeping the node means back is instant, keeps its scroll, and keeps its listeners.
+function stackEntry(screen) { return { screen: screen, page: null, scroll: 0 }; }
+function render(dir) {
   var top = stack[stack.length - 1]; if (!top || !contentEl || !root) return;
   // The header exists in the DOM ONLY on pushed screens (as a floating back button). On root screens it's
   // fully REMOVED, not just hidden - a permanently-present fixed header layer never gets invalidated, so on
@@ -2322,36 +2335,137 @@ function render() {
   else if (headerEl.parentNode) { headerEl.parentNode.removeChild(headerEl); }
   headerEl.querySelector(".qz-hd__back").style.display = canBack ? "" : "none";
   headerEl.querySelector(".qz-hd__title").textContent = "";
-  contentEl.scrollTop = 0;
-  contentEl.innerHTML = "";
-  try { top.mount(contentEl); } catch (e) { contentEl.innerHTML = '<p class="qz-empty">Something went wrong rendering this view.</p>'; }
+
+  // remember where the page we are leaving was, then detach it (detach, so its listeners and its DOM
+  // survive for when we come back to it)
+  // contentEl stays the scroller (its overflow, padding and safe-area insets interact with the mini
+  // player and nav bar, and that is not worth re-plumbing blind), so the page node is a plain wrapper
+  // and the scroll offset is saved and restored explicitly.
+  var prev = contentEl.firstElementChild;
+  if (prev && prev.__qzEntry && prev.__qzEntry !== top) {
+    prev.__qzEntry.scroll = contentEl.scrollTop;
+    contentEl.removeChild(prev);
+  } else if (prev && !prev.__qzEntry) {
+    contentEl.removeChild(prev);            // stray node from an older render path
+  }
+
+  var fresh = false;
+  if (!top.page) {                          // first visit to this entry: build it
+    fresh = true;
+    top.page = document.createElement("div");
+    top.page.className = "qz-page";
+    top.page.__qzEntry = top;
+    try { top.screen.mount(top.page); }
+    catch (e) { top.page.innerHTML = '<p class="qz-empty">Something went wrong rendering this view.</p>'; }
+  }
+  if (top.page.parentNode !== contentEl) contentEl.appendChild(top.page);
+  contentEl.scrollTop = top.scroll || 0;    // restore where they were, or 0 for a brand-new screen
+
+  // Directional entrance. Push comes forward, pop comes back, so the two no longer look identical, which
+  // is what removed any sense of place. A true parallax slide needs both pages on screen at once and so
+  // needs contentEl turned into an overflow-hidden stage; deliberately not doing that here.
+  if (dir) {
+    top.page.classList.remove("qz-page--in", "qz-page--out");
+    top.page.classList.add(dir === "back" ? "qz-page--out" : "qz-page--in");
+    // next frame, drop the offset class so the transition runs to rest
+    var pg = top.page;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { pg.classList.remove("qz-page--in", "qz-page--out"); });
+    });
+  }
+  return fresh;
 }
-function go(screen) { stack.push(screen); render(); }
-function back() { if (stack.length > 1) { stack.pop(); render(); } }
+// Force the CURRENT screen to rebuild. Callers that mutated the data behind the view (a playlist edit,
+// say) used to just call render(), which wiped and re-mounted because render() always re-mounted. Now that
+// pages are kept alive, render() would re-attach the existing DOM and show nothing new, so an explicit
+// refresh is needed. Scroll position is carried across the rebuild.
+function refresh() {
+  var top = stack[stack.length - 1]; if (!top) return;
+  if (contentEl) top.scroll = contentEl.scrollTop;
+  if (top.page && top.page.parentNode) top.page.parentNode.removeChild(top.page);
+  top.page = null;
+  render();
+}
+function go(screen) { stack.push(stackEntry(screen)); render("fwd"); }
+function back() {
+  if (stack.length <= 1) return;
+  var gone = stack.pop();
+  if (gone && gone.page && gone.page.parentNode) gone.page.parentNode.removeChild(gone.page);
+  gone.page = null;                          // popped for good: let it be collected
+  render("back");
+}
 // Route the Android hardware/gesture BACK into our overlay + screen stack. On gesture-nav phones the OS
 // eats the left-edge swipe (system back) before the WebView sees it, so a JS edge-swipe listener can never
 // fire; instead the native onBackPressed consults this and we pop the innermost thing open. Returns true iff
 // we consumed the press (native falls through to WebView history / minimize only when this returns false).
+// Back resolves against a real LIFO stack of dismissable things, not a fixed if-chain.
+//
+// The chain this replaces listed seven overlays in hardcoded priority order. It behaved correctly for
+// those seven, but the order was WRITTEN DOWN rather than derived, so any overlay added later without a
+// line here would be skipped by back, which then fell through to "not handled" and let Android minimize
+// the app. Losing your place in the app because a dismissable thing was missing from a list is the same
+// failure mode as the settings screen that produced three bug reports.
+//
+// Anything dismissable pushes a dismisser while it is open. Order comes from when it opened, which is what
+// LIFO means, so a new overlay is correct by construction instead of by remembering to edit a list.
+//
+// NOTE: nothing registers yet, deliberately. The existing overlays keep using the chain below, so back
+// behaves exactly as it did today and this ships without a behaviour change I cannot test on a device.
+// Overlays migrate to pushDismiss/popDismiss as they get touched; until then the chain is the authority
+// and the stack is the mechanism waiting for them. Pass isOpen when you register, so an overlay that got
+// closed some other way without deregistering is skipped rather than double-closed.
+var dismissers = [];   // [{ key, close, isOpen }]
+function pushDismiss(key, close, isOpen) {
+  dismissers = dismissers.filter(function (d) { return d.key !== key; });   // re-opening replaces
+  dismissers.push({ key: key, close: close, isOpen: isOpen || null });
+}
+function popDismiss(key) {
+  dismissers = dismissers.filter(function (d) { return d.key !== key; });
+}
 function qzHandleBack() {
   try {
-    if (_sheet) { closeSheet(); return true; }                                   // bottom sheet (context / add-to-playlist / share)
-    if (qMenuEl) { closeQMenu(); return true; }                                  // quality tier picker
-    var ss = npEl && npEl.querySelector(".qz-sleepsheet");                       // sleep-timer sheet
+    while (dismissers.length) {
+      var d = dismissers.pop();
+      if (!d || typeof d.close !== "function") continue;
+      // stale entry (the thing closed some other way and never deregistered): skip it, keep unwinding
+      if (d.isOpen && !d.isOpen()) continue;
+      d.close();
+      return true;
+    }
+    // Legacy safety net. If something opened without registering, back must still dismiss it rather than
+    // ejecting the user from the app; this keeps the old chain's behaviour as a fallback only.
+    if (_sheet) { closeSheet(); return true; }
+    if (qMenuEl) { closeQMenu(); return true; }
+    var ss = npEl && npEl.querySelector(".qz-sleepsheet");
     if (ss) { ss.classList.remove("is-in"); setTimeout(function () { if (ss.parentNode) ss.parentNode.removeChild(ss); }, 260); return true; }
-    if (lyState.open) { closeLyrics(); return true; }                            // lyrics overlay
-    if (qState.open) { closeQueue(); return true; }                             // queue overlay
-    if (npEl && npEl.classList.contains("is-open")) { closeNP(); return true; }  // Now Playing sheet
+    if (lyState.open) { closeLyrics(); return true; }
+    if (qState.open) { closeQueue(); return true; }
+    if (npEl && npEl.classList.contains("is-open")) { closeNP(); return true; }
     if (stack.length > 1) { back(); return true; }                              // pushed screen -> pop
   } catch (e) {}
   return false;                                                                  // at root: let native minimize/exit
 }
 try { window.__qzBack = qzHandleBack; } catch (e) {}
+// A stack PER TAB. It used to be one shared `stack` that setTab replaced outright, so going three levels
+// into an artist, switching to Search, and coming back landed you at the Library root with those levels
+// gone. Every native tab bar keeps its tab's history. Tapping the tab you are already on pops that tab to
+// its root, which is the other half of the idiom.
+var stacks = {};
 function setTab(id) {
-  curTab = id;
   var t = TABS.filter(function (x) { return x.id === id; })[0]; if (!t) return;
-  stack = [t.make()];
+  var reTap = (curTab === id && stacks[id] && stacks[id].length > 1);
+  curTab = id;
+  if (!stacks[id] || !stacks[id].length) stacks[id] = [stackEntry(t.make())];
+  else if (reTap) {
+    // pop to root, discarding the intermediate pages
+    while (stacks[id].length > 1) {
+      var g = stacks[id].pop();
+      if (g && g.page && g.page.parentNode) g.page.parentNode.removeChild(g.page);
+    }
+  }
+  stack = stacks[id];
   [].forEach.call(navEl.querySelectorAll(".qz-nav__tab"), function (b) { b.classList.toggle("is-on", b.getAttribute("data-tab") === id); });
-  render();
+  render(reTap ? "back" : null);
 }
 
 // one delegated tap handler for every card / row / play button in the content area
@@ -3475,6 +3589,20 @@ html.qz-app .NavBar__brand{ display:none !important; }
 /* scroll area */
 .qz-content{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
   padding:8px 0 calc(var(--nav-h) + var(--safe-b) + 12px); }
+/* One screen = one .qz-page wrapper inside the scroller. It exists so a screen's DOM (and its listeners,
+   and its place in the scroll) can be kept alive while it sits under something else on the stack, instead
+   of being wiped and re-mounted on every navigation. contentEl remains the scroller. */
+.qz-page{ display:block; opacity:1; transform:none;
+  transition:opacity .2s ease, transform .26s cubic-bezier(.2,.7,.25,1); }
+/* Directional entrance: forward arrives from below/ahead, back arrives from above/behind, so a push and a
+   pop stop looking identical. Offsets are small on purpose; a full parallax slide would need both pages
+   on screen at once, which means turning contentEl into an overflow-hidden stage. */
+.qz-page--in{ opacity:0; transform:translateY(12px); }
+.qz-page--out{ opacity:0; transform:translateY(-8px); }
+@media (prefers-reduced-motion:reduce){
+  .qz-page{ transition:none; }
+  .qz-page--in, .qz-page--out{ opacity:1; transform:none; }
+}
 /* Touch UI: no visible scrollbars anywhere in the app (the WebView otherwise draws a thick opaque classic
    bar on the main content scroller that overlaps content). Global so no current/future scroller is missed. */
 #qz-app-root *{ scrollbar-width:none; -ms-overflow-style:none; }
@@ -4163,6 +4291,14 @@ function unmount() {
   lyState.open = false; lyState.id = null; lyState.key = ""; lyState.hasTr = false; lyState.selfScrollUntil = 0; seeking = false; qState.open = false;
   lastTrackId = null; lastPlaying = null; _tickSettleId = null; _tickSettleTitle = ""; _tickSettleN = 0;
   discoverRailCache = {};   // M4 FIX: drop the Discover rail cache so a remount re-fetches (transient empties don't persist across sessions)
+  // drop every kept-alive page node too, or the per-tab stacks hold detached DOM (and their listeners)
+  // alive after teardown
+  try {
+    Object.keys(stacks).forEach(function (k) {
+      (stacks[k] || []).forEach(function (e) { if (e) { if (e.page && e.page.parentNode) e.page.parentNode.removeChild(e.page); e.page = null; } });
+    });
+  } catch (e) {}
+  stacks = {}; dismissers = [];
   stack = []; root = headerEl = contentEl = miniEl = navEl = npEl = lyBody = qBody = null;
 }
 function evaluate() {
