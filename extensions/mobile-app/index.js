@@ -3604,10 +3604,13 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
    (lyBody stays inside .qz-ly's padding, so Lyra respects the top inset) and hide the homegrown-only controls. */
 .qz-ly--lyra .qz-ly__body{ padding:0 !important; overflow:hidden !important; -webkit-mask-image:none !important; mask-image:none !important; }
 .qz-ly--lyra .qz-ly__recenter, .qz-ly--lyra .qz-ly__tr-toggle{ display:none !important; }
-/* Lyra sizes for desktop (its 3.3vw line collapses to the 26px floor on a phone). Scale the type up for mobile;
-   the more-specific selector beats Lyra's own .lyra-line without !important. em-based dots/bg-vocals follow. */
-.qz-ly--lyra .lyra-line{ font-size:clamp(30px, 8.6vw, 44px); line-height:1.22; margin-bottom:.5em; }
-.qz-ly--lyra .lyra-content{ padding:0 18px; }
+/* NO type or measure overrides here any more. We used to re-scale .lyra-line and re-pad .lyra-content because
+   the desktop bundle sized itself off vw and floored at 26px on a phone. The Android bake now ships the MOBILE
+   Lyra build, which owns both properly: --lyra-size drives lines, interlude dots and interlude rhythm together
+   (the old override moved only the lines, so the dots stayed 8px), and .lyra-content is padding:0 4px /
+   max-width:100%. Re-adding `padding:0 18px` here would narrow the measure back from 348px to 299px and undo
+   the fix, so if lyric type ever needs adjusting, set --lyra-size on the panel instead of touching .lyra-line.
+   This panel's own 22px side padding is still what keeps the text off the glass edge. */
 .qz-ly__body{ position:relative; height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch; text-align:left; padding:46vh 0 56vh;
   -webkit-mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); mask-image:linear-gradient(180deg,transparent,#000 12%,#000 84%,transparent); }   /* M4 FIX: position:relative so lyCenter's offsetTop isn't inflated by .qz-ly padding-top. Field FIX: top/bottom runway (~half-screen) so line 1 (and the last line) can reach true center instead of clamping to scrollTop 0 and clipping under the top mask */
 .qz-ly__body::-webkit-scrollbar{ display:none; }
