@@ -114,11 +114,14 @@
     function msg(t, c) { var m = document.getElementById("msg"); m.textContent = t; m.className = "msg " + (c || ""); }
 
     // diagnostics passed from the client via the querystring
-    var diag = { v: q("v"), ua: q("ua"), theme: q("theme"), exts: q("exts") };
+    var diag = { v: q("v"), ua: q("ua"), theme: q("theme"), exts: q("exts"), platform: q("platform") };
     if (diag.v || diag.ua) {
       document.getElementById("diagWrap").style.display = "block";
       var lines = [];
       if (diag.v) lines.push("version: " + diag.v);
+      // the Android app sends this; without it an Android report is indistinguishable from a desktop one
+      // except by squinting at the UA, and the two products fail in completely different ways
+      if (diag.platform) lines.push("platform:" + diag.platform);
       if (diag.theme) lines.push("theme:   " + diag.theme);
       if (diag.exts) lines.push("exts:    " + diag.exts);
       if (diag.ua) lines.push("client:  " + diag.ua);
