@@ -1884,6 +1884,26 @@ function outputLabel() {
   } catch (e) {}
   return window.__QZ_DEVICE_NAME__ || "This phone";
 }
+// Same URL shape as the desktop runtime's feedbackUrl(), so both surfaces file into one inbox with the
+// same fields. Opened through the native bridge, which sends it to the system browser.
+function openReportForm() {
+  var ver = "", theme = "", exts = "";
+  try { ver = String(Q.version || ""); } catch (e) {}
+  try { theme = String(Q.activeTheme() || "off"); } catch (e) {}
+  try {
+    exts = bakedExtensions().filter(function (x) { return x && x.id && extTogOn(x.id); })
+      .map(function (x) { return x.id; }).join(",");
+  } catch (e) {}
+  var url = "https://qobuzify.app/issues?v=" + encodeURIComponent(ver) +
+    "&ua=" + encodeURIComponent(navigator.userAgent) +
+    "&theme=" + encodeURIComponent(theme) +
+    "&exts=" + encodeURIComponent(exts) +
+    "&platform=android";
+  try {
+    if (window.QZAndroidMedia && window.QZAndroidMedia.openExternal) { window.QZAndroidMedia.openExternal(url); return; }
+  } catch (e) {}
+  try { window.open(url, "_blank"); } catch (e) { qToast("Couldn't open the report form"); }
+}
 function openOutputPicker() {
   try {
     if (window.QZAndroidMedia && window.QZAndroidMedia.openOutputPicker) { window.QZAndroidMedia.openOutputPicker(); return; }
@@ -1986,6 +2006,16 @@ function settingsScreen() {
             '<span class="qz-stg-rl"><span class="qz-stg-rt">Version</span></span>' +
             '<span class="qz-stg-rv">v' + esc(ver) + '</span>' +
           '</div>' +
+          // Report a bug, IN the app. The desktop runtime has had this link for ages, but it lives in the
+          // settings panel this interface draws over, so on a phone there was no way to report anything
+          // from inside the app at all. Same failure as Last.fm's Connect row. It carries the version,
+          // UA, theme and enabled extensions, which is most of what a report needs and none of which a
+          // user should have to type out.
+          '<button class="qz-stg-row" data-act="reportbug" type="button">' +
+            '<span class="qz-stg-rl"><span class="qz-stg-rt">Report a bug</span>' +
+              '<span class="qz-stg-rs">Opens the report form with your version and setup filled in</span></span>' +
+            '<span class="qz-stg-rv">Open</span>' +
+          '</button>' +
           '<div class="qz-stg-row qz-stg-row--static">' +
             '<span class="qz-stg-rl"><span class="qz-stg-rt">Qobuzify</span>' +
               '<span class="qz-stg-rs">Enhancements for Qobuz. Lyrics provided by Qobuzify.</span></span>' +
@@ -2501,6 +2531,7 @@ function onContentTap(e) {
   else if (act === "apptoggle") stgToggleTap(t);                   // settings: Mobile feature toggle
   else if (act === "exttoggle") stgExtToggleTap(t);                // settings: extension enable/disable (reloads to apply)
   else if (act === "extpanel") stgPanelTap(t);                     // settings: an extension's own panel (Q.registerSettings)
+  else if (act === "reportbug") openReportForm();                   // settings: in-app bug report
   else if (act === "logout") qzConfirmLogout();                    // settings: log out (confirm sheet -> qzLogout)
   else if (act === "pl-menu") openPlaylistSheet(id);               // M3: owner options (Edit details / Delete)
   else if (act === "pl-new") openCreatePlaylistSheet();            // M3: create playlist
