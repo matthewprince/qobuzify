@@ -92,6 +92,9 @@ export default function App() {
           <div className="nav-links">
             <a href="/#themes">Themes</a>
             <a href="/#extensions">Extensions</a>
+            {/* Android is a separate page rather than an anchor on this one, and it needs to be reachable
+                without scrolling to the download card to find it. */}
+            <a href="/android">Android</a>
             <a href="/docs/">Docs</a>
             <a href="https://api.qobuzify.app">API</a>
             <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
@@ -109,7 +112,7 @@ export default function App() {
           <p className="tag">
             Live themes, a full-page search, a home built from your own library, word-by-word synced
             lyrics, and a stack of quality-of-life tools. It all runs on your machine, and undoes in
-            one click.
+            one click. There's an <a href="/android">Android app</a> too.
           </p>
           <div className="hero-cta">
             <a className="btn btn-primary" href="/#download">Get Qobuzify</a>

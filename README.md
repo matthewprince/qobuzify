@@ -18,6 +18,16 @@ Open Qobuz, click your avatar, and pick **Marketplace** to switch themes live an
 
 Qobuzify also ships as a standalone desktop app: the Qobuz web player wrapped in Electron with the same runtime, themes, and extensions baked in. One download, no Node, no patching. Get it from [qobuzify.app](https://qobuzify.app) or the [GitHub releases](https://github.com/matthewprince/qobuzify/releases). On Linux it adds bit-perfect output through a bundled player; macOS and Windows builds play through the web player.
 
+## Android
+
+There's an Android app as well, sideloaded rather than on Play: [qobuzify.app/android](https://qobuzify.app/android).
+
+Same idea, different shell. A native wrapper loads the Qobuz web player, injects the same runtime, and then draws its own mobile interface over the top: Now Playing, queue, library, search and settings, all built at phone size rather than being the desktop layout shrunk down. Word-by-word lyrics work there too, and a native media session gives you lockscreen and Bluetooth controls with the play queue published, so you can skip within it without unlocking the phone. A foreground service keeps audio going once the screen is off.
+
+Extensions ship switched off on Android. Most of the catalogue decorates the Qobuz desktop DOM that the mobile interface covers, so loading all of it on a phone costs startup time and buys nothing; Settings lists every extension in the build and says which ones actually do something there.
+
+Audio is lossless FLAC but not bit-perfect, and it cannot be, because it goes through the web player and the shared Android mixer. Needs Android 8.0 and your own paid Qobuz subscription. The APK is signed with our own key, so updates only come from that page, and the certificate fingerprint is published next to the download.
+
 ## What you get
 
 - **10 themes**, switchable live from the Marketplace, from a plain accent swap to full frosted-glass restyles.
