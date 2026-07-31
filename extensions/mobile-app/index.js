@@ -99,6 +99,26 @@ function featuredAlbumsG(type, gid, limit) { return api("album/getFeatured?type=
 function featuredPlaylistsG(type, gid, limit) { return api("playlist/getFeatured?type=" + type + "&genres_id=" + gid + "&limit=" + (limit || 18)).then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function genreList() { return api("genre/list").then(function (j) { return (j.genres && j.genres.items) || j.items || []; }).catch(function () { return []; }); }
 function favorites(type, limit) { return api("favorite/getUserFavorites?type=" + type + "&limit=" + (limit || 100)).then(function (j) { return (j[type] && j[type].items) || []; }).catch(function () { return []; }); }
+// Every favorite track id, paged. The library screens ask for 200 because that is all a list needs to
+// show; a whole-library shuffle needs the actual whole library, so this walks offsets until the API stops
+// returning rows. Capped like the desktop extension: past a few thousand a shuffle is a fair sample of
+// your library either way, and the queue has to end somewhere.
+var SHUFFLE_CAP = 5000, FAV_PAGE = 500;
+function allFavoriteTrackIds() {
+  var ids = [];
+  function page(offset) {
+    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset)
+      .then(function (j) {
+        var items = (j.tracks && j.tracks.items) || [];
+        items.forEach(function (t) { if (t && t.id != null) ids.push(t.id); });
+        // stop on a short page (the end) or once we have enough
+        if (items.length < FAV_PAGE || ids.length >= SHUFFLE_CAP) return ids;
+        return page(offset + FAV_PAGE);
+      })
+      .catch(function () { return ids; });   // keep whatever we already paged rather than losing the lot
+  }
+  return page(0);
+}
 function userPlaylists() { return api("playlist/getUserPlaylists?limit=200").then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function albumGet(id) { return api("album/get?album_id=" + id); }   // album/get returns its tracks by default; &extra=tracks 400s
 function playlistGet(id) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500"); }
@@ -566,6 +586,33 @@ function radioPool(artistId) {
           .catch(function () { return []; });
       })).then(function (lists) { lists.forEach(function (l) { ids = ids.concat(l); }); return ids; });
     }).catch(function () { return ids; });   // similar-artists endpoint missing -> seed-artist radio
+  });
+}
+// Shuffle my whole library. Qobuz's own enqueue only takes the lazily-loaded head of a list, which is why
+// shuffling from the library screen otherwise gives you the same few hundred tracks; this pulls every
+// favorite id first, shuffles that, and hands the result to Qobuz as a playlist (the same route radio uses,
+// which is the one playback path proven to work through the sealed player).
+function shuffleWholeLibrary() {
+  if (_shufBusy) return;
+  _shufBusy = true;
+  qToast("Gathering your library\u2026");
+  allFavoriteTrackIds().then(function (ids) {
+    ids = shuffleIds(dedupe(ids));
+    if (!ids.length) { qToast("No favourite tracks to shuffle"); _shufBusy = false; return; }
+    return createShufflePlaylist(ids).then(function () { _shufBusy = false; });
+  }).catch(function () { qToast("Couldn't shuffle your library"); _shufBusy = false; });
+}
+var _shufBusy = false;
+// Own playlist slot, so shuffling does not delete the radio playlist and vice versa.
+function createShufflePlaylist(ids) {
+  return Q.api("playlist/create?name=" + encodeURIComponent("Shuffle \u00b7 My Tracks") + "&is_public=false").then(function (c) {
+    var pid = String(c.id);
+    var old = Q.storage.get("mob:shuffle", null); Q.storage.set("mob:shuffle", pid);
+    if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
+    return addTracksBatched(pid, ids).then(function () {
+      qToast("Shuffling " + ids.length + " tracks");
+      navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });
+    });
   });
 }
 function createRadioPlaylist(name, ids) {
@@ -1503,6 +1550,10 @@ function libraryScreen() {
       '<button class="qz-seg" data-lib="artists">Artists</button>' +
       '<button class="qz-seg" data-lib="playlists">Playlists</button></div>' +
       '<div class="qz-libchips" hidden></div>' +
+      // Shuffle every favourite track. Lives on the Songs tab because that is what it shuffles, and it is
+      // hidden elsewhere rather than being a permanent header button that does nothing on three of five tabs.
+      '<button class="qz-libshuf" data-act="shufflelib" type="button" hidden>' + IC.shuffle +
+        '<span>Shuffle all songs</span></button>' +
       '<div class="qz-libbody"></div>';
     var body = el.querySelector(".qz-libbody"), input = el.querySelector(".qz-libsearch"), chipsWrap = el.querySelector(".qz-libchips");
     input.value = term;
@@ -1536,6 +1587,8 @@ function libraryScreen() {
       tab = which;
       [].forEach.call(el.querySelectorAll(".qz-seg"), function (s) { s.classList.toggle("is-on", s.getAttribute("data-lib") === which); });
       renderChips(which);
+      var shuf = el.querySelector(".qz-libshuf");
+      if (shuf) shuf.hidden = (which !== "tracks");   // Songs tab only: it is what it shuffles
       if (cache[which]) { paint(body, which, cache[which]); return; }   // cached -> instant, no refetch
       loading(body);
       LOADERS[which]().then(function (items) {
@@ -2532,6 +2585,7 @@ function onContentTap(e) {
   else if (act === "exttoggle") stgExtToggleTap(t);                // settings: extension enable/disable (reloads to apply)
   else if (act === "extpanel") stgPanelTap(t);                     // settings: an extension's own panel (Q.registerSettings)
   else if (act === "reportbug") openReportForm();                   // settings: in-app bug report
+  else if (act === "shufflelib") shuffleWholeLibrary();             // library: shuffle every favourite track
   else if (act === "logout") qzConfirmLogout();                    // settings: log out (confirm sheet -> qzLogout)
   else if (act === "pl-menu") openPlaylistSheet(id);               // M3: owner options (Edit details / Delete)
   else if (act === "pl-new") openCreatePlaylistSheet();            // M3: create playlist
@@ -3989,6 +4043,14 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 /* more side breathing room so cards/albums don't clip at the edges */
 .qz-shelf__h, .qz-shelf__row, .qz-grid, .qz-segbar{ padding-left:20px; padding-right:20px; }
 .qz-searchbar{ margin-left:20px; margin-right:20px; }
+/* Shuffle all songs: full-width action under the Songs tab. Sits in the scroll flow rather than floating,
+   so it never covers a row, and it is the accent colour because it is the one action on that screen. */
+.qz-libshuf{ display:flex; align-items:center; justify-content:center; gap:9px; width:calc(100% - 40px);
+  margin:6px 20px 10px; min-height:46px; padding:0 18px; border-radius:23px;
+  background:var(--qz-c1); color:#0a0a0c; font-size:14.5px; font-weight:700; letter-spacing:-.1px; }
+.qz-libshuf svg{ width:19px; height:19px; }
+.qz-libshuf:active{ opacity:.82; }
+.qz-libshuf[hidden]{ display:none; }
 .qz-shelf__row{ scroll-snap-type:none; scroll-padding-left:20px; }   /* snap was scrolling past the left padding, clipping the first card */
 
 /* ============================ M1: QUEUE PANEL ============================ */
