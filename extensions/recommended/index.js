@@ -51,7 +51,128 @@ function pool(items, n, fn) {
 // --- data helpers ---
 function favArtists() { return api("favorite/getUserFavorites?type=artists&limit=50").then(function (j) { return (j.artists && j.artists.items) || []; }); }
 function favAlbums() { return api("favorite/getUserFavorites?type=albums&limit=60").then(function (j) { return (j.albums && j.albums.items) || []; }).catch(function () { return []; }); }
-function similarArtists(id) { return api("artist/getSimilarArtists?artist_id=" + id + "&limit=12").then(function (j) { return (j.artists && j.artists.items) || []; }); }
+function qobuzSimilarArtists(id) { return api("artist/getSimilarArtists?artist_id=" + id + "&limit=12").then(function (j) { return (j.artists && j.artists.items) || []; }); }
+
+// ---- Last.fm: "Listeners also like" -----------------------------------------------------------------
+// Everything else on this page comes from Qobuz's own graph, so the recommendations could only ever be
+// as good as the thing people complain about. artist.getSimilar needs no user session, so this works for
+// everyone rather than the few who connected an account, and the request is identical for every user,
+// which is why the server can cache one answer for everybody and why nothing per-user is stored.
+//
+// Know what this data actually is before judging it. It is a CO-LISTENING graph, not a taste-similarity
+// one. For a big artist that means their own other hits, their affiliates and the era's biggest songs:
+// Eminem returns D12, Bad Meets Evil, Obie Trice, Dr. Dre, 50 Cent, and Paul Rosenberg, who is his
+// MANAGER and not a musician. Handed to someone who already listens to Eminem, most of that is not a
+// recommendation, it is a list of things they own. Hence the novelty filter below, which is what turns
+// this from a "greatest hits you already know" row into a discovery one.
+//
+// It earns its keep in the deep catalogue, where Qobuz is thinnest: Tom Petty -> Mudcrutch, Traveling
+// Wilburys, Warren Zevon; Scissor Sisters -> Jake Shears, the band's own frontman.
+//
+// The `match` score is NOT used as a quality gate. It cannot be: a thin artist's top "similar" can score
+// 1.00 off a handful of scrobbles while Tom Petty -> Springsteen scores 0.23. The gate is whether the
+// name resolves to an artist Qobuz actually carries, which drops the noise (unknown acts, and the
+// "A, B" collaboration credits Last.fm returns as single artists) without inventing a cutoff.
+var LFM_BASE = "https://api.qobuzify.app/v1/lastfm/similar";
+var lfmCache = {};
+
+function lfmNorm(s) {
+  return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[’'`.]/g, "").replace(/&/g, "and").replace(/\s+/g, " ").trim();
+}
+
+// One Qobuz search per candidate, accepted only on a normalized name match. Without that check the
+// search happily returns its best guess for a name Qobuz has never heard of, which is precisely the
+// junk we are trying to filter out.
+// catalog/search is an AGGREGATE search: albums, tracks, artists and playlists share one response. The
+// first version asked for limit=5 and resolved literally nothing, 0 out of 18, because searching an
+// artist's name matches their albums and tracks first and the artist entry never made the cut. Ask
+// for the artists slice explicitly and give it room, the way better-search does at limit=30.
+//
+// NOTE the name: resolveLfmArtist, NOT resolveArtist. There is already a resolveArtist(id) lower in this
+// file, and because both are function declarations JS hoists them and the LAST one wins - so naming this
+// resolveArtist silently routed every call here into THAT one, feeding Last.fm artist NAMES into
+// artist/get?artist_id= (a 404 every time). That was the entire "found nothing" bug, and why two rounds
+// of search-param tweaks changed nothing: this function was never the one being called.
+function resolveLfmArtist(name) {
+  return Q.api("catalog/search?query=" + encodeURIComponent(name) + "&type=artists&limit=30").then(function (j) {
+    var items = (j && j.artists && j.artists.items) || [];
+    var want = lfmNorm(name);
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].id && lfmNorm(items[i].name) === want) return items[i];
+    }
+    return null;
+  }).catch(function () { return null; });
+}
+
+// Raw names for a seed, seed's own aliases removed. Resolution happens later, after the novelty filter,
+// so we never spend a Qobuz search on a candidate we were going to discard anyway.
+function lfmNames(name) {
+  if (!name) return Promise.resolve([]);
+  var ck = lfmNorm(name);
+  if (lfmCache[ck]) return lfmCache[ck];
+  lfmCache[ck] = fetch(LFM_BASE + "?artist=" + encodeURIComponent(name) + "&limit=14")
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j || !j.ok || !j.artists || !j.artists.length) return [];
+      // Drop the seed's own billing: Last.fm's top "similar" for an artist is frequently themselves
+      // under another name (Tom Petty -> Tom Petty and The Heartbreakers at 1.00), which is not a
+      // recommendation, and it is the single most common way this row wastes a slot.
+      return j.artists.map(function (a) { return a.name; }).filter(function (n) {
+        var x = lfmNorm(n);
+        return x && x !== ck && x.indexOf(ck) !== 0 && ck.indexOf(x) !== 0;
+      });
+    })
+    .catch(function () { return []; });
+  return lfmCache[ck];
+}
+
+/**
+ * One row, sourced only from Last.fm, of artists the user does NOT already have.
+ *
+ * `known` is the novelty filter: favourite artist names plus every artist in the local play log. Without
+ * it an Eminem seed spends the whole row on D12, Dr. Dre and 50 Cent, which is a co-listening graph
+ * faithfully reporting that Eminem listeners listen to Eminem's friends. True, and useless as a
+ * recommendation. Filtering on NAME rather than id because the play log stores names and the Last.fm
+ * candidates are names; we have not resolved anything to a Qobuz id at this point yet.
+ */
+function lfmDiscoveries(seeds, known, knownIds) {
+  return pool(seeds.slice(0, 4), 4, function (s) { return lfmNames(s.name); }).then(function (lists) {
+    // Score by how many of your seeds point at the same artist, so someone reachable from several of
+    // your favourites outranks a one-off. Ties keep Last.fm's own ordering via first-seen index.
+    var score = {}, order = {}, n = 0;
+    (lists || []).forEach(function (names) {
+      (names || []).forEach(function (nm) {
+        var k = lfmNorm(nm);
+        if (!k || known[k]) return;                       // already yours: not a discovery
+        if (!score[k]) { score[k] = 0; order[k] = n++; }
+        score[k]++;
+      });
+    });
+    var ranked = Object.keys(score).sort(function (a, b) {
+      return (score[b] - score[a]) || (order[a] - order[b]);
+    });
+    // Rebuild the display name from the first list that mentioned it (lfmNorm is lossy).
+    var display = {};
+    (lists || []).forEach(function (names) {
+      (names || []).forEach(function (nm) { var k = lfmNorm(nm); if (!display[k]) display[k] = nm; });
+    });
+    // Resolve the top candidates to Qobuz artists, then a SECOND novelty pass on id: the name pass above
+    // cannot catch an artist you already play whom Last.fm spells differently, and the play log's artist
+    // entries carry an id but no name at all, so they are only filterable here.
+    var names = ranked.slice(0, 18).map(function (k) { return display[k]; });
+    return pool(names, 4, resolveLfmArtist).then(function (found) {
+      var out = (found || []).filter(function (a) { return a && a.id && !knownIds[a.id]; });
+      return dedupe(out, function (a) { return a.id; });
+    });
+  }).catch(function () { return []; });
+}
+
+// Qobuz's graph, unchanged, and it stays that way on purpose. Interleaving Last.fm into these rows was
+// the first attempt and it was a mistake: you cannot evaluate a recommendation you cannot attribute, so
+// "is this better?" became unanswerable by looking. Last.fm now feeds ONE row of its own instead, where
+// every entry is provably from that source.
+function similarArtists(id) { return qobuzSimilarArtists(id); }
 function artistAlbums(id) { return api("artist/get?artist_id=" + id + "&extra=albums&limit=6").then(function (j) { return (j.albums && j.albums.items) || []; }); }
 function featuredNew() { return api("album/getFeatured?type=new-releases-full&limit=30").then(function (j) { return (j.albums && j.albums.items) || []; }); }
 
@@ -317,11 +438,38 @@ function buildSections(scroll) {
   rowsHost.appendChild(becauseHost);
   var sArtists = row("Artists you might like", "Similar to the artists you love");
   rowsHost.appendChild(sArtists);
+  var sLfm = row("Listeners also like", "People who play your favorites play these");
+  rowsHost.appendChild(sLfm);
   var sFresh = row("Fresh for you", "New on Qobuz");
   rowsHost.appendChild(sFresh);
 
   favArtists().then(function (fa) {
     var seeds = fa.slice(0, 4);
+
+    // "Listeners also like": the ONLY row fed by Last.fm, so anything appearing here is attributable to
+    // that source and nothing else. Removed if it comes back empty rather than left as a dead heading:
+    // an artist whose similars are all already in your library legitimately produces nothing.
+    var known = {}, knownIds = {};
+    fa.forEach(function (a) { if (a && a.name) known[lfmNorm(a.name)] = 1; if (a && a.id) knownIds[a.id] = 1; });
+    try {
+      // the tracks log carries the performer NAME (see the writeLog("tracks") record) and its id
+      readLog("tracks").forEach(function (p) {
+        if (p && p.artist) known[lfmNorm(p.artist)] = 1;
+        if (p && p.artistId) knownIds[p.artistId] = 1;
+      });
+      // the artists log carries an id and nothing else, so it can only feed the id pass
+      readLog("artists").forEach(function (x) { if (x && x.id) knownIds[x.id] = 1; });
+    } catch (e) {}
+    lfmDiscoveries(seeds, known, knownIds).then(function (list) {
+      // Empty is a legitimate outcome (all your seeds' listeners are already in your library), so say so
+      // rather than leaving sec.fill remove the whole row and read as a failure.
+      if (!list || !list.length) {
+        var t = sLfm.querySelector(".qz-fy-track");
+        if (t) t.innerHTML = '<div style="padding:10px 2px;color:#8a94a6;font-size:13px">Nothing new from this source right now.</div>';
+        return;
+      }
+      sLfm.fill(list.slice(0, 14).map(artistCard));
+    }, function () { sLfm.remove(); });
 
     // New from artists you love + build the ROTATING hero pool
     pool(fa.slice(0, 16), 5, function (a) { return artistAlbums(a.id); }).then(function (lists) {
