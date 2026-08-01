@@ -137,12 +137,19 @@ function candStrength(d, cand) {
 
 function doSearch(q) {
   refreshRecent();
-  var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null; state.suggest = null;
-  // Artist "Did you mean" runs in parallel and never blocks the results: the banner appears when it lands.
+  var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null;
+  // Artist auto-correct runs in parallel and never blocks the first results. When Last.fm finds a much
+  // more popular artist that's a plausible typo of the query, we AUTO-swap to that artist's Qobuz results
+  // (like the word-typo path) and show "Showing results for Kanye West - Search instead for kayne west".
+  // The escape does a raw search of the typed query, so it never bounces back into correction.
   lfmArtistSuggest(q).then(function (sg) {
     if (id !== state.reqId || !sg) return;
-    state.suggest = sg; state.suggestFor = q;
-    if (panel && isOpen()) render();
+    return Q.api("catalog/search?query=" + encodeURIComponent(sg.name) + "&limit=30").then(function (cd) {
+      if (id !== state.reqId || state.corrected) return;      // superseded, or a word-typo correction already won
+      if (candStrength(cd, sg.name) < 300) return;            // the popular artist isn't really in Qobuz - don't force it
+      state.data = cd; state.q = norm(sg.name); state.corrected = sg.name; state.original = q;
+      render();
+    });
   });
   Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     if (id !== state.reqId) return; // stale
@@ -454,22 +461,6 @@ function render() {
     inner.appendChild(dym);
   }
 
-  // "Did you mean <popular artist>?" - click-through (not auto), shown when Last.fm found a much more
-  // popular artist that is a plausible typo of the query. Suppressed if an auto-correct already fired or
-  // if that artist is already the top result on screen.
-  if (!state.corrected && state.suggest && norm(state.suggest.name) !== q &&
-      !(artists[0] && norm(artists[0].name) === norm(state.suggest.name))) {
-    var sgName = state.suggest.name;
-    var dm2 = document.createElement("div"); dm2.className = "qz-s-dym";
-    dm2.innerHTML = 'Did you mean <button class="qz-s-dym-link" type="button"><b>' + esc(sgName) + '</b></button>?';
-    dm2.querySelector(".qz-s-dym-link").addEventListener("click", function () {
-      if (input) input.value = sgName;
-      state.raw = sgName; state.suggest = null;
-      doSearch(norm(sgName));
-    });
-    inner.appendChild(dm2);
-  }
-
   if (state.tab === "top") {
     // strongest of the top artist/album becomes the hero
     var aBest = artists[0] ? { it: artists[0], kind: "artist", s: score(artists[0].name, q) } : null;
@@ -676,9 +667,6 @@ Q.css(CSS_ID, [
   ".qz-s-dym-orig{appearance:none;border:0;background:transparent;color:#8b94a3;font-size:13px;cursor:pointer;padding:0;}",
   ".qz-s-dym-orig:hover{color:#cbd3df;text-decoration:underline;}",
   ".qz-s-dym-orig i{font-style:italic;}",
-  ".qz-s-dym-link{appearance:none;border:0;background:transparent;color:var(--qz-accent,#3DA8FE);font-size:14px;cursor:pointer;padding:0;}",
-  ".qz-s-dym-link b{color:var(--qz-accent,#3DA8FE);font-weight:700;}",
-  ".qz-s-dym-link:hover{text-decoration:underline;}",
   ".qz-s-empty{padding:80px 18px;text-align:center;color:#8b94a3;font-size:16px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:8px;}",
   ".qz-s-empty span{font-size:13px;font-weight:500;color:#69707d;}",
   ".qz-s-empticon{width:58px;height:58px;color:rgba(255,255,255,.16);margin-bottom:6px;}.qz-s-empticon svg{width:100%;height:100%;}",
