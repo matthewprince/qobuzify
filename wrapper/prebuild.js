@@ -7,7 +7,18 @@ const path = require("path");
 const { buildPayloadSource, vendorMap } = require("./payload");
 
 const OUT = __dirname;
-const theme = process.env.QZ_THEME || "electric-blue";
+// Themes ship OFF by default; QZ_THEME=<slug> asserts a starting theme for the build instead.
+const theme = process.env.QZ_THEME || null;
+if (theme) {
+  // A bad slug would bake a dangling `def` that boots with theming marked on but no matching theme
+  // (empty CSS). Fail the build here instead of shipping that.
+  const { buildCatalog } = require("../lib/apply");
+  const slugs = buildCatalog(path.join(__dirname, "..", "themes")).map((t) => t.slug);
+  if (!slugs.includes(theme)) {
+    console.error(`prebuild: QZ_THEME="${theme}" is not a bundled theme. Valid themes: ${slugs.join(", ")}`);
+    process.exit(1);
+  }
+}
 
 // Hard gate: a Linux build without the bundled mpv silently ships broken bit-perfect (electron-builder
 // logs "file source doesn't exist" for the extraResources entry and exits 0). Fail here instead.

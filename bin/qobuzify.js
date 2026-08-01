@@ -12,7 +12,6 @@ const ROOT = path.join(__dirname, "..");
 const THEMES_DIR = path.join(ROOT, "themes");
 const EXT_DIR = path.join(ROOT, "extensions");
 const RUNTIME = path.join(ROOT, "runtime", "qobuzify-runtime.js");
-const DEFAULT_THEME = "glass";
 
 // A small state file kept as a SIBLING of the install dir (so the installer's re-extract, which wipes the
 // install dir, leaves it alone). It survives a QOBUZ app-version update too - that update replaces app.html
@@ -35,15 +34,26 @@ function listThemes() {
 // Read the theme/seed currently baked into app.html, so a re-install (the update path, spotify
 // refreshes) can preserve them. A new seed forces `def` as the active theme on next launch; reusing
 // the existing seed means the user's live in-app theme choice survives an update untouched.
+// A baked `"def":null` (theming off by default) round-trips as null, not as "no baked block".
+// Read the payload object baked into app.html (`window.__QOBUZIFY__ = {...};`, runtime follows in the
+// same <script>), so `def`/`seed` come from the real baked data and not the first `"def":`/`"seed":`
+// literal anywhere in the file (extension source or theme CSS could contain one).
+function bakedPayload() {
+  try {
+    const m = fs.readFileSync(locate().appHtml, "utf8").match(/window\.__QOBUZIFY__\s*=\s*(\{[\s\S]*?\})\s*;/);
+    return m ? m[1] : "";
+  } catch (_) { return ""; }
+}
 function currentTheme() {
-  try { const m = fs.readFileSync(locate().appHtml, "utf8").match(/"def":"([^"]+)"/); return m ? m[1] : null; } catch (_) { return null; }
+  try { const m = bakedPayload().match(/"def":(null|"[^"]*")/); return m ? (m[1] === "null" ? null : m[1].slice(1, -1)) : null; } catch (_) { return null; }
 }
 function currentSeed() {
-  try { const m = fs.readFileSync(locate().appHtml, "utf8").match(/"seed":(\d+)/); return m ? parseInt(m[1], 10) : null; } catch (_) { return null; }
+  try { const m = bakedPayload().match(/"seed":(\d+)/); return m ? parseInt(m[1], 10) : null; } catch (_) { return null; }
 }
 
-// Inject the runtime + full theme catalog, asserting `def` as the starting theme. A fresh `seed`
-// forces `def` on next launch; pass the existing seed to leave the live theme choice alone.
+// Inject the runtime + full theme catalog. `def` (null = theming off by default) is asserted as the
+// starting theme; a fresh `seed` forces it on next launch, while passing the existing seed leaves the
+// live theme choice alone.
 function installRuntime(def, seed) {
   const catalog = buildCatalog(THEMES_DIR);
   if (def && !catalog.some((t) => t.slug === def)) {
@@ -62,8 +72,8 @@ function installRuntime(def, seed) {
   // one today - the lyrics view renders through Lyra, which is prepended into the payload - so this is
   // empty, but the plumbing stays for any future vendor-bearing extension.
   const vendors = extensions.filter((e) => e.hasVendor).map((e) => ({ name: "qobuzify-ext-" + e.id + ".js", src: path.join(EXT_DIR, e.id, "vendor.js") }));
-  install(locate(), { catalog, extensions, def: def || DEFAULT_THEME, version: version(), seed: seed || Date.now(), runtimeSrc, spotify, spotifyToken, apple, vendors });
-  return catalog.find((t) => t.slug === (def || DEFAULT_THEME));
+  install(locate(), { catalog, extensions, def: def || null, version: version(), seed: seed || Date.now(), runtimeSrc, spotify, spotifyToken, apple, vendors });
+  return def ? catalog.find((t) => t.slug === def) : null;
 }
 
 function usage() {
@@ -71,7 +81,7 @@ function usage() {
   console.log("Usage:");
   console.log("  qobuzify detect           show the Qobuz install Qobuzify will patch");
   console.log("  qobuzify list             list available themes");
-  console.log("  qobuzify install [theme]  install the in-app Marketplace (default theme optional)");
+  console.log("  qobuzify install [theme]  install the in-app Marketplace (starting theme optional)");
   console.log("  qobuzify update           re-apply the current files, keeping your theme and settings");
   console.log("  qobuzify apply <theme>    set a theme and relaunch (switch live from the Marketplace after)");
   console.log("  qobuzify restore          revert to the stock Qobuz UI");
@@ -100,15 +110,15 @@ async function main() {
         // theme + seed so re-running the installer to update never resets the user's live choice. If a Qobuz
         // app update wiped the baked block from app.html, fall back to the seed/theme saved in STATE_FILE so
         // the reinstall still preserves them. Only a truly fresh machine (no baked block, no state) gets a
-        // new seed + the default theme.
+        // new seed and NO default theme - theming ships off and the user opts in from the Marketplace.
         const existingSeed = currentSeed();
         const st = readState();
-        const def = arg || currentTheme() || st.theme || DEFAULT_THEME;
+        const def = arg || currentTheme() || st.theme || null;
         const seed = arg ? Date.now() : (existingSeed || st.seed || Date.now());
         const t = installRuntime(def, seed);
         saveState({ seed, theme: def });
         const verb = (existingSeed || st.seed) ? "Updated" : "Installed";
-        console.log(`${verb} Qobuzify v${version()} (theme "${t ? t.name : DEFAULT_THEME}").`);
+        console.log(`${verb} Qobuzify v${version()} (theme ${t ? t.name : "none (theming off)"}).`);
         console.log("In Qobuz: click your avatar (top-right) > Marketplace to browse and switch themes live.");
         break;
       }

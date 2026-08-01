@@ -26,11 +26,11 @@ npm link                 # puts `qobuzify` on your PATH
 Then install the runtime into Qobuz:
 
 ```
-qobuzify install         # installs with the default theme (Glass)
-qobuzify install neon    # or pick a starting theme
+qobuzify install         # installs with theming off and Quality of Life, Media Session and Qobuzify Lyrics on
+qobuzify install neon    # or assert a starting theme
 ```
 
-That injects the runtime, relaunches Qobuz, and you're done. Open Qobuz, click your avatar (top right), and pick **Marketplace** to browse themes and extensions. Theme switching from there is live, no relaunch.
+That injects the runtime, relaunches Qobuz, and you're done. Open Qobuz, click your avatar (top right), and pick **Marketplace** to browse themes and extensions. Everything ships off: theming stays stock until you apply a theme, and every extension except Quality of Life, Media Session and Qobuzify Lyrics waits for you to switch it on. Theme switching from there is live, no relaunch.
 
 ## Commands
 

@@ -1738,7 +1738,7 @@ function stgAppearanceSectionHTML() {
 // (lyrics, sleep timer, full-screen player, seek, quality badge, genre browse, library, search). discord-rpc
 // needs the desktop localhost:7673 bridge (absent on Android); stats' only surface is a dashboard opened
 // from the hidden desktop nav (unreachable); media-session is infra owned by the Lockscreen toggle above.
-// State lives in localStorage "qobuzify:ext:<id>" (default ON, the key boot() reads); live load/unload isn't
+// State lives in localStorage "qobuzify:ext:<id>" (absent = manifest default; "0"/"1" override); live load/unload isn't
 // on the public Q surface, so a toggle persists + reloads to apply.
 // EVERY baked extension is accounted for below. The old version of this was `MOBILE_EXT = {"last-fm":1}`
 // and rendered only that one, so 25 of the 26 extensions in the APK had no row and no toggle at all, and

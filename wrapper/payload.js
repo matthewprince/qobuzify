@@ -36,9 +36,11 @@ function buildPayloadSource(def) {
   const data = {
     catalog,
     extensions,
-    def: def || "electric-blue",
+    // Theming ships OFF (def null = nothing asserted, runtime starts with no theme). QZ_THEME at
+    // prebuild time asserts one, and the in-app Marketplace switches live afterwards anyway.
+    def: def || null,
     version: version(),
-    seed: 1,            // fresh seed asserts `def` as the active theme on first launch
+    seed: 1,            // fresh seed asserts `def` (null = theming off) on first launch
     spotify: null,
     spotifyToken: null,
     apple: null,

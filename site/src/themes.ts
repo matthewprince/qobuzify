@@ -18,7 +18,7 @@ export const THEMES: Theme[] = [
     name: "Glass",
     slug: "glass",
     author: "matthewprince",
-    description: "Electric Blue glassmorphism: frosted chrome over a deep navy. The default.",
+    description: "Electric Blue glassmorphism: frosted chrome over a deep navy.",
     preview: { bg: "#060A12", surface: "#0b0f19", accent: "#3DA8FE", text: "#F0F6FC" },
   },
   {

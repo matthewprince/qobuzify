@@ -31,7 +31,7 @@ The CLI (`bin/qobuzify.js`) calls `install()` in `lib/apply.js`. Install is idem
 <script src="/bundle.js"></script>
 ```
 
-The `window.__QOBUZIFY__` payload is the data the runtime reads at boot: the theme catalog, every extension's source, the default theme, and any local lyrics credentials. The runtime source is inlined right after it. The whole thing is escaped so a `</script>` inside any theme CSS or extension body can't break out of the tag.
+The `window.__QOBUZIFY__` payload is the data the runtime reads at boot: the theme catalog, every extension's source, the asserted starting theme (`null` means theming is off by default), and any local lyrics credentials. The runtime source is inlined right after it. The whole thing is escaped so a `</script>` inside any theme CSS or extension body can't break out of the tag.
 
 **`legacy.css`** is reset to stock. Older Qobuz rules hardcode the brand gold as literal hex, and the original Qobuzify swapped those in the file. The live theme engine overrides design tokens at runtime instead, so the install just keeps `legacy.css` pristine.
 
@@ -55,9 +55,9 @@ Install and restore both relaunch Qobuz, because the renderer only reads its HTM
 
 **Builds the API.** `buildApi()` returns the `Q` object that becomes `window.Qobuzify`. It wraps the store (`getState`, `subscribe`), the Qobuz HTTP API (`api()`, using the in-app auth token), player reads (`player.getTrack`, `getPositionMs`, `isPlaying`, `onChange`), and DOM helpers (`css`, `el`, `observe`, `onRoute`, `navigate`, `addNavItem`, `playerSlot`, `storage`). The full surface is in [api.md](api.md).
 
-**Loads extensions.** For each enabled extension it compiles the source with `new Function("Qobuzify", "vendor", source)` and calls it with `window.Qobuzify` and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions are on by default; `localStorage["qobuzify:ext:<id>"] === "0"` means off.
+**Loads extensions.** For each enabled extension it compiles the source with `new Function("Qobuzify", "vendor", source)` and calls it with `window.Qobuzify` and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions ship off by default (only `defaultOn` ones load, plus Android's platform-essentials); `localStorage["qobuzify:ext:<id>"] === "0"` forces one off and `"1"` forces one on.
 
-**Runs the theme engine and the UI.** It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme. A `MutationObserver` re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.
+**Runs the theme engine and the UI.** It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme - nothing, on a fresh install, since theming starts off. A `MutationObserver` re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.
 
 Because the navbar and player mount asynchronously, boot polls briefly (and observes) until they exist, then stops.
 
@@ -67,7 +67,7 @@ An extension is a folder under `extensions/`:
 
 ```
 extensions/my-extension/
-  manifest.json   { id, name, description, icon, version, author, defaultOff? }
+  manifest.json   { id, name, description, icon, version, author, defaultOn? }
   index.js        the body of function(Qobuzify, vendor) { ... return cleanup }
   vendor.js       (optional) a big prebuilt bundle, loaded via <script src>
 ```

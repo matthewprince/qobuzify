@@ -20,11 +20,11 @@ extensions/my-extension/
   "icon": "icon-magic-stars",
   "version": "1.0.0",
   "author": "you",
-  "defaultOff": false
+  "defaultOn": false
 }
 ```
 
-`icon` is a Qobuz icon-font class (e.g. `icon-magic-stars`, `icon-heart`, `icon-users`). `defaultOff` is optional; set it to ship the extension disabled.
+`icon` is a Qobuz icon-font class (e.g. `icon-magic-stars`, `icon-heart`, `icon-users`). `defaultOn` is optional; set it to `true` to ship the extension enabled on a fresh install. Extensions are off by default, and Quality of Life (`ux-tweaks`), Media Session (`media-session`) and Qobuzify Lyrics (`qobuzify-lyrics`) set it in the current bundle - so an extension that changes the UI should usually leave it unset and let the user opt in.
 
 `index.js` is not a module. Its entire contents become the body of a function the runtime calls as `function (Qobuzify, vendor) { ... }`. It returns a cleanup function:
 

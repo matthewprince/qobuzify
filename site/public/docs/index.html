@@ -60,31 +60,34 @@ td code{font-size:.86em;}
 <h2 id="README--building-your-own">Building your own</h2>
 <ul><li><strong><a href="#writing-extensions">writing-extensions</a></strong>: the extension authoring guide, with a template you can copy</li><li><strong><a href="#themes">themes</a></strong>: the theme token system and how to write or generate a theme</li></ul>
 <h2 id="README--subsystems">Subsystems</h2>
-<ul><li><strong><a href="#lyrics-server">lyrics-server</a></strong>: the lyrics cache-proxy (a Cloudflare Worker + D1 + R2) behind the Qobuzify Lyrics extension</li><li><strong><a href="#dev-workflow">dev-workflow</a></strong>: the Chrome DevTools Protocol loop used to build and verify all of this against a live Qobuz</li></ul>
+<ul><li><strong><a href="#lyrics-server">lyrics-server</a></strong>: the lyrics cache-proxy (a Cloudflare Worker + D1 + R2) behind the Qobuzify Lyrics extension</li><li><strong><a href="#dev-workflow">dev-workflow</a></strong>: the Chrome DevTools Protocol loop used to build and verify all of this against a live Qobuz</li><li><strong><a href="#releasing">releasing</a></strong>: the per-platform release channels and versioning scheme (designed, not yet implemented)</li></ul>
 <h2 id="README--what-ships">What ships</h2>
-<ul><li>A zero-dependency Node CLI (<code>bin/qobuzify.js</code>) that installs the runtime and swaps themes</li><li>The runtime (<code>runtime/qobuzify-runtime.js</code>), injected into <code>app.html</code></li><li>18 extensions under <code>extensions/</code></li><li>10 themes under <code>themes/</code></li><li>A lyrics cache-proxy Worker under <code>server/</code></li></ul>
-<p>Windows only for now. macOS is planned. Qobuz has no Linux desktop app, so there is nothing to patch there.</p></section>
+<ul><li>A zero-dependency Node CLI (<code>bin/qobuzify.js</code>) that installs the runtime and swaps themes</li><li>The runtime (<code>runtime/qobuzify-runtime.js</code>), injected into <code>app.html</code></li><li>29 extensions under <code>extensions/</code></li><li>10 themes under <code>themes/</code></li><li>A lyrics cache-proxy Worker under <code>server/</code></li></ul>
+<p>There are two ways this reaches a machine, and they are different products:</p>
+<ul><li><strong>The bake</strong> patches a natively installed Qobuz desktop app in place (<code>bin/qobuzify.js</code>, <code>lib/apply.js</code>, <code>site/public/install.ps1</code>). Windows only, because that is where the unpacked-Electron app exists.</li><li><strong>The desktop app</strong> wraps <code>play.qobuz.com</code> in our own Electron shell (<code>wrapper/</code>) and ships the same runtime, extensions and themes on top. This is what covers Linux, where Qobuz has no desktop app to patch at all. Built for Linux (AppImage, deb), Windows (nsis, portable) and macOS (dmg, zip).</li></ul>
+<p>They share the runtime and every extension, but they install, update and version separately. See <a href="#releasing">releasing</a>.</p></section>
 <section><h1 id="getting-started">Getting started</h1>
+<p>Qobuzify ships two ways. Pick the one that matches your setup:</p>
+<ul><li><strong>The Windows bake</strong> (the rest of this page): the CLI patches the official Qobuz desktop app in place. You keep the native app and its bit-perfect JUCE audio engine, with the Qobuzify runtime, themes, and extensions injected. Windows only, needs Node.</li><li><strong>The standalone app</strong> (Linux, macOS, Windows): an Electron wrapper around the Qobuz web player carrying the same runtime, themes, and extensions. One download from <a href="https://qobuzify.app">qobuzify.app</a> or the <a href="https://github.com/matthewprince/qobuzify/releases">GitHub releases</a>, no Node, no patching: download, run, sign in. On Linux it adds bit-perfect output through a bundled player; macOS and Windows builds play through the web player.</li></ul>
+<p>Rule of thumb: on Windows with the Qobuz app installed, take the bake. Anywhere else, or for a zero-setup install, take the standalone app.</p>
 <h2 id="getting-started--requirements">Requirements</h2>
-<ul><li>The Qobuz desktop app, installed and run at least once</li><li>Node 16 or newer</li><li>Windows (macOS is planned; there is no Linux Qobuz desktop app)</li></ul>
+<ul><li>The Qobuz desktop app, installed and run at least once</li><li>Node 16 or newer</li><li>Windows (the standalone app above covers Linux and macOS)</li></ul>
 <p>Qobuzify has zero runtime dependencies. It is a plain Node CLI plus the files it injects.</p>
 <h2 id="getting-started--install">Install</h2>
 <pre><code>git clone &lt;repo&gt; &amp;&amp; cd qobuzify
 npm link                 # puts `qobuzify` on your PATH
 # or skip the link and run: node bin/qobuzify.js &lt;command&gt;</code></pre>
 <p>Then install the runtime into Qobuz:</p>
-<pre><code>qobuzify install         # installs with the default theme (Glass)
-qobuzify install neon    # or pick a starting theme</code></pre>
-<p>That injects the runtime, relaunches Qobuz, and you're done. Open Qobuz, click your avatar (top right), and pick <strong>Marketplace</strong> to browse themes and extensions. Theme switching from there is live, no relaunch.</p>
+<pre><code>qobuzify install         # installs with theming off and Quality of Life, Media Session and Qobuzify Lyrics on
+qobuzify install neon    # or assert a starting theme</code></pre>
+<p>That injects the runtime, relaunches Qobuz, and you're done. Open Qobuz, click your avatar (top right), and pick <strong>Marketplace</strong> to browse themes and extensions. Everything ships off: theming stays stock until you apply a theme, and every extension except Quality of Life, Media Session and Qobuzify Lyrics waits for you to switch it on. Theme switching from there is live, no relaunch.</p>
 <h2 id="getting-started--commands">Commands</h2>
 <pre><code>qobuzify detect           show the Qobuz install Qobuzify will patch
 qobuzify list             list available themes
 qobuzify install [theme]  install the in-app runtime + Marketplace
 qobuzify update           re-apply the current files, keeping your theme and settings
 qobuzify apply &lt;theme&gt;    set a theme and relaunch
-qobuzify restore          revert to the stock Qobuz UI
-qobuzify spotify-login    connect Spotify once for synced lyrics (OAuth, auto-renewed)
-qobuzify spotify-token    refresh the lyrics Spotify token from a running Spotify</code></pre>
+qobuzify restore          revert to the stock Qobuz UI</code></pre>
 <p><code>install</code> and <code>apply</code> do the same injection. The difference is intent: <code>install</code> sets up the Marketplace and you switch themes live afterward; <code>apply &lt;theme&gt;</code> asserts a specific theme as the active one on the next launch. Both relaunch Qobuz, because the renderer only reads its HTML at startup.</p>
 <p>Run <code>detect</code> first if you want to see exactly what will be patched:</p>
 <pre><code>$ qobuzify detect
@@ -94,10 +97,8 @@ Qobuz found:
   app.html  ...\dist\www\app.html
   legacy    ...\dist\www\...\legacy.css
   launcher  ...\Programs\Qobuz\Qobuz.exe</code></pre>
-<h2 id="getting-started--optional-lyrics-sources">Optional: lyrics sources</h2>
-<p>The Qobuzify Lyrics extension works out of the box using open community sources. Two optional setups improve it:</p>
-<ul><li><strong>Spotify login</strong> (<code>qobuzify spotify-login</code>) maps tracks by ISRC to unlock an additional word-by-word backend for more coverage. It is a one-time OAuth flow; the token then auto-renews. You need a Spotify app client ID in <code>.spotify-creds.json</code>.</li><li><strong>Apple Music credentials</strong> (a developer token and media-user token in <code>.apple-creds.json</code>) unlock Apple's syllable-timed TTML, the highest-quality source. When present, the installer also patches the main process to set the <code>Origin</code> header Apple's API requires.</li></ul>
-<p>Neither is required. All of this is local; credentials live in gitignored files next to the CLI and are passed into the runtime payload, never sent anywhere except the source they authenticate.</p>
+<h2 id="getting-started--lyrics">Lyrics</h2>
+<p>Lyrics are zero-setup. The Qobuzify Lyrics extension pulls synced, word-by-word lyrics for the current track through the qobuzify.app cache proxy: no accounts, no credentials, no tokens to configure, and nothing that identifies your Qobuz account. How the proxy works is covered in <a href="#lyrics-server">lyrics-server</a>.</p>
 <h2 id="getting-started--undoing-it">Undoing it</h2>
 <pre><code>qobuzify restore</code></pre>
 <p>Restore copies the original <code>app.html</code>, <code>legacy.css</code>, and <code>main-win32.js</code> back from the <code>*.qobuzify-bak</code> backups taken on first install, then relaunches. Qobuzify is fully reversible.</p>
@@ -106,9 +107,9 @@ Qobuz found:
 <pre><code>qobuzify install</code></pre>
 <p>It re-detects the current install and patches it.</p>
 <h2 id="getting-started--updating-qobuzify">Updating Qobuzify</h2>
-<p>Qobuzify checks for a newer release on launch and shows an in-app prompt when one is out. To update, re-run the one-line installer (it keeps your theme and local credentials):</p>
+<p>Qobuzify checks for a newer release on launch and shows an in-app prompt when one is out. To update, re-run the one-line installer (it keeps your theme and settings):</p>
 <pre><code>irm https://qobuzify.app/install.ps1 | iex</code></pre>
-<p>or, from a cloned checkout, <code>qobuzify update</code>. Re-running is non-destructive: your live theme choice, enabled extensions, and lyric credentials are preserved.</p>
+<p>or, from a cloned checkout, <code>qobuzify update</code>. Re-running is non-destructive: your live theme choice and enabled extensions are preserved.</p>
 <h2 id="getting-started--reporting-a-problem-or-contributing">Reporting a problem or contributing</h2>
 <ul><li><strong>Bug or feature request:</strong> <a href="https://qobuzify.app/issues">qobuzify.app/issues</a>, or the "Report a bug" link in the Qobuzify settings (it attaches your version and enabled extensions).</li><li><strong>A theme or extension to share:</strong> <a href="https://qobuzify.app/submit">qobuzify.app/submit</a>. Approved ones ship in the bundled catalog. See <a href="#writing-extensions">writing an extension</a> and <a href="#themes">writing a theme</a>.</li><li><strong>A security issue:</strong> report it privately at <a href="https://qobuzify.app/security">qobuzify.app/security</a>, not the public bug form. See the security policy for scope and disclosure.</li></ul></section>
 <section><h1 id="architecture">Architecture</h1>
@@ -127,7 +128,7 @@ Qobuz found:
   /* ...the entire runtime source... */
 &lt;/script&gt;
 &lt;script src="/bundle.js"&gt;&lt;/script&gt;</code></pre>
-<p>The <code>window.__QOBUZIFY__</code> payload is the data the runtime reads at boot: the theme catalog, every extension's source, the default theme, and any local lyrics credentials. The runtime source is inlined right after it. The whole thing is escaped so a <code>&lt;/script&gt;</code> inside any theme CSS or extension body can't break out of the tag.</p>
+<p>The <code>window.__QOBUZIFY__</code> payload is the data the runtime reads at boot: the theme catalog, every extension's source, the asserted starting theme (<code>null</code> means theming is off by default), and any local lyrics credentials. The runtime source is inlined right after it. The whole thing is escaped so a <code>&lt;/script&gt;</code> inside any theme CSS or extension body can't break out of the tag.</p>
 <p><strong><code>legacy.css</code></strong> is reset to stock. Older Qobuz rules hardcode the brand gold as literal hex, and the original Qobuzify swapped those in the file. The live theme engine overrides design tokens at runtime instead, so the install just keeps <code>legacy.css</code> pristine.</p>
 <p><strong><code>main-win32.js</code></strong> (the minified main-process bundle) gets patched for things the renderer can't do on its own. These run in Electron's main process, where <code>require()</code> is available:</p>
 <ul><li><strong>Background-throttle fix</strong> (always). Chromium pauses <code>requestAnimationFrame</code> in a backgrounded renderer, which is what made the lyrics view freeze and stutter on alt-tab. The fix forces <code>backgroundThrottling: false</code> on the main window, both by patching the <code>webPreferences</code> literal directly and by wrapping the <code>BrowserWindow</code> constructor as a fallback for future builds. See <a href="#gotchas">gotchas</a> for why it has to be done at window creation.</li><li><strong>Discord Rich Presence</strong> (always). The main-process half of the Discord RPC lives here (<code>runtime/rpc-main.js</code>, appended). It owns the Discord IPC pipe and a localhost bridge the renderer posts track changes to. The renderer is sandboxed and can't do Discord IPC itself.</li><li><strong>Apple Music header rewrite</strong> (only if you've added Apple credentials). Apple's <code>amp-api</code> validates the <code>Origin</code> header and a renderer fetch can't set it, so lyric requests would 401. A main-process <code>onBeforeSendHeaders</code> listener stamps <code>Origin</code>/<code>Referer</code> on <code>amp-api.music.apple.com</code> requests.</li></ul>
@@ -138,13 +139,13 @@ Qobuz found:
 <p><code>runtime/qobuzify-runtime.js</code> is an IIFE that guards against double-injection and then does four things.</p>
 <p><strong>Finds the Redux store.</strong> Qobuz ships a legacy <code>ReactDOM.render</code> build, so the fiber root is at <code>#root._reactRootContainer._internalRoot.current</code> and the DOM key is <code>__reactContainere$&lt;id&gt;</code> (note the extra "e"). <code>findStore()</code> walks the fiber tree from a few candidate entry points looking for a <code>memoizedProps</code> value that has both <code>getState</code> and <code>subscribe</code>. That store is the spine of the whole API.</p>
 <p><strong>Builds the API.</strong> <code>buildApi()</code> returns the <code>Q</code> object that becomes <code>window.Qobuzify</code>. It wraps the store (<code>getState</code>, <code>subscribe</code>), the Qobuz HTTP API (<code>api()</code>, using the in-app auth token), player reads (<code>player.getTrack</code>, <code>getPositionMs</code>, <code>isPlaying</code>, <code>onChange</code>), and DOM helpers (<code>css</code>, <code>el</code>, <code>observe</code>, <code>onRoute</code>, <code>navigate</code>, <code>addNavItem</code>, <code>playerSlot</code>, <code>storage</code>). The full surface is in <a href="#api">api</a>.</p>
-<p><strong>Loads extensions.</strong> For each enabled extension it compiles the source with <code>new Function("Qobuzify", "vendor", source)</code> and calls it with <code>window.Qobuzify</code> and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions are on by default; <code>localStorage["qobuzify:ext:&lt;id&gt;"] === "0"</code> means off.</p>
-<p><strong>Runs the theme engine and the UI.</strong> It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme. A <code>MutationObserver</code> re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.</p>
+<p><strong>Loads extensions.</strong> For each enabled extension it compiles the source with <code>new Function("Qobuzify", "vendor", source)</code> and calls it with <code>window.Qobuzify</code> and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions ship off by default (only <code>defaultOn</code> ones load, plus Android's platform-essentials); <code>localStorage["qobuzify:ext:&lt;id&gt;"] === "0"</code> forces one off and <code>"1"</code> forces one on.</p>
+<p><strong>Runs the theme engine and the UI.</strong> It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme - nothing, on a fresh install, since theming starts off. A <code>MutationObserver</code> re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.</p>
 <p>Because the navbar and player mount asynchronously, boot polls briefly (and observes) until they exist, then stops.</p>
 <h2 id="architecture--3-the-extension-model">3. The extension model</h2>
 <p>An extension is a folder under <code>extensions/</code>:</p>
 <pre><code>extensions/my-extension/
-  manifest.json   { id, name, description, icon, version, author, defaultOff? }
+  manifest.json   { id, name, description, icon, version, author, defaultOn? }
   index.js        the body of function(Qobuzify, vendor) { ... return cleanup }
   vendor.js       (optional) a big prebuilt bundle, loaded via &lt;script src&gt;</code></pre>
 <p><code>index.js</code> is not a module. Its whole contents become the body of a function that receives <code>Qobuzify</code> (the API) and <code>vendor</code> (the vendor string, or <code>""</code>), and returns a cleanup function:</p>
@@ -292,7 +293,7 @@ var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
 };</code></pre>
 <p>If you skip this, turning the extension off leaves styles, nodes, and live listeners behind. Every bundled extension returns a real cleanup; copy one as a checklist.</p></section>
 <section><h1 id="extensions">The bundled extensions</h1>
-<p>Eighteen extensions ship with Qobuzify. Each lives in <code>extensions/&lt;id&gt;/</code>, is on by default, and can be toggled from the Marketplace. This is what they do and, where it's interesting, how.</p>
+<p>Twenty-nine extensions ship with Qobuzify. Each lives in <code>extensions/&lt;id&gt;/</code> and can be toggled from the Marketplace. They ship <strong>off by default</strong>: a fresh install turns on <strong>Quality of Life</strong> (<code>ux-tweaks</code>), <strong>Media Session</strong> (<code>media-session</code>) and <strong>Qobuzify Lyrics</strong> (<code>qobuzify-lyrics</code>) plus, on Android, <code>mobile-app</code> (it IS the phone interface); everything else stays off until you opt in from the Marketplace. (A few are platform-scoped and inert elsewhere: bitperfect only does anything in the standalone wrapper, mobile-app only on a narrow screen.) This is what they do and, where it's interesting, how.</p>
 <p>Reading these is also the fastest way to learn the API, since they exercise all of it against real problems. If you're going to write your own, skim <a href="#feat-artists">feat-artists</a> and <a href="#ux-tweaks">ux-tweaks</a> first; they're the smallest complete examples.</p>
 <h2 id="extensions--discovery-and-playback">Discovery and playback</h2>
 <h3 id="extensions--recommended-for-you">recommended (For You)</h3>
@@ -301,18 +302,30 @@ var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
 <p>Replaces Qobuz's weak native search with an instant, ranked, filterable full-page takeover. It hooks the real search box and, as you type, covers the content region so the native <code>/search</code> page never shows. Multi-word queries are scored per word with a full-phrase bonus; results you've heard before surface higher. Filters for quality, year, and sort; a Spotify-style "Top result" hero next to a Songs column, then card grids. Cover play buttons play the specific thing, including a specific track (not the album's track 1), which takes real work on a sealed player. Closing restores the route you were on.</p>
 <h3 id="extensions--smart-playback-smart-radio">smart-playback (Smart Radio)</h3>
 <p>A real fix for Qobuz's weak autoplay. The queue lives in the sealed player module, so instead of swapping its picks, one click builds a genuinely related set from what's playing (the current artist plus similar artists' top tracks, weighted to your favorites, deduped against recent plays), drops it into a fresh "Qobuzify Radio" playlist, and plays that through the app. The old radio playlist is deleted right after, so the library holds exactly one, and a fresh id each run sidesteps Qobuz's playlist-content cache.</p>
+<h3 id="extensions--genre-filter">genre-filter</h3>
+<p>Finer genre browsing for Discover. Qobuz's genre chips are coarse (Pop and Rock share a chip), so this adds a "Genres" pill next to them that opens a picker built from Qobuz's own genre tree, sub-genres included. Picking one opens a scoped, Discover-style overlay of that exact genre: New Releases, Most Streamed, Press Awards, and Playlists, all through the app's own featured endpoints with the in-app token. Inert off the Discover page.</p>
+<h3 id="extensions--find-available">find-available</h3>
+<p>When a track isn't streamable in your country, Qobuz greys the row out and dead-ends. This puts a small accent button on those dead rows that searches the catalog for the same song, keeps only versions that actually stream for you (a different release, a remaster, a non-region-locked upload), pushes karaoke and tribute knockoffs down the ranking, and plays the best match through the app's own controls. A greyed-out track in a playlist stops being a dead end.</p>
 <h2 id="extensions--library-and-playlists">Library and playlists</h2>
 <h3 id="extensions--playlist-tools">playlist-tools</h3>
 <p>Stats, Export, remove-duplicates, and Sort for your own playlists. A "Tools" button appears in the playlist header, but only on playlists you own. Stats and Export are read-only (top artists, decades, hi-res share; copy or download as Text / M3U / CSV / JSON). Duplicates edits the playlist after an inline confirm. Sort never touches the original, it builds a new sorted playlist and opens it.</p>
+<h3 id="extensions--playlist-power">playlist-power</h3>
+<p>A "Sort" button on any playlist page, yours or not: view its tracks by Recently added, Title A-Z, Duration, or Default, and play any track from that order. Long playlists are react-virtualized, so reordering the on-page rows can't work; it re-queries the whole playlist and renders its own list instead, then plays a clicked row through the native controls. (It also contains a "playing from" context pill, shipped off because playlist-context owns that job.)</p>
+<h3 id="extensions--playlist-context">playlist-context</h3>
+<p>Remembers where playback came from, even after shuffle. The sealed queue stores no reference to its source playlist, so this caches the track ids of every playlist and album you open and shows a "Playing from" chip in the player bar for whichever cached source the current track belongs to. Click it to jump there with the current track highlighted; right-click to remove that track from the playlist without disturbing playback. The cache persists, so a recent source is recognized again after a relaunch.</p>
 <h3 id="extensions--bulk-actions">bulk-actions</h3>
 <p>"Favourite all", "Add all to a playlist", and a shuffle-and-play button in any album or playlist header. All through the playlist/favorite write API (favorite-create takes a batch). The shuffle builds a shuffled copy playlist and plays only those tracks, keeping exactly one shuffle playlist around.</p>
+<h3 id="extensions--multi-select">multi-select</h3>
+<p>Shift-click a range or Ctrl/Cmd-click to toggle tracks on any desktop track list, then act on all of them from a floating bar: Play, add to the queue, add to a playlist, or favourite. Track ids are parsed off the rows' own DOM ids, no fragile title matching; Play builds a throwaway playlist and plays it (the same move Smart Radio uses), and Queue merges entries into the app's own play-queue state. Selection clears on route change and Esc.</p>
+<h3 id="extensions--library-load">library-load</h3>
+<p>Loads your entire favorites library up front (paged 500 at a time, the app's own page size) and caches it, so even a 40k-track collection browses, searches, and marks instantly instead of trickling in as you scroll. The id set persists; full metadata persists in chunks when it fits and degrades to memory-only on huge libraries. It exposes a shared <code>Q.library</code> API that other extensions consume; Better Search's library surface rides on it.</p>
 <h3 id="extensions--feat-artists">feat-artists</h3>
 <p>Qobuz only shows the main artist on a track row; anyone featured or collaborating is buried in the credits. This digs the featured names out of <code>track.performers</code>, which rides along in the standard <code>album/get</code> / <code>playlist/get</code> response (one fetch per page, cached per id, no special credits endpoint), and appends " feat. X, Y" inline. One of the smallest complete extensions, and a good template.</p>
 <h3 id="extensions--quality-badges">quality-badges</h3>
 <p>Puts Qobuz's own Hi-Res Audio logo on hi-res tracks, reusing the app's bundled <code>hires.png</code> so it looks native. Only hi-res gets a badge; CD and lossy show nothing, which is the point: hi-res becomes easy to spot at a glance.</p>
 <h2 id="extensions--lyrics">Lyrics</h2>
 <h3 id="extensions--qobuzify-lyrics">qobuzify-lyrics</h3>
-<p>Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through Lyra (our own renderer) behind a shim, and pulls lyrics from open sources, or better ones if you've connected Spotify or Apple. This is the largest extension by far and has its own subsystem, the cache-proxy server. See <a href="#lyrics-server">lyrics-server</a>.</p>
+<p>Synced, word-by-word lyrics with a karaoke fill, an album-cover background, and auto-scroll, opened from a player-bar button. It renders through Lyra (our own renderer) behind a shim, and pulls lyrics through the qobuzify.app cache proxy, zero setup, no accounts or credentials. This is the largest extension by far and has its own subsystem, the cache-proxy server. See <a href="#lyrics-server">lyrics-server</a>.</p>
 <h2 id="extensions--now-playing-and-controls">Now playing and controls</h2>
 <h3 id="extensions--full-app-display">full-app-display</h3>
 <p>A fullscreen now-playing overlay: big cover art, title/artist/album over a blurred backdrop, a live seekable progress bar, and prev/play-pause/next. Everything drives the real player controls underneath, so the sealed audio engine is never touched directly. Toggle from the player bar or the F key.</p>
@@ -322,6 +335,10 @@ var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
 <p>Play/pause, seek, next/prev, volume, mute, like, shuffle, repeat, fullscreen, and focus-search, from anywhere. Every action drives the player's own DOM controls or the store. A <code>?</code> overlay lists them. Keys are ignored while you're typing and left alone when a modifier is held.</p>
 <h3 id="extensions--sleep-timer">sleep-timer</h3>
 <p>Stop playback after a set time or at the end of the current track. A moon button opens the menu; while armed it shows a live countdown. On expiry it pauses by clicking the play/pause control, since there's no pause API.</p>
+<h3 id="extensions--media-session">media-session</h3>
+<p>Lockscreen, notification, and Bluetooth/headset transport controls. Qobuz's web player never touches the W3C Media Session API, so the OS has nothing to show; this publishes the current track (title, artist, cover art) plus a live position for the OS scrubber, and routes play/pause/next/prev/seek from hardware keys and headset buttons back through the app's own controls. On Linux it feeds MPRIS through the wrapper's bridge, and in the Android app it drives a native media session through an injected bridge, sharing one copy of the transport logic.</p>
+<h3 id="extensions--bitperfect">bitperfect</h3>
+<p>Bit-perfect output for the standalone wrapper, Linux only for now. Chromium resamples and mixes every stream, lossless but not bit-perfect, so this re-plays the exact FLAC bytes through a bundled player that holds exclusive access to the DAC at the track's native rate, while the muted web element keeps decoding so the clock, scrobbling, MediaSession, and auto-advance all still work. Inert outside the wrapper; the Windows bake already has native exclusive-mode audio through JUCE.</p>
 <h2 id="extensions--cleanup-and-quality-of-life">Cleanup and quality-of-life</h2>
 <h3 id="extensions--simple-client">simple-client</h3>
 <p>Strips the Magazine nav item and the editorial promo carousels for a lean, library-first client. A "Lean" control on the Discover page lets you check/uncheck each promo section live.</p>
@@ -331,10 +348,20 @@ var slot = Q.playerSlot({ id: "my-ext", zone: "right", order: 30, el: btn });
 <p>Four small annoyances fixed: double-click a track row to play it, the library opens on your last-used tab, your grid/list view choice sticks, and an optional switch to hide the Hi-Res badges. A good example of a small extension that adds a toggle to the Qobuzify settings panel.</p>
 <h3 id="extensions--copy-share">copy-share</h3>
 <p>Right-click a track to copy "Artist - Title" or a shareable <code>play.qobuz.com</code> link. Works on list rows and the player bar's current track.</p>
+<h3 id="extensions--block-trash">block-trash</h3>
+<p>Two buttons: a ban icon on artist pages to block the artist, a trash icon on track rows and the player bar to bin a song. Anything blocked or trashed greys out everywhere and never plays, enforced in three layers: pulled from the upcoming queue, denied at the stream-URL layer, and skipped if it still becomes current. A shield in the player bar lists everything you've blocked so you can undo it. All state is local.</p>
+<h2 id="extensions--integrations-and-history">Integrations and history</h2>
 <h3 id="extensions--discord-rpc">discord-rpc</h3>
 <p>Discord Rich Presence for what you're playing, matching the original qobuz-rpc presence (cover, timestamps, a pause state). The renderer is sandboxed, so the actual Discord IPC runs in the main process (<code>runtime/rpc-main.js</code>) and this extension posts track changes to it over localhost. A toggle in Qobuzify settings enables and disables it.</p>
-<h2 id="extensions--off-by-default">Off-by-default</h2>
-<p>An extension can set <code>"defaultOff": true</code> in its manifest to ship disabled. None of the current bundle does, but the loader honors it: <code>defaultOff</code> extensions stay off until you turn them on in the Marketplace.</p></section>
+<h3 id="extensions--last-fm">last-fm</h3>
+<p>Scrobbles what you play to Last.fm: Now Playing on track start, the scrobble at 50% or 4 minutes, whichever comes first (the Last.fm rule; seeks don't count, sub-30s tracks never scrobble). Signing happens on the qobuzify.app worker, so no API key or secret ships in the client and the extension holds only your session key. It can also bulk-import the history recorded by Listening Stats. Connect from the Qobuzify settings panel.</p>
+<h3 id="extensions--stats-listening-stats">stats (Listening Stats)</h3>
+<p>Private, on-device listening history. A 1-second tick logs each play you actually listened to (Last.fm-style threshold, seeks don't count) into a local IndexedDB and powers a stats.fm-style dashboard: top artists and songs, minutes, streaks, recently played, a minutes-per-day chart, ranges from 1D to All. Local-only by default; cloud sync exists but stays off until you explicitly turn it on.</p>
+<h2 id="extensions--platform">Platform</h2>
+<h3 id="extensions--mobile-app">mobile-app</h3>
+<p>On a narrow screen, replaces Qobuz's desktop-only web layout with a purpose-built mobile app: our own Home, Search, Library, and Now Playing, a bottom tab bar, and a mini player, rendered in a container the extension fully owns so nothing gets cut off. Qobuz stays mounted underneath as the engine only (auth, API, audio, and the album pages it navigates invisibly to start playback). Completely inert on desktop and wide windows.</p>
+<h2 id="extensions--on-by-default">On-by-default</h2>
+<p>Extensions ship disabled. An extension can set <code>"defaultOn": true</code> in its manifest to be active on a fresh install - Quality of Life (<code>ux-tweaks</code>), Media Session (<code>media-session</code>) and Qobuzify Lyrics (<code>qobuzify-lyrics</code>) set it in the current bundle. Android additionally forces <code>mobile-app</code> (it IS the phone interface) on regardless, since it isn't optional there. Everything else stays off until you turn it on in the Marketplace.</p></section>
 <section><h1 id="player-control">Controlling a sealed player</h1>
 <p>Qobuz plays audio through a native JUCE addon, not an HTML <code>&lt;audio&gt;</code> element. There is no <code>play()</code>, <code>pause()</code>, <code>seek()</code>, <code>setVolume()</code>, or queue API reachable from the renderer. Everything that touches playback has to drive the app's own UI controls or, in one case, reach a React component's props through the fiber.</p>
 <p>This is the single most important thing to understand about extending Qobuz, and it's why the playback extensions are shaped the way they are. Here are the working techniques.</p>
@@ -375,7 +402,9 @@ while (fiber) {
   if (sn &amp;&amp; sn.props &amp;&amp; typeof sn.props.seek === "function") { sn.props.seek({ position: ms }); break; }
   fiber = fiber.return;
 }</code></pre>
-<p>One caveat that bit us: Qobuz seeks at whole-second granularity (the engine and the position clock both round to the nearest second). Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. Bias toward the clicked line by rounding up, unless the line starts in the first 150 ms of a second.</p>
+<p>One caveat that bit us: <strong>seeks land on whole seconds</strong> (the engine commits the position rounded to the second). Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. Bias toward the clicked line by rounding up, unless the line starts in the first 150 ms of a second.</p>
+<p>Reading the position is a different story. <code>Q.player.getPositionMs</code> wall-clock-extrapolates the store's position anchor (<code>position.value + (now - position.timestamp)</code> while playing), so reads are millisecond-smooth between refreshes. The anchor itself refreshes coarsely, and how coarsely is <strong>not reliably characterized</strong>: measured claims range from ~250 ms to 1 s. qobuzify-lyrics' smoothing constants assume ~250 ms; pinning down the real cadence is still an open measurement.</p>
+<p>(One more wrapper note: the fiber-key snippet above is the bake's React 16 key. play.qobuz.com runs newer React, where the key prefix is <code>__reactFiber$</code>; check both, the way media-session and mobile-app do.)</p>
 <h2 id="player-control--volume">Volume</h2>
 <p>Volume is a slider you drive with a click, but read it carefully. The store's <code>settings.volume</code> goes stale (it stayed pinned at 100 while the rendered slider moved), so compute the current level from the slider's rendered fill, not the store:</p>
 <pre><code class="lang-js">function currentVolPct() {
@@ -466,7 +495,7 @@ function fireClick(el) {
 <p><strong>A big vendor bundle can't be inlined into the payload.</strong> The runtime is injected as one inline <code>&lt;script&gt;</code>, and a 1.3 MB bundle inside it breaks the inline payload. Ship large bundles as a sibling <code>vendor.js</code>, copied into <code>dist</code>, loaded with <code>&lt;script src="/qobuzify-ext-&lt;id&gt;.js"&gt;</code>.</p>
 <h2 id="gotchas--lyrics-rendering">Lyrics rendering</h2>
 <p><strong>Alt-tab forced a synchronous whole-document reflow.</strong> On refocus, Chromium marks the whole document's layout dirty, and the lyrics animator's <code>getBoundingClientRect()</code> then forces a synchronous full-document reflow that blocks the frame (and could glitch the scroll to the top). <code>contain: layout</code> on the lyrics page and its scroll viewport keeps that expensive internal layout cached across the invalidation. Apply it to the page and viewport only, not per line (per-line <code>contain</code> forces a block formatting context per line and changes spacing).</p>
-<p><strong>Qobuz seeks at whole-second granularity.</strong> Both the engine and the position clock round to the nearest second. Lyric lines rarely start on a whole second, so a plain round lands before the line about half the time and the previous line highlights. When seeking to a lyric, round up to the next second, unless the line starts in the first 150 ms.</p>
+<p><strong>Seeks land on whole seconds; position reads only look smooth.</strong> The engine commits seeks at whole-second granularity, so when seeking to a lyric, round up to the next second unless the line starts in the first 150 ms (a plain round lands before the line about half the time and the previous line highlights). Position reads are smoother than the clock underneath: <code>Q.player.getPositionMs</code> wall-clock-extrapolates the store's anchor, millisecond-smooth between refreshes, but the anchor's own refresh cadence is coarse and not reliably characterized (measured claims range from ~250 ms to 1 s). qobuzify-lyrics' smoothing constants assume ~250 ms; the real cadence is still an open measurement.</p>
 <p><strong>Same-title songs match the wrong lyrics.</strong> Two different songs called "Wolves" cross-matched, so an 83-second track served a 193-second song's lyrics. Guard with duration: if a cached lyric's timing overruns the track by more than 10 seconds, it's a wrong-song match. Evict and re-resolve. See <a href="#lyrics-server">lyrics-server</a>.</p>
 <h2 id="gotchas--development">Development</h2>
 <p><strong>Qobuzify Lyrics can't hot-swap over the debug port.</strong> Most extensions hot-load fine (inject the new source, no reload). The lyrics extension can't; it needs a full reload to re-run cleanly. See <a href="#dev-workflow">dev-workflow</a>.</p></section>
@@ -484,9 +513,9 @@ function fireClick(el) {
   "icon": "icon-magic-stars",
   "version": "1.0.0",
   "author": "you",
-  "defaultOff": false
+  "defaultOn": false
 }</code></pre>
-<p><code>icon</code> is a Qobuz icon-font class (e.g. <code>icon-magic-stars</code>, <code>icon-heart</code>, <code>icon-users</code>). <code>defaultOff</code> is optional; set it to ship the extension disabled.</p>
+<p><code>icon</code> is a Qobuz icon-font class (e.g. <code>icon-magic-stars</code>, <code>icon-heart</code>, <code>icon-users</code>). <code>defaultOn</code> is optional; set it to <code>true</code> to ship the extension enabled on a fresh install. Extensions are off by default, and Quality of Life (<code>ux-tweaks</code>), Media Session (<code>media-session</code>) and Qobuzify Lyrics (<code>qobuzify-lyrics</code>) set it in the current bundle - so an extension that changes the UI should usually leave it unset and let the user opt in.</p>
 <p><code>index.js</code> is not a module. Its entire contents become the body of a function the runtime calls as <code>function (Qobuzify, vendor) { ... }</code>. It returns a cleanup function:</p>
 <pre><code class="lang-js">var Q = Qobuzify;
 
@@ -585,6 +614,10 @@ var n = parseInt(Q.storage.get("my-ext:count", "0"), 10);</code></pre>
 <p>The DOM you're scripting against isn't yours and changes between Qobuz versions. A selector that returns nothing today might return something unexpected tomorrow. Wrap store reads in try/catch, null-check every <code>querySelector</code>, and make observers no-op when the thing they need isn't there. This isn't paranoia; it's what keeps one changed class name from crashing the whole extension.</p>
 <h2 id="writing-extensions--testing">Testing</h2>
 <p>Build against a live Qobuz over the Chrome DevTools Protocol. Hot-load your extension, screenshot, inspect, iterate, then bake it into <code>app.html</code> for a faithful final test. The full loop is in <a href="#dev-workflow">dev-workflow</a>.</p>
+<h2 id="writing-extensions--case-study-building-an-eq-and-why-it-is-not-shipped">Case study: building an EQ (and why it is not shipped)</h2>
+<p>eq-boost was a prototype equalizer that we removed from the shipped set (a deliberate call: a toggle that does nothing on most platforms is worse than no toggle). The code survives as reference in <code>docs/examples/eq-boost/</code>.</p>
+<p>What makes an EQ hard is the audio model. In the standalone wrapper, playback is MSE appended into a detached, muted-capable <code>&lt;audio&gt;</code> element, not a bare Web Audio graph, so interposing <code>AudioNode.connect</code> never fires: there are no nodes to intercept. A real EQ has to claim the element with <code>createMediaElementSource</code>, which reroutes the audio through Web Audio's mixer and therefore conflicts with bit-perfect playback (and with the bitperfect extension's muted-element model). On the Windows bake there is nothing to tap at all: audio plays through the native JUCE engine, never the DOM. The honest implementations are <code>createMediaElementSource</code> with bit-perfect explicitly off, or, on Linux, filters in the mpv sidecar's <code>--af</code> chain, where the audio actually flows.</p>
+<p>If you want to build one, start from the reference code and pick a lane first.</p>
 <h2 id="writing-extensions--submitting-it">Submitting it</h2>
 <p>When it's ready, submit it at <a href="https://qobuzify.app/submit">qobuzify.app/submit</a> with a link to the source. Approved extensions ship in the bundled catalog, so everyone gets them in the Marketplace. Every submission is reviewed by hand first, because an extension is arbitrary JavaScript running with full access inside Qobuz, so keep the source public until it's merged and don't obfuscate it.</p></section>
 <section><h1 id="themes">Writing a theme</h1>

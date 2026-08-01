@@ -57,7 +57,9 @@
   function isEnabled() { return localStorage.getItem(LS_ENABLED) !== "0"; }
   function activeSlug() {
     if (!isEnabled()) return null;
-    return localStorage.getItem(LS_THEME) || DATA.def || (CATALOG[0] && CATALOG[0].slug) || null;
+    // Theming ships OFF: nothing is applied unless the user picked a theme in-app (LS_THEME) or a
+    // CLI `apply <theme>` / `install <theme>` asserted one via DATA.def. No implicit first-theme on boot.
+    return localStorage.getItem(LS_THEME) || DATA.def || null;
   }
   function buildCss(t) {
     if (!t) return "";
@@ -823,18 +825,18 @@
     return Q;
   }
 
-  // On ANDROID nothing loads unless the user asks for it, except the two that are not really optional:
-  // mobile-app IS the interface, and media-session is the lockscreen/Bluetooth bridge (its own switch
-  // lives in Features). Everything else on a phone is either inert (it decorates the desktop layout the
-  // mobile UI covers) or a deliberate opt-in, and running ~20 inert extensions on every boot costs
-  // startup time and risk for nothing. Desktop is untouched: still default ON.
-  var ANDROID_DEFAULT_ON = { "mobile-app": 1, "media-session": 1 };
+  // Extensions ship OFF by default everywhere; an extension opts in with manifest.defaultOn (Quality
+  // of Life / ux-tweaks, Media Session / media-session and Qobuzify Lyrics / qobuzify-lyrics are the
+  // default-on ones on desktop). Android does not reuse that flag: mobile-app already reimplements
+  // lyrics/seek/lockscreen natively, so the phone only auto-loads the interface itself, the
+  // media-session bridge and the user-facing Quality of Life tweaks. Everything else there is inert
+  // (it decorates the desktop DOM the mobile UI covers) or a deliberate opt-in, and running ~20 inert
+  // extensions on every boot costs startup time and risk for nothing.
+  var ANDROID_DEFAULT_ON = { "mobile-app": 1, "media-session": 1, "ux-tweaks": 1 };
   function extDefaultOn(id) {
     if (IS_ANDROID) return !!ANDROID_DEFAULT_ON[id];
-    // manifest.defaultOff was carried in the payload but never consulted here, so it has always been a
-    // dead field. Honour it now; no shipped manifest sets it, so this changes no existing behaviour.
     var e = (DATA.extensions || []).filter(function (x) { return x.id === id; })[0];
-    return !(e && e.defaultOff);
+    return !!(e && e.defaultOn);
   }
   function extEnabled(id) {
     var v = null;
@@ -899,6 +901,12 @@
     // on next launch; in-app picks afterwards still win until the next CLI apply.
     if (DATA.seed && localStorage.getItem("qobuzify:seed") !== String(DATA.seed)) {
       if (DATA.def) { localStorage.setItem(LS_THEME, DATA.def); localStorage.setItem(LS_ENABLED, "1"); }
+      else {
+        // Fresh install with no asserted theme: theming is OFF by default (no theme applied, toggle
+        // off in settings) until the user picks one in the Marketplace. Existing installs keep their
+        // stored choice because they carry the same seed and never reach this branch.
+        localStorage.setItem(LS_ENABLED, "0");
+      }
       localStorage.setItem("qobuzify:seed", String(DATA.seed));
     }
     setUiAccent(accentOf(bySlug(activeSlug())));

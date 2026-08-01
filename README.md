@@ -30,8 +30,8 @@ Audio is lossless FLAC but not bit-perfect, and it cannot be, because it goes th
 
 ## What you get
 
-- **10 themes**, switchable live from the Marketplace, from a plain accent swap to full frosted-glass restyles.
-- **29 extensions**, on by default and individually toggleable, including a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, Last.fm scrobbling, playlist tools, bulk actions, multi-select, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence. The full list is in [docs/extensions.md](docs/extensions.md).
+- **10 themes**, switchable live from the Marketplace, from a plain accent swap to full frosted-glass restyles. Theming ships off - the stock Qobuz look stays until you apply one.
+- **29 extensions**, individually toggleable from the Marketplace. They ship off by default (Quality of Life, Media Session and Qobuzify Lyrics are on) so a fresh install stays stock; opt in to a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, Last.fm scrobbling, playlist tools, bulk actions, multi-select, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence. The full list is in [docs/extensions.md](docs/extensions.md).
 
 ## Commands
 
