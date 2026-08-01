@@ -76,14 +76,18 @@ function refreshRecent() {
 }
 function knownOf(tr) { if (!known || !tr) return null; var rec = known.recent[tr.id]; var fav = !!known.fav[tr.id]; if (rec == null && !fav) return null; return { recent: rec != null, rank: rec == null ? -1 : rec, fav: fav }; }
 
-// ---- "Did you mean" spell correction --------------------------------------------------------------
-// Qobuz's search is only mildly typo-tolerant: "americon giel" returns a few American-Girl albums but no
-// Tom Petty, no tracks, no real hero. LanguageTool (open-source, CORS-open, called DIRECTLY from the
-// client - no server of ours in the path) is the spell engine. Its top suggestion is NOT music-aware
-// though ("giel" -> Gail, gain, girl, Gil), so we build a small candidate set from its replacements and
-// let QOBUZ pick the winner: the corrected query that actually returns music wins. Fallback-only, so it
-// runs on a weak result, not every keystroke.
-var LANGTOOL_URL = "https://api.languagetool.org/v2/check";
+// ---- "Did you mean" spell correction (server-orchestrated) ----------------------------------------
+// All the slow correction sources (LanguageTool, MusicBrainz, Last.fm search + getInfo, popularity
+// ranking) now run INLINE in our Worker and come back as one cached call to /v1/correct, so the client
+// makes a single ~sub-10ms request on a cached typo instead of six sequential internet hops. The one
+// thing that stays here is Qobuz validation: the corrected candidate is only adopted if a Qobuz search
+// for it actually returns music, and that search needs the user's Qobuz token, which the Worker can't
+// have. The server returns { artist, words }: `artist` is a high-confidence popular-artist correction;
+// `words` are LanguageTool word candidates for the client to validate.
+var CORRECT_URL = "https://api.qobuzify.app/v1/correct?q=";
+function fetchCorrection(q) {
+  return fetch(CORRECT_URL + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+}
 
 // A result is "weak" when nothing strong answered the query: no artist whose name really matches it, and
 // no track that scores. That is the signal a typo kept the real thing out of the results entirely.
@@ -94,35 +98,6 @@ function weakResult(d, q) {
   for (i = 0; i < arts.length && i < 5; i++) bestA = Math.max(bestA, score(arts[i].name || "", q));
   for (i = 0; i < trks.length && i < 5; i++) bestT = Math.max(bestT, score(trks[i].title || "", q));
   return bestA < 300 && bestT < 300; // nothing crossed the hero bar -> probably a typo
-}
-
-// LanguageTool's matches carry offset/length into the ORIGINAL text plus ranked replacements. Build a
-// bounded set of corrected query strings (cartesian of the top few replacements per match, capped), so
-// both shapes are handled: a single full-phrase correction ("americon gierl" -> "American girl") and
-// per-word options where the music-correct one isn't first ("giel" -> ...girl).
-function spellCandidates(q) {
-  return fetch(LANGTOOL_URL, {
-    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "language=en-US&text=" + encodeURIComponent(q)
-  }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-    var ms = ((j && j.matches) || []).filter(function (m) { return m.replacements && m.replacements.length; })
-      .sort(function (a, b) { return a.offset - b.offset; });
-    if (!ms.length) return [];
-    var combos = [[]];
-    ms.forEach(function (m) {
-      var reps = m.replacements.slice(0, 3).map(function (r) { return r.value; });
-      var next = [];
-      combos.forEach(function (c) { reps.forEach(function (rep) { if (next.length < 12) next.push(c.concat([rep])); }); });
-      combos = next;
-    });
-    var out = {};
-    combos.forEach(function (combo) {
-      var s = q;
-      for (var i = ms.length - 1; i >= 0; i--) s = s.slice(0, ms[i].offset) + combo[i] + s.slice(ms[i].offset + ms[i].length);
-      if (norm(s) !== norm(q)) out[s] = 1;
-    });
-    return Object.keys(out).slice(0, 8);
-  }).catch(function () { return []; });
 }
 
 // Score how much real music a candidate query pulls back, so the best correction wins.
@@ -138,125 +113,46 @@ function candStrength(d, cand) {
 function doSearch(q) {
   refreshRecent();
   var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null;
-  // Artist auto-correct runs in parallel and never blocks the first results. When Last.fm finds a much
-  // more popular artist that's a plausible typo of the query, we AUTO-swap to that artist's Qobuz results
-  // (like the word-typo path) and show "Showing results for Kanye West - Search instead for kayne west".
-  // The escape does a raw search of the typed query, so it never bounces back into correction.
-  lfmArtistSuggest(q).then(function (sg) {
-    if (id !== state.reqId || !sg) return;
-    return Q.api("catalog/search?query=" + encodeURIComponent(sg.name) + "&limit=30").then(function (cd) {
+  var correction = fetchCorrection(q); // one cached server call, resolves alongside the main search
+  // Artist auto-correct: never blocks the first results. When the server returns a much more popular
+  // artist that's a plausible typo, validate it against Qobuz and swap the results in, showing
+  // "Showing results for Kanye West - Search instead for kayne west". The escape does a raw search of the
+  // typed query, so it never bounces back into correction.
+  correction.then(function (cor) {
+    if (id !== state.reqId || !cor || !cor.artist || norm(cor.artist) === norm(q)) return;
+    return Q.api("catalog/search?query=" + encodeURIComponent(cor.artist) + "&limit=30").then(function (cd) {
       if (id !== state.reqId || state.corrected) return;      // superseded, or a word-typo correction already won
-      if (candStrength(cd, sg.name) < 300) return;            // the popular artist isn't really in Qobuz - don't force it
-      state.data = cd; state.q = norm(sg.name); state.corrected = sg.name; state.original = q;
+      if (candStrength(cd, cor.artist) < 300) return;         // the popular artist isn't really in Qobuz
+      state.data = cd; state.q = norm(cor.artist); state.corrected = cor.artist; state.original = q;
       render();
     });
   });
   Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     if (id !== state.reqId) return; // stale
     state.data = j;
-    if (weakResult(j, norm(q))) { trySpellCorrect(q, id); return; } // render happens after correction resolves
+    if (weakResult(j, norm(q))) { trySpellCorrect(q, id, correction); return; } // render after correction resolves
     render();
   }).catch(function () { if (id === state.reqId) { state.data = { __err: 1 }; render(); } });
 }
 
-// Weak result -> ask LanguageTool for candidates, search Qobuz for each, adopt the strongest one that
+// Weak result -> take the server's word candidates, search Qobuz for each, adopt the strongest one that
 // clearly beats the original. Shows a "Showing results for X" banner (render reads state.corrected).
-function trySpellCorrect(q, id) {
-  spellCandidates(q).then(function (cands) {
+function trySpellCorrect(q, id, correction) {
+  correction.then(function (cor) {
+    var cands = (cor && cor.words) || [];
     if (id !== state.reqId || !cands.length) { render(); return; }
     return Promise.all(cands.map(function (c) {
       return Q.api("catalog/search?query=" + encodeURIComponent(c) + "&limit=30")
         .then(function (d) { return { c: c, d: d, s: candStrength(d, c) }; })
         .catch(function () { return { c: c, d: null, s: 0 }; });
     })).then(function (res) {
-      if (id !== state.reqId) return;
+      if (id !== state.reqId || state.corrected) return;      // an artist correction already won
       res.sort(function (a, b) { return b.s - a.s; });
       var win = res[0];
-      if (win && win.s >= 300) { // a real hero showed up under the correction
-        state.data = win.d; state.q = win.c; state.corrected = win.c; state.original = q;
-      }
+      if (win && win.s >= 300) { state.data = win.d; state.q = win.c; state.corrected = win.c; state.original = q; }
       render();
     });
   }).catch(function () { if (id === state.reqId) render(); });
-}
-
-// ---- Artist-name auto-correct via popularity + fuzzy catalog ---------------------------------------
-// LanguageTool can't touch proper nouns, and Qobuz serves a junk exact-name clone as the hero over the
-// real artist. Two catalog-bound candidate sources, gated by similarity + popularity, exactly the shape
-// the design doc argues for:
-//   - Last.fm artist.search: popularity-ranked, but its index misses some typos ("baby jeem" only finds a
-//     4-listener nobody, never Baby Keem).
-//   - MusicBrainz: a real fuzzy artist-name index (query:...~) that DOES surface Baby Keem for "baby jeem".
-//     Its own score is noise (Bach ranks 100 for "baby jeem"), so it is a candidate SOURCE only - the
-//     similarity gate does the filtering. CORS-open, works with the browser UA, generous rate limit.
-// Then: keep only plausible typos of the query (edit-distance similarity), require >=100k Last.fm
-// listeners (kills the nobody clones), pick the most popular. name != query means a correctly-typed
-// artist suggests nothing, and <3 chars is frozen so "Ye" never becomes "Yes". Everything is validated
-// against Qobuz by the caller before it auto-corrects.
-var LFM_SEARCH = "https://ws.audioscrobbler.com/2.0/";
-var MB_URL = "https://musicbrainz.org/ws/2/artist";
-var _lfmKeyP = null;
-function lfmKey() {
-  if (_lfmKeyP) return _lfmKeyP;
-  _lfmKeyP = fetch("https://api.qobuzify.app/v1/lastfm/connect/start")
-    .then(function (r) { return r.json(); }).then(function (j) { return (j && j.apiKey) || null; })
-    .catch(function () { return null; });
-  return _lfmKeyP;
-}
-function editDist(a, b) {
-  a = a || ""; b = b || ""; var m = a.length, n = b.length, i, j, prev = [], cur = [];
-  for (j = 0; j <= n; j++) prev[j] = j;
-  for (i = 1; i <= m; i++) {
-    cur[0] = i;
-    for (j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
-    for (j = 0; j <= n; j++) prev[j] = cur[j];
-  }
-  return prev[n];
-}
-function nameSim(a, b) { a = norm(a); b = norm(b); if (!a || !b) return 0; return 1 - editDist(a, b) / Math.max(a.length, b.length); }
-
-function lfmArtistCands(q, key) {
-  var u = LFM_SEARCH + "?method=artist.search&api_key=" + key + "&format=json&limit=8&artist=" + encodeURIComponent(q);
-  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-    return ((((j || {}).results || {}).artistmatches || {}).artist || []).map(function (a) { return { name: a.name, L: +a.listeners || 0 }; });
-  }).catch(function () { return []; });
-}
-function mbArtistCands(q) {
-  var u = MB_URL + "?fmt=json&limit=8&query=artist:" + encodeURIComponent(q) + "~";
-  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-    return ((j && j.artists) || []).map(function (a) { return { name: a.name, L: -1 }; }); // L=-1: listeners unknown
-  }).catch(function () { return []; });
-}
-function lfmListeners(name, key) {
-  var u = LFM_SEARCH + "?method=artist.getInfo&api_key=" + key + "&format=json&autocorrect=0&artist=" + encodeURIComponent(name);
-  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-    return +((((j || {}).artist || {}).stats || {}).listeners) || 0;
-  }).catch(function () { return 0; });
-}
-
-function lfmArtistSuggest(q) {
-  var nq = norm(q);
-  if (nq.length < 3) return Promise.resolve(null);
-  return lfmKey().then(function (key) {
-    if (!key) return null;
-    return Promise.all([lfmArtistCands(q, key), mbArtistCands(q)]).then(function (res) {
-      var byKey = {};
-      res[0].forEach(function (c) { var k = norm(c.name); if (!byKey[k]) byKey[k] = { name: c.name, L: c.L }; else byKey[k].L = Math.max(byKey[k].L, c.L); });
-      res[1].forEach(function (c) { var k = norm(c.name); if (!byKey[k]) byKey[k] = { name: c.name, L: -1 }; });
-      var cands = Object.keys(byKey).map(function (k) { return byKey[k]; })
-        .filter(function (c) { return norm(c.name) !== nq && nameSim(q, c.name) >= 0.6; })
-        .sort(function (a, b) { return nameSim(q, b.name) - nameSim(q, a.name); })
-        .slice(0, 3);
-      if (!cands.length) return null;
-      // fill unknown (MusicBrainz-only) listeners, then keep >=100k and pick the most popular
-      return Promise.all(cands.map(function (c) {
-        return c.L >= 0 ? c : lfmListeners(c.name, key).then(function (L) { c.L = L; return c; });
-      })).then(function (full) {
-        full = full.filter(function (c) { return c.L >= 100000; }).sort(function (a, b) { return b.L - a.L; });
-        return full.length ? { name: full[0].name, listeners: full[0].L } : null;
-      });
-    });
-  }).catch(function () { return null; });
 }
 
 // Cover/karaoke/instrumental/tribute markers. These versions get demoted so the real recording wins
