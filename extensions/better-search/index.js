@@ -129,6 +129,10 @@ function doSearch(q) {
   });
   Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     if (id !== state.reqId) return; // stale
+    // The correction is edge-cached (~70ms), so it can beat the main search and already have swapped in
+    // the corrected artist's results. Don't clobber them with the raw-typo results (that showed "Showing
+    // results for The Weeknd" over a "Wen and the Wknders" hero).
+    if (state.corrected) return;
     state.data = j;
     if (weakResult(j, norm(q))) { trySpellCorrect(q, id, correction); return; } // render after correction resolves
     render();
