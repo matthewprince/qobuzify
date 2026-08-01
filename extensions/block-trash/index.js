@@ -407,9 +407,24 @@ function ensureArtistBtn() {
 // --- player-bar trash (bins the currently-playing song) ---
 var slotBtn = document.createElement("button");
 slotBtn.className = "qz-pbtn qz-bt-slot"; slotBtn.type = "button"; slotBtn.title = "Trash the current song"; slotBtn.innerHTML = TRASH;
-slotBtn.addEventListener("click", function () { var tr = safeTrack(); if (tr && tr.title && tr.artist) toggleSong(tr.title, tr.artist); });
+// Two-tap arm before it bins anything. Trash sits next to the lyrics button, and even with the layout
+// now pinned (visibility-based overflow), one stray tap should never destroy a track. The FIRST tap arms
+// (button turns red, ~3s window); the SECOND commits. Restoring an already-trashed song is harmless, so
+// that direction fires immediately. Any tap while armed on a DIFFERENT action just disarms.
+var armAt = 0, armTimer = null;
+function disarmSlot() { if (armTimer) { clearTimeout(armTimer); armTimer = null; } slotBtn.classList.remove("arm"); syncSlot(); }
+slotBtn.addEventListener("click", function () {
+  var tr = safeTrack(); if (!(tr && tr.title && tr.artist)) return;
+  if (songTrashed(tr.title, tr.artist)) { disarmSlot(); toggleSong(tr.title, tr.artist); return; } // restore: no confirm
+  if (slotBtn.classList.contains("arm") && (Date.now() - armAt) < 3000) { disarmSlot(); toggleSong(tr.title, tr.artist); return; }
+  armAt = Date.now();
+  slotBtn.classList.add("arm");
+  slotBtn.title = "Tap again to trash";
+  if (armTimer) clearTimeout(armTimer);
+  armTimer = setTimeout(disarmSlot, 3000);
+});
 var slot = Q.playerSlot({ id: "qz-bt", zone: "right", order: 11, el: slotBtn }); // right of the lyrics button (order 10)
-function syncSlot() { var tr = safeTrack(); var on = tr && tr.title && songTrashed(tr.title, tr.artist); slotBtn.classList.toggle("on", !!on); slotBtn.title = on ? "Restore the current song" : "Trash the current song"; }
+function syncSlot() { var tr = safeTrack(); var on = tr && tr.title && songTrashed(tr.title, tr.artist); slotBtn.classList.toggle("on", !!on); if (!slotBtn.classList.contains("arm")) slotBtn.title = on ? "Restore the current song" : "Trash the current song"; }
 
 // "Blocked & Trashed" is a row in the Qobuzify settings panel (avatar menu > Qobuzify), not a player-bar
 // button - keeps the transport uncluttered and matches where users expect a manager/settings surface.
@@ -495,6 +510,9 @@ Q.css(CSS_ID, [
   ".qz-bt-artistblock.on{color:#e5484d;} .qz-bt-artistblock.on:hover{color:#f2575c;}",
   // player-bar trash active tint
   ".qz-bt-slot.on{color:#e8892b!important;}",
+  // armed (first tap): red + a soft pulse, so the confirming second tap is obviously a destructive one
+  ".qz-bt-slot.arm{color:#ff4d4d!important;animation:qz-bt-armpulse 1s ease-in-out infinite;}",
+  "@keyframes qz-bt-armpulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.55;transform:scale(1.12);}}",
   // greyed state - dim/strike the title + fade the cover, buttons stay clickable
   ".qz-bt-hit .ListItem__title,.qz-bt-hit .cell-group-title span.ui-link{text-decoration:line-through;color:#868b95!important;}",
   ".qz-bt-hit img{opacity:.4;filter:grayscale(.4);}",
