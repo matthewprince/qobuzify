@@ -180,14 +180,21 @@ function trySpellCorrect(q, id) {
   }).catch(function () { if (id === state.reqId) render(); });
 }
 
-// ---- Artist-name "Did you mean" via Last.fm popularity ---------------------------------------------
-// LanguageTool can't touch proper nouns ("kayne west" isn't a dictionary word), and Qobuz happily returns
-// a junk exact-name artist ("Kayne West", 34k listeners) as the hero over the real Kanye West (8M). The
-// tell is popularity, exactly like Google: search Last.fm for the query, take the MOST-LISTENED match,
-// and if it's a plausible typo of what was typed (high similarity) and much more popular, suggest it.
-// Direct Last.fm calls (CORS-open); only the non-secret api key comes from the runtime's lastfm bootstrap.
-// getCorrection is NOT used: it both false-corrects ("Ye" -> "Yes") and misses real typos ("drayke").
+// ---- Artist-name auto-correct via popularity + fuzzy catalog ---------------------------------------
+// LanguageTool can't touch proper nouns, and Qobuz serves a junk exact-name clone as the hero over the
+// real artist. Two catalog-bound candidate sources, gated by similarity + popularity, exactly the shape
+// the design doc argues for:
+//   - Last.fm artist.search: popularity-ranked, but its index misses some typos ("baby jeem" only finds a
+//     4-listener nobody, never Baby Keem).
+//   - MusicBrainz: a real fuzzy artist-name index (query:...~) that DOES surface Baby Keem for "baby jeem".
+//     Its own score is noise (Bach ranks 100 for "baby jeem"), so it is a candidate SOURCE only - the
+//     similarity gate does the filtering. CORS-open, works with the browser UA, generous rate limit.
+// Then: keep only plausible typos of the query (edit-distance similarity), require >=100k Last.fm
+// listeners (kills the nobody clones), pick the most popular. name != query means a correctly-typed
+// artist suggests nothing, and <3 chars is frozen so "Ye" never becomes "Yes". Everything is validated
+// against Qobuz by the caller before it auto-corrects.
 var LFM_SEARCH = "https://ws.audioscrobbler.com/2.0/";
+var MB_URL = "https://musicbrainz.org/ws/2/artist";
 var _lfmKeyP = null;
 function lfmKey() {
   if (_lfmKeyP) return _lfmKeyP;
@@ -208,23 +215,46 @@ function editDist(a, b) {
 }
 function nameSim(a, b) { a = norm(a); b = norm(b); if (!a || !b) return 0; return 1 - editDist(a, b) / Math.max(a.length, b.length); }
 
-// Returns {name} to suggest, or null. Floor of 100k listeners kills junk ("Qwerty Asdfgh", 7); a 0.6
-// similarity gate kills token-match nonsense ("the wknd" -> "Earth, Wind & Fire"); name != query means a
-// correctly-typed popular artist (Kanye, SZA, Ye) suggests nothing.
+function lfmArtistCands(q, key) {
+  var u = LFM_SEARCH + "?method=artist.search&api_key=" + key + "&format=json&limit=8&artist=" + encodeURIComponent(q);
+  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    return ((((j || {}).results || {}).artistmatches || {}).artist || []).map(function (a) { return { name: a.name, L: +a.listeners || 0 }; });
+  }).catch(function () { return []; });
+}
+function mbArtistCands(q) {
+  var u = MB_URL + "?fmt=json&limit=8&query=artist:" + encodeURIComponent(q) + "~";
+  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    return ((j && j.artists) || []).map(function (a) { return { name: a.name, L: -1 }; }); // L=-1: listeners unknown
+  }).catch(function () { return []; });
+}
+function lfmListeners(name, key) {
+  var u = LFM_SEARCH + "?method=artist.getInfo&api_key=" + key + "&format=json&autocorrect=0&artist=" + encodeURIComponent(name);
+  return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    return +((((j || {}).artist || {}).stats || {}).listeners) || 0;
+  }).catch(function () { return 0; });
+}
+
 function lfmArtistSuggest(q) {
   var nq = norm(q);
   if (nq.length < 3) return Promise.resolve(null);
   return lfmKey().then(function (key) {
     if (!key) return null;
-    var u = LFM_SEARCH + "?method=artist.search&api_key=" + key + "&format=json&limit=8&artist=" + encodeURIComponent(q);
-    return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-      var arr = (((j || {}).results || {}).artistmatches || {}).artist || [];
-      var best = null;
-      arr.forEach(function (a) { var L = +a.listeners || 0; if (!best || L > best.L) best = { name: a.name, L: L }; });
-      if (!best || best.L < 100000) return null;
-      if (norm(best.name) === nq) return null;               // you typed the popular artist correctly
-      if (nameSim(q, best.name) < 0.6) return null;           // not a plausible typo of the query
-      return { name: best.name, listeners: best.L };
+    return Promise.all([lfmArtistCands(q, key), mbArtistCands(q)]).then(function (res) {
+      var byKey = {};
+      res[0].forEach(function (c) { var k = norm(c.name); if (!byKey[k]) byKey[k] = { name: c.name, L: c.L }; else byKey[k].L = Math.max(byKey[k].L, c.L); });
+      res[1].forEach(function (c) { var k = norm(c.name); if (!byKey[k]) byKey[k] = { name: c.name, L: -1 }; });
+      var cands = Object.keys(byKey).map(function (k) { return byKey[k]; })
+        .filter(function (c) { return norm(c.name) !== nq && nameSim(q, c.name) >= 0.6; })
+        .sort(function (a, b) { return nameSim(q, b.name) - nameSim(q, a.name); })
+        .slice(0, 3);
+      if (!cands.length) return null;
+      // fill unknown (MusicBrainz-only) listeners, then keep >=100k and pick the most popular
+      return Promise.all(cands.map(function (c) {
+        return c.L >= 0 ? c : lfmListeners(c.name, key).then(function (L) { c.L = L; return c; });
+      })).then(function (full) {
+        full = full.filter(function (c) { return c.L >= 100000; }).sort(function (a, b) { return b.L - a.L; });
+        return full.length ? { name: full[0].name, listeners: full[0].L } : null;
+      });
     });
   }).catch(function () { return null; });
 }
