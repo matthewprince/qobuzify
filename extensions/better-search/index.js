@@ -137,7 +137,13 @@ function candStrength(d, cand) {
 
 function doSearch(q) {
   refreshRecent();
-  var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null;
+  var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null; state.suggest = null;
+  // Artist "Did you mean" runs in parallel and never blocks the results: the banner appears when it lands.
+  lfmArtistSuggest(q).then(function (sg) {
+    if (id !== state.reqId || !sg) return;
+    state.suggest = sg; state.suggestFor = q;
+    if (panel && isOpen()) render();
+  });
   Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     if (id !== state.reqId) return; // stale
     state.data = j;
@@ -165,6 +171,55 @@ function trySpellCorrect(q, id) {
       render();
     });
   }).catch(function () { if (id === state.reqId) render(); });
+}
+
+// ---- Artist-name "Did you mean" via Last.fm popularity ---------------------------------------------
+// LanguageTool can't touch proper nouns ("kayne west" isn't a dictionary word), and Qobuz happily returns
+// a junk exact-name artist ("Kayne West", 34k listeners) as the hero over the real Kanye West (8M). The
+// tell is popularity, exactly like Google: search Last.fm for the query, take the MOST-LISTENED match,
+// and if it's a plausible typo of what was typed (high similarity) and much more popular, suggest it.
+// Direct Last.fm calls (CORS-open); only the non-secret api key comes from the runtime's lastfm bootstrap.
+// getCorrection is NOT used: it both false-corrects ("Ye" -> "Yes") and misses real typos ("drayke").
+var LFM_SEARCH = "https://ws.audioscrobbler.com/2.0/";
+var _lfmKeyP = null;
+function lfmKey() {
+  if (_lfmKeyP) return _lfmKeyP;
+  _lfmKeyP = fetch("https://api.qobuzify.app/v1/lastfm/connect/start")
+    .then(function (r) { return r.json(); }).then(function (j) { return (j && j.apiKey) || null; })
+    .catch(function () { return null; });
+  return _lfmKeyP;
+}
+function editDist(a, b) {
+  a = a || ""; b = b || ""; var m = a.length, n = b.length, i, j, prev = [], cur = [];
+  for (j = 0; j <= n; j++) prev[j] = j;
+  for (i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+    for (j = 0; j <= n; j++) prev[j] = cur[j];
+  }
+  return prev[n];
+}
+function nameSim(a, b) { a = norm(a); b = norm(b); if (!a || !b) return 0; return 1 - editDist(a, b) / Math.max(a.length, b.length); }
+
+// Returns {name} to suggest, or null. Floor of 100k listeners kills junk ("Qwerty Asdfgh", 7); a 0.6
+// similarity gate kills token-match nonsense ("the wknd" -> "Earth, Wind & Fire"); name != query means a
+// correctly-typed popular artist (Kanye, SZA, Ye) suggests nothing.
+function lfmArtistSuggest(q) {
+  var nq = norm(q);
+  if (nq.length < 3) return Promise.resolve(null);
+  return lfmKey().then(function (key) {
+    if (!key) return null;
+    var u = LFM_SEARCH + "?method=artist.search&api_key=" + key + "&format=json&limit=8&artist=" + encodeURIComponent(q);
+    return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      var arr = (((j || {}).results || {}).artistmatches || {}).artist || [];
+      var best = null;
+      arr.forEach(function (a) { var L = +a.listeners || 0; if (!best || L > best.L) best = { name: a.name, L: L }; });
+      if (!best || best.L < 100000) return null;
+      if (norm(best.name) === nq) return null;               // you typed the popular artist correctly
+      if (nameSim(q, best.name) < 0.6) return null;           // not a plausible typo of the query
+      return { name: best.name, listeners: best.L };
+    });
+  }).catch(function () { return null; });
 }
 
 // Cover/karaoke/instrumental/tribute markers. These versions get demoted so the real recording wins
@@ -399,6 +454,22 @@ function render() {
     inner.appendChild(dym);
   }
 
+  // "Did you mean <popular artist>?" - click-through (not auto), shown when Last.fm found a much more
+  // popular artist that is a plausible typo of the query. Suppressed if an auto-correct already fired or
+  // if that artist is already the top result on screen.
+  if (!state.corrected && state.suggest && norm(state.suggest.name) !== q &&
+      !(artists[0] && norm(artists[0].name) === norm(state.suggest.name))) {
+    var sgName = state.suggest.name;
+    var dm2 = document.createElement("div"); dm2.className = "qz-s-dym";
+    dm2.innerHTML = 'Did you mean <button class="qz-s-dym-link" type="button"><b>' + esc(sgName) + '</b></button>?';
+    dm2.querySelector(".qz-s-dym-link").addEventListener("click", function () {
+      if (input) input.value = sgName;
+      state.raw = sgName; state.suggest = null;
+      doSearch(norm(sgName));
+    });
+    inner.appendChild(dm2);
+  }
+
   if (state.tab === "top") {
     // strongest of the top artist/album becomes the hero
     var aBest = artists[0] ? { it: artists[0], kind: "artist", s: score(artists[0].name, q) } : null;
@@ -605,6 +676,9 @@ Q.css(CSS_ID, [
   ".qz-s-dym-orig{appearance:none;border:0;background:transparent;color:#8b94a3;font-size:13px;cursor:pointer;padding:0;}",
   ".qz-s-dym-orig:hover{color:#cbd3df;text-decoration:underline;}",
   ".qz-s-dym-orig i{font-style:italic;}",
+  ".qz-s-dym-link{appearance:none;border:0;background:transparent;color:var(--qz-accent,#3DA8FE);font-size:14px;cursor:pointer;padding:0;}",
+  ".qz-s-dym-link b{color:var(--qz-accent,#3DA8FE);font-weight:700;}",
+  ".qz-s-dym-link:hover{text-decoration:underline;}",
   ".qz-s-empty{padding:80px 18px;text-align:center;color:#8b94a3;font-size:16px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:8px;}",
   ".qz-s-empty span{font-size:13px;font-weight:500;color:#69707d;}",
   ".qz-s-empticon{width:58px;height:58px;color:rgba(255,255,255,.16);margin-bottom:6px;}.qz-s-empticon svg{width:100%;height:100%;}",
