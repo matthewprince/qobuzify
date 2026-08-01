@@ -606,6 +606,17 @@
   // zone's width depends on which extensions are on, so a fixed CSS breakpoint can't judge it. Measure
   // instead: show a zone, read whether it reaches the transport, hide it if so. The show and the hide
   // happen in one synchronous pass with no paint in between, so there's no flicker.
+  // Hide an overflowing button WITHOUT reflowing its neighbours. This is the fix for the song-trashing
+  // bug: the old guard used display:none, so hiding the innermost lyrics button on a tight bar let its
+  // neighbour - the destructive Trash button - slide into the exact pixel lyrics had occupied, and a
+  // muscle-memory tap binned the playing song. visibility:hidden keeps the slot's width, so every
+  // button's position is permanent; pointer-events:none means a hidden button neither covers the
+  // transport nor can be clicked. Empty gaps on a very narrow bar are the deliberate trade (positions
+  // that never move beat a bar that packs tighter).
+  function markSlotHidden(el, hidden) {
+    el.style.visibility = hidden ? "hidden" : "";
+    el.style.pointerEvents = hidden ? "none" : "";
+  }
   function fitPlayerSlots() {
     // paired selectors: bake .pct-* form, web-player (wrapper) .player__action-* form - keyed on the
     // bake form alone this guard never ran on play.qobuz.com.
@@ -613,37 +624,25 @@
     var next = document.querySelector(".pct-player-next, .player__action-next");
     if (!prev && !next) return;
     var GAP = 10;
-    var pr = prev && prev.getBoundingClientRect();
-    var nr = next && next.getBoundingClientRect();
-    // The transport is centred over the whole bar, so on a narrow window our side-zone buttons - which sit at
-    // the INNER edge of each flow section - grow into it and cover the play/next controls (they render on top,
-    // so the transport becomes unclickable). The old guard hid the ENTIRE zone the moment any part overlapped,
-    // which wiped every button on any sub-~1740px window (the reported "Lyrics + Full App Display missing"
-    // bug). Instead: reveal everything, then hide buttons one at a time from the inner edge until the group no
-    // longer reaches the transport - so the outer buttons stay usable and only what genuinely can't fit drops.
+    // Per-button overlap test. visibility:hidden elements still report their real layout rect, so a
+    // widened window self-corrects: a button that no longer reaches the transport is shown again. The
+    // set of hidden buttons is exactly those that individually cross the transport edge - no iteration,
+    // no dependence on hide order, and (crucially) no neighbour ever shifts.
     var right = document.querySelector(".player__settings > .qz-slot-right");
-    if (right && nr) {
-      right.style.display = "";
-      var rb = [].slice.call(right.children);
-      rb.forEach(function (b) { b.style.display = ""; });
-      // innermost = leftmost (lowest order), closest to the centred transport; drop those first so the outer
-      // buttons (Full App Display on the far right, etc.) survive narrow windows.
-      for (var i = 0; i < rb.length; i++) {
-        var rr = right.getBoundingClientRect();
-        if (!rr.width || rr.left >= nr.right + GAP) break;
-        rb[i].style.display = "none";
-      }
+    if (right && next) {
+      var nr = next.getBoundingClientRect();
+      [].slice.call(right.children).forEach(function (b) {
+        var r = b.getBoundingClientRect();
+        markSlotHidden(b, !!(r.width && r.left < nr.right + GAP)); // inner (left) edge grows toward transport
+      });
     }
     var left = document.querySelector(".player__track > .qz-slot-left");
-    if (left && pr) {
-      left.style.display = "";
-      var lb = [].slice.call(left.children);
-      lb.forEach(function (b) { b.style.display = ""; });
-      for (var j = lb.length - 1; j >= 0; j--) { // innermost = rightmost, closest to the transport
-        var lr = left.getBoundingClientRect();
-        if (!lr.width || lr.right <= pr.left - GAP) break;
-        lb[j].style.display = "none";
-      }
+    if (left && prev) {
+      var pr = prev.getBoundingClientRect();
+      [].slice.call(left.children).forEach(function (b) {
+        var r = b.getBoundingClientRect();
+        markSlotHidden(b, !!(r.width && r.right > pr.left - GAP)); // inner (right) edge grows toward transport
+      });
     }
   }
 
