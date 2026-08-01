@@ -51,10 +51,57 @@ function mapTrack(qt) {
   // re-resolves with it. NOTHING is resolved locally - the Spotify id is derived server-side from this ISRC,
   // so the client never touches Spotify (or any upstream) directly.
   Q.api("track/get?track_id=" + qt.id).then(function (tr) {
-    if (tr && tr.isrc && curMeta && curMeta.name === qt.title) {
+    // Stale-response guard: if the track changed again since this fired, curMeta.name no longer equals
+    // the title we committed for this id, so this response is for an old song - drop it.
+    if (!tr || !curMeta || curMeta.name !== qt.title) return;
+    var apiName = (tr.title || "").trim();
+    var apiArtist = ((tr.performer && tr.performer.name) || (tr.album && tr.album.artist && tr.album.artist.name) || "").trim();
+    function nrm(s) { return String(s == null ? "" : s).trim().toLowerCase().replace(/\s+/g, " "); }
+    // AUTHORITATIVE title correction. qt.title/qt.artist are SCRAPED from the player bar, which lags the
+    // store's track id and FREEZES entirely while the fullscreen lyrics overlay is up (the bar isn't
+    // repainting under it) - so on a track change the new id gets paired with the OUTGOING song's title,
+    // lyrics load for the wrong song, and only a skip (which forces the bar to re-render) fixes it. The
+    // scrape-based nameFixed correction can't help because the scraped title never changes. track/get is
+    // keyed on the store id, so it is the truth; when it disagrees with the scrape, rebuild curMeta from
+    // it and re-emit so lyrics re-resolve for the RIGHT song. When they agree (the normal case) this is a
+    // no-op beyond folding in the ISRC, exactly as before - so a correct scrape never re-resolves.
+    if (apiName && nrm(apiName) !== nrm(qt.title)) {
+      curMeta = { name: apiName, artist: apiArtist || curMeta.artist, album: (tr.album && tr.album.title) || curMeta.album,
+        durationMs: (tr.duration ? tr.duration * 1000 : curMeta.durationMs),
+        feats: featsFromPerformers(tr.performers, apiArtist || curMeta.artist), isrc: tr.isrc || null };
+      curLyrics = null;
+      if (cur) { cur.name = apiName; cur.artists = [{ type: "artist", name: apiArtist, uri: "" }]; }
+      emit("songchange", { data: playerData() });
+      ownOnTrackChange();
+      return;
+    }
+    if (tr.isrc) {
       curMeta.isrc = tr.isrc;
       if (!curLyrics) emit("songchange", { data: playerData() }); // retry lyrics now that we have the ISRC
     }
+  }).catch(function () {});
+}
+
+// Resolve a track straight from the API by id, for when the player bar gives us NO title to scrape.
+// That is the wrong-song-on-a-track-change bug: while the fullscreen lyrics overlay is open the bar
+// unmounts under it, so getTrack() returns the new store id with an EMPTY title, and handleTrack's
+// empty-title guard used to skip the change entirely - leaving lyrics on the previous song until you
+// skipped forward and back to force the bar to re-render. This path is DOM-independent: id in,
+// authoritative title/artist/feats out, then the normal commit. (mapTrack fires its own track/get for
+// the ISRC; that second call now matches on title, so it just folds the ISRC in - no re-resolve.)
+function mapById(id) {
+  if (!id) return;
+  Q.api("track/get?track_id=" + id).then(function (tr) {
+    if (!tr || !tr.title) return;
+    var live = String((Q.getState().player.currentTrack || {}).id || "");
+    if (live && live !== String(id)) return; // track moved on again while this was in flight
+    var artist = (tr.performer && tr.performer.name) || (tr.album && tr.album.artist && tr.album.artist.name) || "";
+    var cover = (tr.album && tr.album.image && (tr.album.image.large || tr.album.image.small || tr.album.image.thumbnail)) || "";
+    mapTrack({ id: id, title: tr.title, artist: artist, artists: artist ? [artist] : [],
+      album: (tr.album && tr.album.title) || "", feats: featsFromPerformers(tr.performers, artist),
+      durationMs: (tr.duration || 0) * 1000, cover: cover });
+    schedulePrefetch();
+    ownOnTrackChange();
   }).catch(function () {});
 }
 
@@ -166,7 +213,7 @@ function artistMatch(want, have) { want = norm(cleanArtist(want)); have = norm(h
 // Persistent, versioned lyric cache (localStorage): a resolved song loads INSTANTLY on repeat and
 // survives reloads/relaunches - no re-fetch every play. Bump CACHE_VER whenever parsing changes
 // (spacing/parens/credits/timing) so stale pre-fix lyrics are dropped instead of served forever.
-var CACHE_VER = 12; // bumped 2026-07-21: lyrKey carries feat credits now (same-title solo vs feat. versions split); pre-split entries may hold the wrong version. 11 (2026-07-07): match server PARSE_VER, drop the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches
+var CACHE_VER = 13; // bumped 2026-08-01: purge caches that predate ISRC-stamped entries - CDP found a poisoned entry (Castle on the Hill|Ed Sheeran holding Shape of You's lyrics) that the name+artist key served forever because the duration self-heal never triggered. 12 (2026-07-21): lyrKey carries feat credits now (same-title solo vs feat. versions split); pre-split entries may hold the wrong version. 11 (2026-07-07): match server PARSE_VER, drop the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}
@@ -254,7 +301,7 @@ function ownRefetch() {
         curLyricSource = pr.source || curLyricSource;
         var key = lyrKey(t);
         // mirror resolveLyrics' cache policy: persist word-by-word, drop line-level so it stays re-resolvable
-        if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, t: Date.now() }; }
+        if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: (t && t.isrc) || null, t: Date.now() }; }
         else { delete lsCache[key]; }
         saveCache();
         if (_own && _own.render) _own.render(pr.lyrics);   // r.load() the replacement
@@ -310,6 +357,12 @@ function resolveLyrics(track) {
   // the proxy (mirrors the server's durationOk). this is what fixed Selena's "Wolves" (193s) cached
   // under Baby Keem's "Wolves" (83s) from before the client started sending duration.
   if (hit && hit.ly && track.durationMs && lyrSpanSec(hit.ly) * 1000 > track.durationMs + 10000) { delete lsCache[key]; saveCache(); hit = null; }
+  // ISRC guard. The cache key is only name+artist(+feats), so two different recordings that share a title
+  // collide on one entry, and a poisoned write (CDP caught "Castle on the Hill|Ed Sheeran" holding Shape
+  // of You's lyrics) then serves the wrong song forever - the duration self-heal above only catches a
+  // LONGER mismatch. The ISRC uniquely identifies the recording, so if this track has one and it disagrees
+  // with what the entry was stored against, the entry is for a different song: drop it and re-resolve.
+  if (hit && hit.isrc && track.isrc && hit.isrc !== track.isrc) { delete lsCache[key]; saveCache(); hit = null; }
   pushAnalysis(track); // fire-and-forget: audio-reactive background data, never gates the lyric render
   if (hit && hit.ly) { hit.t = Date.now(); if (hit.src) curLyricSource = hit.src; return Promise.resolve(hit.ly); }
   return proxyLyrics(track).then(function (pr) {
@@ -318,7 +371,7 @@ function resolveLyrics(track) {
       // persist only high-confidence lyrics (the proxy sets pr.cacheable for word-by-word / syllable).
       // line-level results get shown but not cached, so they stay re-resolvable (and can upgrade to
       // word-by-word on a later play) instead of getting locked into the local cache.
-      if (pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, t: Date.now() }; saveCache(); }
+      if (pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: track.isrc || null, t: Date.now() }; saveCache(); }
       return pr.lyrics;
     }
     return null;
@@ -353,7 +406,7 @@ function prefetchNext() {
       if (meta.durationMs) u += "&durationMs=" + meta.durationMs;
       if (meta.isrc) u += "&isrc=" + encodeURIComponent(meta.isrc);
       _origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (pr) {
-        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || null, t: Date.now() }; saveCache(); }
+        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || null, isrc: meta.isrc || null, t: Date.now() }; saveCache(); }
       }).catch(function () {});
     }).catch(function () {});
   } catch (e) {}
@@ -713,7 +766,12 @@ function ownRenderCurrent() {
     var n = ly && ly.Content ? ly.Content.length : 0;
     ownDiag({ step: "resolved", curMeta: snap.name + " / " + snap.artist, type: ly && ly.Type, lines: n, viewOpen: ownViewOpen() });
     _ownKey = key; curLyrics = ly;
-    if (n) { r.render(ly); r.start(); } else { try { r.render({ lines: [] }); } catch (x) {} r.status("No word-by-word lyrics for this track"); }
+    // Clear before rendering. Lyra's render() APPENDS to whatever is already mounted rather than
+    // replacing it, so a second render() for the same song stacks a duplicate copy - which is exactly
+    // what CDP caught: 39 distinct lines rendered ~2.5x, the doubled/garbled wall the user saw. An
+    // explicit empty render first guarantees each pass starts from a clean list. (The no-lyrics branch
+    // below already does this; the success branch was the one path that skipped it.)
+    if (n) { try { r.render({ lines: [] }); } catch (x) {} r.render(ly); r.start(); } else { try { r.render({ lines: [] }); } catch (x) {} r.status("No word-by-word lyrics for this track"); }
     try { setLyricServerTag(); } catch (e) {}
   }).catch(function (e) { if (myReq !== _ownReq) return; ownDiag({ step: "error", err: String((e && e.message) || e) }); try { r.render({ lines: [] }); r.status("Lyrics failed to load"); } catch (x) {} });
 }
@@ -721,7 +779,16 @@ var _ownDiagOn = false; try { _ownDiagOn = !!localStorage.getItem("qz-own-diag-o
 function ownDiag(o) { if (!_ownDiagOn) return; try { localStorage.setItem("qz-own-diag", JSON.stringify(Object.assign({ t: Date.now() }, o))); } catch (e) {} }
 function ownOpen() { var r = ownEnsure(); if (r) ownRenderCurrent(); }
 function ownClose() { if (_own) _own.stop(); }
-function ownOnTrackChange() { if (OWN_RENDERER && ownViewOpen()) { _ownKey = null; if (_own) _own.scrollToTop(); ownRenderCurrent(); } }
+function ownOnTrackChange() {
+  if (!(OWN_RENDERER && ownViewOpen())) return;
+  // Do NOT blanket-null _ownKey here. This runs several times per track change (the poll's remap, the
+  // ISRC/title correction, the empty-title resolve-by-id), and nulling the key defeats ownRenderCurrent's
+  // "already rendered this track" short-circuit, so every one of those calls re-ran r.render() and Lyra
+  // stacked another copy of the same lyrics. Let the lyrKey check decide instead: a genuinely new track
+  // has a new key and re-renders; a repeat call for the same track short-circuits to r.start().
+  if (_own) _own.scrollToTop();
+  ownRenderCurrent();
+}
 
 function onRouteChange(loc) {
   var open = loc && loc.pathname === "/QzLyrics";
@@ -1142,7 +1209,13 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       // read at all: skip it and let the 250ms poll pick up the hydrated metadata (curMeta stays null ->
       // a brief "Waiting for track…", then flips to the real song). An empty-id read (nothing loaded)
       // still falls through to the occlusion debounce below.
-      if (id && !(qt && qt.title)) return;
+      if (id && !(qt && qt.title)) {
+        // New track, but the bar handed us no title to scrape (it unmounted under the lyrics overlay, or
+        // metadata hasn't hydrated on a cold restore). Don't skip a real change: latch the id now so the
+        // 250ms poll doesn't re-fire this every tick, and resolve the song by id off the API instead.
+        if (id !== _lastTrackId) { _lastTrackId = id; _lastCover = ""; _emptyTicks = 0; mapById(id); }
+        return;
+      }
       // Q.player.getTrack() intermittently returns an EMPTY read during alt-tab focus/occlusion churn.
       // Treating that blank tick as a track change makes mapTrack() wipe cur/curMeta and emit an empty
       // songchange -> the vendor flashes "no song" / "no lyrics", then reloads. So debounce: only believe
