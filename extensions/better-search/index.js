@@ -76,13 +76,95 @@ function refreshRecent() {
 }
 function knownOf(tr) { if (!known || !tr) return null; var rec = known.recent[tr.id]; var fav = !!known.fav[tr.id]; if (rec == null && !fav) return null; return { recent: rec != null, rank: rec == null ? -1 : rec, fav: fav }; }
 
+// ---- "Did you mean" spell correction --------------------------------------------------------------
+// Qobuz's search is only mildly typo-tolerant: "americon giel" returns a few American-Girl albums but no
+// Tom Petty, no tracks, no real hero. LanguageTool (open-source, CORS-open, called DIRECTLY from the
+// client - no server of ours in the path) is the spell engine. Its top suggestion is NOT music-aware
+// though ("giel" -> Gail, gain, girl, Gil), so we build a small candidate set from its replacements and
+// let QOBUZ pick the winner: the corrected query that actually returns music wins. Fallback-only, so it
+// runs on a weak result, not every keystroke.
+var LANGTOOL_URL = "https://api.languagetool.org/v2/check";
+
+// A result is "weak" when nothing strong answered the query: no artist whose name really matches it, and
+// no track that scores. That is the signal a typo kept the real thing out of the results entirely.
+function weakResult(d, q) {
+  if (!d || d.__err) return false;
+  var arts = (d.artists && d.artists.items) || [], trks = (d.tracks && d.tracks.items) || [];
+  var i, bestA = 0, bestT = 0;
+  for (i = 0; i < arts.length && i < 5; i++) bestA = Math.max(bestA, score(arts[i].name || "", q));
+  for (i = 0; i < trks.length && i < 5; i++) bestT = Math.max(bestT, score(trks[i].title || "", q));
+  return bestA < 300 && bestT < 300; // nothing crossed the hero bar -> probably a typo
+}
+
+// LanguageTool's matches carry offset/length into the ORIGINAL text plus ranked replacements. Build a
+// bounded set of corrected query strings (cartesian of the top few replacements per match, capped), so
+// both shapes are handled: a single full-phrase correction ("americon gierl" -> "American girl") and
+// per-word options where the music-correct one isn't first ("giel" -> ...girl).
+function spellCandidates(q) {
+  return fetch(LANGTOOL_URL, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "language=en-US&text=" + encodeURIComponent(q)
+  }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    var ms = ((j && j.matches) || []).filter(function (m) { return m.replacements && m.replacements.length; })
+      .sort(function (a, b) { return a.offset - b.offset; });
+    if (!ms.length) return [];
+    var combos = [[]];
+    ms.forEach(function (m) {
+      var reps = m.replacements.slice(0, 3).map(function (r) { return r.value; });
+      var next = [];
+      combos.forEach(function (c) { reps.forEach(function (rep) { if (next.length < 12) next.push(c.concat([rep])); }); });
+      combos = next;
+    });
+    var out = {};
+    combos.forEach(function (combo) {
+      var s = q;
+      for (var i = ms.length - 1; i >= 0; i--) s = s.slice(0, ms[i].offset) + combo[i] + s.slice(ms[i].offset + ms[i].length);
+      if (norm(s) !== norm(q)) out[s] = 1;
+    });
+    return Object.keys(out).slice(0, 8);
+  }).catch(function () { return []; });
+}
+
+// Score how much real music a candidate query pulls back, so the best correction wins.
+function candStrength(d, cand) {
+  if (!d || d.__err) return 0;
+  var nc = norm(cand), best = 0, i;
+  var arts = (d.artists && d.artists.items) || [], trks = (d.tracks && d.tracks.items) || [];
+  for (i = 0; i < arts.length && i < 3; i++) best = Math.max(best, score(arts[i].name || "", nc));
+  for (i = 0; i < trks.length && i < 3; i++) best = Math.max(best, score(trks[i].title || "", nc));
+  return best;
+}
+
 function doSearch(q) {
   refreshRecent();
-  var id = ++state.reqId; state.q = q;
+  var id = ++state.reqId; state.q = q; state.corrected = null; state.original = null;
   Q.api("catalog/search?query=" + encodeURIComponent(q) + "&limit=30").then(function (j) {
     if (id !== state.reqId) return; // stale
-    state.data = j; render();
+    state.data = j;
+    if (weakResult(j, norm(q))) { trySpellCorrect(q, id); return; } // render happens after correction resolves
+    render();
   }).catch(function () { if (id === state.reqId) { state.data = { __err: 1 }; render(); } });
+}
+
+// Weak result -> ask LanguageTool for candidates, search Qobuz for each, adopt the strongest one that
+// clearly beats the original. Shows a "Showing results for X" banner (render reads state.corrected).
+function trySpellCorrect(q, id) {
+  spellCandidates(q).then(function (cands) {
+    if (id !== state.reqId || !cands.length) { render(); return; }
+    return Promise.all(cands.map(function (c) {
+      return Q.api("catalog/search?query=" + encodeURIComponent(c) + "&limit=30")
+        .then(function (d) { return { c: c, d: d, s: candStrength(d, c) }; })
+        .catch(function () { return { c: c, d: null, s: 0 }; });
+    })).then(function (res) {
+      if (id !== state.reqId) return;
+      res.sort(function (a, b) { return b.s - a.s; });
+      var win = res[0];
+      if (win && win.s >= 300) { // a real hero showed up under the correction
+        state.data = win.d; state.q = win.c; state.corrected = win.c; state.original = q;
+      }
+      render();
+    });
+  }).catch(function () { if (id === state.reqId) render(); });
 }
 
 // Cover/karaoke/instrumental/tribute markers. These versions get demoted so the real recording wins
@@ -300,6 +382,23 @@ function render() {
   body.innerHTML = "";
   var inner = document.createElement("div"); inner.className = "qz-s-inner";
 
+  // "Showing results for X · Search instead for <typed>" - only when a spell correction was adopted.
+  if (state.corrected && state.original) {
+    var dym = document.createElement("div"); dym.className = "qz-s-dym";
+    dym.innerHTML = 'Showing results for <b>' + esc(state.corrected) + '</b> &middot; ' +
+      '<button class="qz-s-dym-orig" type="button">Search instead for <i>' + esc(state.original) + '</i></button>';
+    dym.querySelector(".qz-s-dym-orig").addEventListener("click", function () {
+      // force the typed query through with correction suppressed
+      var orig = state.original;
+      state.corrected = null; state.original = null;
+      var id = ++state.reqId; state.q = orig;
+      Q.api("catalog/search?query=" + encodeURIComponent(orig) + "&limit=30").then(function (j) {
+        if (id !== state.reqId) return; state.data = j; render();
+      }).catch(function () { if (id === state.reqId) { state.data = { __err: 1 }; render(); } });
+    });
+    inner.appendChild(dym);
+  }
+
   if (state.tab === "top") {
     // strongest of the top artist/album becomes the hero
     var aBest = artists[0] ? { it: artists[0], kind: "artist", s: score(artists[0].name, q) } : null;
@@ -501,6 +600,11 @@ Q.css(CSS_ID, [
   ".qz-s-body{flex:1 1 auto;overflow:auto;padding:22px 34px 40px;scrollbar-width:thin;}",
   ".qz-s-body::-webkit-scrollbar{width:11px;}.qz-s-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:9px;}.qz-s-body::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22);}",
   ".qz-s-inner{max-width:1500px;margin:0 auto;}",
+  ".qz-s-dym{padding:2px 0 16px;color:#9aa3b2;font-size:14px;}",
+  ".qz-s-dym b{color:#e8eaed;font-weight:700;}",
+  ".qz-s-dym-orig{appearance:none;border:0;background:transparent;color:#8b94a3;font-size:13px;cursor:pointer;padding:0;}",
+  ".qz-s-dym-orig:hover{color:#cbd3df;text-decoration:underline;}",
+  ".qz-s-dym-orig i{font-style:italic;}",
   ".qz-s-empty{padding:80px 18px;text-align:center;color:#8b94a3;font-size:16px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:8px;}",
   ".qz-s-empty span{font-size:13px;font-weight:500;color:#69707d;}",
   ".qz-s-empticon{width:58px;height:58px;color:rgba(255,255,255,.16);margin-bottom:6px;}.qz-s-empticon svg{width:100%;height:100%;}",
