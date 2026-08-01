@@ -1446,6 +1446,12 @@ async function createWindow() {
   win = new BrowserWindow({
     width: ws ? ws.width : 1440,
     height: ws ? ws.height : 900,
+    // Qobuz's web player drops to its MOBILE layout (the .mobileOverlay "get the app" blocker, the same
+    // one the Android build kills) below ~1024px wide. On desktop nothing stopped you shrinking the window
+    // into that, so a too-small resize turned the desktop app into the phone app. Floor the window above
+    // the breakpoint so it can never happen. Electron clamps a restored-but-smaller saved width to this.
+    minWidth: 1040,
+    minHeight: 640,
     ...(ws && Number.isFinite(ws.x) ? { x: ws.x, y: ws.y } : {}),
     backgroundColor: "#0d0d10",
     title: "Qobuzify",
