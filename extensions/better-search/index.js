@@ -306,6 +306,32 @@ function render() {
     // if the query explicitly names the top artist, they're the top result the user wants - not a
     // keyword-stuffed cover/mashup album that happens to put the artist's name in its own title.
     if (aBest && norm(artists[0].name).length > 2 && norm(q).indexOf(norm(artists[0].name)) >= 0) aBest.s += 1200;
+    // An artist hero has to be corroborated by the results underneath it.
+    //
+    // Qobuz's catalogue carries ingest junk: entries whose "artist name" is really a sentence, e.g.
+    // `My Ex's Best Friend" by Machine Gun Kelly (MGK) and Blackbe...` (note the stray quote). Those
+    // BEGIN with the song title, so score()'s +220 prefix bonus floats them past the 300 threshold and
+    // they take Top result away from the actual song. Name shape alone can't catch it: a real band can
+    // also be much longer than the query ("tom petty" -> "Tom Petty and The Heartbreakers"), and a
+    // missing image proves nothing either, since real Qobuz artists are often image:null (see art()).
+    //
+    // What separates them is that nothing else agrees. A real artist performs the tracks the same query
+    // returned; the junk entity performs none of them. NAME LENGTH is not the tell (the earlier >1.5x-
+    // query guard missed "american girl" -> the Mattel doll brand promoted over Tom Petty's song, and
+    // "castle on the hill" as a bogus artist, because those junk names EQUAL the query). The tell is
+    // consensus: count who actually made the top tracks, and if the top "artist" made NONE of them while
+    // a clear performer made most, the query was really a SONG title - swap in that performer.
+    var perfCount = {}, perfById = {}, coverBy = {};
+    tracks.slice(0, 6).forEach(function (t) {
+      var p = t.performer || t.artist;
+      if (p && p.id) { perfCount[p.id] = (perfCount[p.id] || 0) + 1; perfById[p.id] = p; if (!coverBy[p.id]) coverBy[p.id] = cover(t); }
+    });
+    var domId = null, domN = 0;
+    for (var pid in perfCount) { if (perfCount[pid] > domN) { domN = perfCount[pid]; domId = pid; } }
+    if (aBest && domId && !perfCount[artists[0].id] && domN >= 2) {
+      var dp = perfById[domId];
+      aBest = { it: { id: dp.id, name: dp.name, image: coverBy[domId] || cover(tracks[0]) }, kind: "artist", s: aBest.s };
+    }
     var alBest = albums[0] ? { it: albums[0], kind: "album", s: score(albums[0].title, q) * (COVER_RE.test(norm(albums[0].title)) ? 0.4 : 1) } : null;
     var hero = null;
     if (aBest && (!alBest || aBest.s >= alBest.s)) hero = aBest; else if (alBest) hero = alBest;
