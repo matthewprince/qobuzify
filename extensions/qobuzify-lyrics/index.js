@@ -697,7 +697,11 @@ function ensureContainer() {
   // it is intentionally not surfaced. Control bar left with just the auto Romanization toggle (non-Latin) + Close.
   Q.css("qz-remove-controls",
     "#SettingsToggle,#CinemaView,#NowBarToggle,#NowBarSideToggle,#SidebarModeToggle,#CompactModeToggle,#LyricsManager{display:none!important;}" +
-    ".MenuItem__text.icon-settings,.icon-settings{display:none!important;}" +
+    // IMPORTANT: scoped to #qz-sl-root - a global `.icon-settings` rule hides the NATIVE Qobuz
+    // account-menu row "Configuracoes" (class MenuItem__text icon-settings) whenever this
+    // extension is active. CDP-verified: the only .icon-settings element in the whole page is
+    // that native row; nothing inside the lyrics view uses these classes.
+    "#qz-sl-root .MenuItem__text.icon-settings,#qz-sl-root .icon-settings{display:none!important;}" +
     ".sl-modal-overlay:has(.slmodal-settingsPanel){display:none!important;}");
   if (!OWN_RENDERER) ensureCoverBg(); // Lyra brings its own opaque background; don't build the legacy mesh behind it
   ensureFsButton();
