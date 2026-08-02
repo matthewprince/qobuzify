@@ -830,10 +830,13 @@
   var ANDROID_DEFAULT_ON = { "mobile-app": 1, "media-session": 1 };
   function extDefaultOn(id) {
     if (IS_ANDROID) return !!ANDROID_DEFAULT_ON[id];
-    // manifest.defaultOff was carried in the payload but never consulted here, so it has always been a
-    // dead field. Honour it now; no shipped manifest sets it, so this changes no existing behaviour.
+    // Extensions ship OFF by default; one opts into a fresh-install default with manifest.defaultOn. The
+    // curated on-by-default set is Quality of Life, Simple Client, For You, Lyrics and Better Search;
+    // everything else the user turns on from the Marketplace. Adapted from @ruizlenato's PR #4 (the
+    // opt-in flip), with our own default set. Existing installs are unaffected: a user who left an
+    // extension on has its localStorage flag set, which wins over this default.
     var e = (DATA.extensions || []).filter(function (x) { return x.id === id; })[0];
-    return !(e && e.defaultOff);
+    return !!(e && e.defaultOn);
   }
   function extEnabled(id) {
     var v = null;
@@ -841,6 +844,37 @@
     if (v === "0") return false;
     if (v === "1") return true;
     return extDefaultOn(id);   // never chosen: platform default
+  }
+  // One-time grandfather for the opt-in flip. Until 0.3.5 every extension defaulted ON, so a user's
+  // live set was "everything except what they explicitly switched off". 0.3.5 makes the default opt-in
+  // (only the curated defaultOn set), which - with no stored choice for the rest - would silently strip
+  // every passively-on extension from an existing install on update. So the first time this build runs
+  // on an install that has been used before, pin the current set by writing an explicit "1" for every
+  // extension that has no stored choice. Fresh installs have no prior state and keep the new defaults.
+  // Desktop only: Android's default set is unchanged by 0.3.5, so seeding there would wrongly switch on
+  // desktop-only extensions. Must run before boot() writes qobuzify:seed, or a fresh install reads as used.
+  function migrateExtDefaults() {
+    try {
+      if (IS_ANDROID) return;
+      if (localStorage.getItem("qobuzify:ext-defaults-v1")) return;
+      var usedBefore = localStorage.getItem("qobuzify:seed") != null
+        || localStorage.getItem("qobuzify:update-seen") != null
+        || localStorage.getItem(LS_THEME) != null
+        || localStorage.getItem(LS_ENABLED) != null
+        || localStorage.getItem(LS_LANG) != null;
+      if (!usedBefore) {
+        for (var i = 0; i < localStorage.length; i++) {
+          if ((localStorage.key(i) || "").indexOf("qobuzify:ext:") === 0) { usedBefore = true; break; }
+        }
+      }
+      if (usedBefore) {
+        (DATA.extensions || []).forEach(function (ext) {
+          var k = "qobuzify:ext:" + ext.id;
+          if (localStorage.getItem(k) == null) localStorage.setItem(k, "1");
+        });
+      }
+      localStorage.setItem("qobuzify:ext-defaults-v1", "1");
+    } catch (e) {}
   }
   function loadExtension(ext) {
     if (!window.Qobuzify || extCleanups[ext.id]) return;
@@ -894,6 +928,9 @@
 
   // --- boot ---
   function boot() {
+    // Grandfather existing installs onto the pre-0.3.5 all-on set before anything writes qobuzify:seed
+    // (the seed write below would otherwise make a fresh install read as "used before").
+    migrateExtDefaults();
     // a CLI `apply <theme>` bumps DATA.seed to assert its theme as the active one
     // on next launch; in-app picks afterwards still win until the next CLI apply.
     if (DATA.seed && localStorage.getItem("qobuzify:seed") !== String(DATA.seed)) {

@@ -5,5 +5,9 @@
   "icon": "icon-booklet",
   "version": "1.0.0",
   "author": "matthewprince",
-  "prepend": ["lyra.js", "lyra-glue.js"]
+  "prepend": [
+    "lyra.js",
+    "lyra-glue.js"
+  ],
+  "defaultOn": true
 }
