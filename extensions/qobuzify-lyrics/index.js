@@ -1203,7 +1203,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     // which used to leave the cover background a full song behind, and black on a cold
     // relaunch. so we poll getTrack() (a cheap local read) and update on any change, deduped
     // by track id + cover. onChange stays on too, as an extra nudge.
-    var _lastTrackId = null, _lastCover = null, _emptyTicks = 0, _nameFixPending = null, _nameFixTicks = 0;
+    var _lastTrackId = null, _lastCover = null, _emptyTicks = 0, _nameFixPending = null, _nameFixTicks = 0, _lastScrapedName = null;
     var handleTrack = function (qt) {
       var id = qt && qt.id ? String(qt.id) : "";
       // Cold restore (and the first read right after launch) hands back the track id BEFORE its title/
@@ -1217,7 +1217,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
         // New track, but the bar handed us no title to scrape (it unmounted under the lyrics overlay, or
         // metadata hasn't hydrated on a cold restore). Don't skip a real change: latch the id now so the
         // 250ms poll doesn't re-fire this every tick, and resolve the song by id off the API instead.
-        if (id !== _lastTrackId) { _lastTrackId = id; _lastCover = ""; _emptyTicks = 0; mapById(id); }
+        if (id !== _lastTrackId) { _lastTrackId = id; _lastCover = ""; _emptyTicks = 0; _lastScrapedName = ""; mapById(id); }
         return;
       }
       // Q.player.getTrack() intermittently returns an EMPTY read during alt-tab focus/occlusion churn.
@@ -1231,7 +1231,12 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       // NEW id with the OUTGOING track's name. mapTrack commits that, then the id-dedup below locks it in,
       // leaving lyrics+cover+header stuck on the previous song (seen switching TIMEZONE -> Wolves). So also
       // re-map when the id is unchanged but the scraped name has since corrected to a different title.
-      var nameFixed = id && id === _lastTrackId && curMeta && qt && qt.title && qt.title !== curMeta.name;
+      // Compare against the LAST SCRAPED title, not curMeta.name: mapTrack's authoritative track/get
+      // correction (below) rewrites curMeta.name to the real title (e.g. "... (Acoustic)"), which the
+      // player bar never scrapes. Comparing the scrape to curMeta.name then reads as a permanent mismatch,
+      // so the poll re-maps every ~750ms and Lyra reloads forever (seen on "Fall In Love Again" acoustic).
+      // The scrape only genuinely changes on a late bar hydration (TIMEZONE -> Wolves), which this catches.
+      var nameFixed = id && id === _lastTrackId && curMeta && qt && qt.title && qt.title !== _lastScrapedName;
       // Debounce the correction: the title is SCRAPED from the player bar, and a transient DOM state (an
       // overflow-marquee re-render mid-read, a half-updated node) can make it flicker between values. An
       // undebounced remap on every mismatched read re-nulled the renderer key and re-resolved lyrics per
@@ -1245,7 +1250,7 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       if (id !== _lastTrackId || nameFixed) {
         _nameFixPending = null; _nameFixTicks = 0;
         // real track change (or a corrected late-hydrated name) -> full remap, which emits songchange so the vendor loads THIS song's lyrics.
-        _lastTrackId = id; _lastCover = (qt && qt.cover) || "";
+        _lastTrackId = id; _lastCover = (qt && qt.cover) || ""; _lastScrapedName = qt.title || ""; // remember what the bar scraped, so mapTrack's own title correction can't read as a change
         mapTrack(qt);
         schedulePrefetch(); // warm the next queued track's lyrics so it's instant when it starts
         ownOnTrackChange(); // our renderer: re-resolve + re-render for the new track (no-op unless OWN_RENDERER + view open)
