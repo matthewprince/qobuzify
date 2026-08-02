@@ -55,7 +55,7 @@ Install and restore both relaunch Qobuz, because the renderer only reads its HTM
 
 **Builds the API.** `buildApi()` returns the `Q` object that becomes `window.Qobuzify`. It wraps the store (`getState`, `subscribe`), the Qobuz HTTP API (`api()`, using the in-app auth token), player reads (`player.getTrack`, `getPositionMs`, `isPlaying`, `onChange`), and DOM helpers (`css`, `el`, `observe`, `onRoute`, `navigate`, `addNavItem`, `playerSlot`, `storage`). The full surface is in [api.md](api.md).
 
-**Loads extensions.** For each enabled extension it compiles the source with `new Function("Qobuzify", "vendor", source)` and calls it with `window.Qobuzify` and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. Extensions are on by default; `localStorage["qobuzify:ext:<id>"] === "0"` means off.
+**Loads extensions.** For each enabled extension it compiles the source with `new Function("Qobuzify", "vendor", source)` and calls it with `window.Qobuzify` and the extension's vendor string. The return value is treated as a cleanup function. Toggling an extension off in the Marketplace runs that cleanup. `localStorage["qobuzify:ext:<id>"]` holds the user's explicit choice (`"1"`/`"0"`); with no stored choice an extension is on only if its manifest sets `defaultOn`. A one-time migration (`qobuzify:ext-defaults-v1`) pins the pre-flip all-on set on installs that predate opt-in defaults, so only fresh installs land on the curated few.
 
 **Runs the theme engine and the UI.** It injects the Marketplace overlay and the two account-menu items (Marketplace, Qobuzify), and applies the active theme. A `MutationObserver` re-injects the menu items and player-bar slots whenever React re-renders the navbar, coalesced to one run per burst.
 
@@ -67,7 +67,7 @@ An extension is a folder under `extensions/`:
 
 ```
 extensions/my-extension/
-  manifest.json   { id, name, description, icon, version, author, defaultOff? }
+  manifest.json   { id, name, description, icon, version, author, defaultOn? }
   index.js        the body of function(Qobuzify, vendor) { ... return cleanup }
   vendor.js       (optional) a big prebuilt bundle, loaded via <script src>
 ```

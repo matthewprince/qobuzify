@@ -1,6 +1,6 @@
 # The bundled extensions
 
-Twenty-nine extensions ship with Qobuzify. Each lives in `extensions/<id>/`, is on by default, and can be toggled from the Marketplace. (A few are platform-scoped and inert elsewhere: bitperfect only does anything in the standalone wrapper, mobile-app only on a narrow screen.) This is what they do and, where it's interesting, how.
+Twenty-nine extensions ship with Qobuzify. Each lives in `extensions/<id>/` and is toggled from the Marketplace. A fresh install turns on a curated few (Quality of Life, Simple Client, For You, Qobuzify Lyrics, Better Search) and leaves the rest for you to enable; installs from before this default flipped keep whatever they already had on. (A few are platform-scoped and inert elsewhere: bitperfect only does anything in the standalone wrapper, mobile-app only on a narrow screen.) This is what they do and, where it's interesting, how.
 
 Reading these is also the fastest way to learn the API, since they exercise all of it against real problems. If you're going to write your own, skim [feat-artists](#feat-artists) and [ux-tweaks](#ux-tweaks) first; they're the smallest complete examples.
 
@@ -105,6 +105,6 @@ Private, on-device listening history. A 1-second tick logs each play you actuall
 ### mobile-app
 On a narrow screen, replaces Qobuz's desktop-only web layout with a purpose-built mobile app: our own Home, Search, Library, and Now Playing, a bottom tab bar, and a mini player, rendered in a container the extension fully owns so nothing gets cut off. Qobuz stays mounted underneath as the engine only (auth, API, audio, and the album pages it navigates invisibly to start playback). Completely inert on desktop and wide windows.
 
-## Off-by-default
+## Defaults
 
-An extension can set `"defaultOff": true` in its manifest to ship disabled. None of the current bundle does, but the loader honors it: `defaultOff` extensions stay off until you turn them on in the Marketplace.
+Extensions ship off and you enable them from the Marketplace. The exceptions set `"defaultOn": true` in their manifest and are on out of the box: Quality of Life, Simple Client, For You, Qobuzify Lyrics, and Better Search. An install that predates this flip keeps whatever it already had on (a one-time migration pins the old set), so only fresh installs land on the curated defaults.

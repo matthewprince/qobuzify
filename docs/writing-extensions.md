@@ -20,11 +20,11 @@ extensions/my-extension/
   "icon": "icon-magic-stars",
   "version": "1.0.0",
   "author": "you",
-  "defaultOff": false
+  "defaultOn": false
 }
 ```
 
-`icon` is a Qobuz icon-font class (e.g. `icon-magic-stars`, `icon-heart`, `icon-users`). `defaultOff` is optional; set it to ship the extension disabled.
+`icon` is a Qobuz icon-font class (e.g. `icon-magic-stars`, `icon-heart`, `icon-users`). Extensions ship disabled and the user enables them from the Marketplace; `defaultOn` is optional and only the small curated set that ships on out of the box sets it to `true`.
 
 `index.js` is not a module. Its entire contents become the body of a function the runtime calls as `function (Qobuzify, vendor) { ... }`. It returns a cleanup function:
 

@@ -31,7 +31,7 @@ Audio is lossless FLAC but not bit-perfect, and it cannot be, because it goes th
 ## What you get
 
 - **10 themes**, switchable live from the Marketplace, from a plain accent swap to full frosted-glass restyles.
-- **29 extensions**, on by default and individually toggleable, including a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, Last.fm scrobbling, playlist tools, bulk actions, multi-select, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence. The full list is in [docs/extensions.md](docs/extensions.md).
+- **29 extensions**, individually toggleable from the Marketplace, including a full-page ranked search, a personalized For You home, synced word-by-word lyrics, Smart Radio, listening stats, Last.fm scrobbling, playlist tools, bulk actions, multi-select, a fullscreen now-playing view, seek and A-B loop controls, a sleep timer, keyboard shortcuts, and Discord Rich Presence. A fresh install turns on a curated few and leaves the rest for you to enable. The full list is in [docs/extensions.md](docs/extensions.md).
 
 ## Commands
 

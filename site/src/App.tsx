@@ -21,7 +21,7 @@ const FEATURES = [
 const STEPS = [
   { n: "1", title: "Install", body: "One command patches your local Qobuz. It backs up the originals and is fully reversible. A Qobuz app update removes Qobuzify; re-run the installer to restore it (settings survive)." },
   { n: "2", title: "Theme", body: "In Qobuz, click your profile picture (top-right) and open the Marketplace, then pick a theme. Switching is live, no relaunch." },
-  { n: "3", title: "Extend", body: "The extensions ship on by default. Toggle any of them in that same Marketplace, or open Qobuzify for settings." },
+  { n: "3", title: "Extend", body: "A curated few are on out of the box; the rest wait in that same Marketplace. Toggle any of them there, or open Qobuzify for settings." },
 ];
 
 const EXTENSION_COUNT = 29; // shipped count (extensions/ dir); EXTENSIONS below is the curated highlights list
@@ -181,10 +181,10 @@ export default function App() {
 
         <section className="section" id="extensions">
           <div className="eyebrow">{EXTENSION_COUNT} extensions</div>
-          <h2 className="h-sec">All built in, on by default</h2>
+          <h2 className="h-sec">All built in, one toggle away</h2>
           <p className="lede">
-            Manage them from the in-app Marketplace (your profile picture, top-right). Here is the
-            full set.
+            A curated few are on out of the box; enable the rest from the in-app Marketplace (your
+            profile picture, top-right). Here is the full set.
           </p>
           <input
             className="search"
