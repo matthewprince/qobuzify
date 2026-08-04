@@ -24,6 +24,8 @@ The resolver always prefers word-by-word over line-level, so a track that has bo
 
 One consequence worth knowing: the client is proxy-first with a local fallback, so if the server call misses or fails, the client resolves locally, and the local path may only find line-level for a track the server actually has word-by-word for. Re-opening the lyrics re-asks the server and gets the better tier.
 
+**Demo track.** Word-by-word has more range than "highlight each word" implies. The reference song is **"All Falls Down" by Alan Walker** (with Noah Cyrus and Digital Farm Animals): it comes back `"Syllable"` with all three rendering layers exercised at once — 56 lead lines of per-word timing, 13 duet lines (`OppositeAligned`, so they shift side to side as the vocalist changes), and 10 lines carrying background vocals as their own dimmed secondary word-by-word. Most tracks use only the lead layer, so this is the one to pull up when you want to see everything the renderer can do in a single song.
+
 ## Storage, in priority order
 
 The Worker answers a lyric request from the first of these that hits:
