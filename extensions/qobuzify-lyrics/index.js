@@ -755,10 +755,10 @@ function ensureContainer() {
 }
 // Flyout geometry: dock between NavBar (bottom) and player bar (top), measured live.
 // Lyra's own ResizeObserver on the viewport re-measures the lyric layout when these edges move.
-var _dockBound = false, _navClickBound = false;
+var _dockBound = false, _navClickBound = false, _lastQueueOpen = false, _queueDockT = null;
 function qzPanelDock() {
   if (!ownViewOpen()) return; // skip the layout reads while the flyout is hidden; onRouteChange re-docks on open
-  var top = 56, bottom = 75;
+  var top = 56, bottom = 75, right = 0;
   try {
     var nav = document.querySelector(".NavBar");
     if (nav) { var nr = nav.getBoundingClientRect(); if (nr.height > 0 && nr.bottom > 0 && nr.bottom < window.innerHeight) top = Math.round(nr.bottom); }
@@ -767,8 +767,13 @@ function qzPanelDock() {
     var pl = document.querySelector(".player");
     if (pl) { var pr = pl.getBoundingClientRect(); if (pr.height > 0 && pr.top > 0 && pr.top < window.innerHeight) bottom = Math.round(window.innerHeight - pr.top); }
   } catch (e) {}
+  try {
+    var pq = document.querySelector(".Playqueue--isVisible"); // the play-queue panel slides in on the right; shrink the lyric band so both fit side-by-side. Use the panel's width (stable, animation-independent) rather than its live left edge (which animates from off-screen and would read 0 mid-slide).
+    if (pq) { var qr = pq.getBoundingClientRect(); if (qr.width > 0 && qr.height > 0) right = Math.round(qr.width); }
+  } catch (e) {}
   container.style.top = top + "px";
   container.style.bottom = bottom + "px";
+  container.style.right = right + "px";
 }
 // suppress the line fade only during the brief rebuild window after the window regains focus /
 // becomes visible / the lyrics route opens (see qz-sl-refocus above). outside this window every ease
@@ -922,7 +927,7 @@ function undimNavIcon() {
 function onRouteChange(loc) {
   var open = loc && loc.pathname === "/QzLyrics";
   if (OWN_RENDERER) {
-    if (container) { container.style.display = open ? "block" : "none"; if (open) qzPanelDock(); }
+    if (container) { container.style.display = open ? "block" : "none"; if (open) { _lastQueueOpen = !!document.querySelector(".Playqueue--isVisible"); qzPanelDock(); } }
     // NO real router navigation here: the origin screen stays mounted behind the flyout (no re-render
     // blink), and "return to where you were" is automatic on close. The root class drives the tab deselection.
     document.documentElement.classList.toggle("qz-lyrics-open", !!open);
@@ -932,7 +937,7 @@ function onRouteChange(loc) {
     return;
   }
   if (open) qzSuppressFade(850);
-  if (container) { container.style.display = open ? "block" : "none"; if (open) qzPanelDock(); }
+  if (container) { container.style.display = open ? "block" : "none"; if (open) { _lastQueueOpen = !!document.querySelector(".Playqueue--isVisible"); qzPanelDock(); } }
   document.documentElement.classList.toggle("qz-lyrics-open", !!open);
   if (open) dimActiveNavIcon(); else undimNavIcon();
   var btn = document.getElementById("qz-sl-btn");
@@ -1421,6 +1426,14 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
       setLyricServerTag();
       flushLyricsCache();
       if (++_fxCounter >= 20) { _fxCounter = 0; if (ownViewOpen()) qzApplyFxMode(); }
+      if (ownViewOpen()) {
+        var _pqOpen = !!document.querySelector(".Playqueue--isVisible");
+        if (_pqOpen !== _lastQueueOpen) {
+          _lastQueueOpen = _pqOpen;
+          qzPanelDock();
+          if (_pqOpen) { if (_queueDockT) clearTimeout(_queueDockT); _queueDockT = setTimeout(function () { _queueDockT = null; if (ownViewOpen()) qzPanelDock(); }, 400); } // re-dock after the slide-in animation settles to the final width
+        }
+      }
       tickIv = setTimeout(qzTick, ownViewOpen() ? 250 : (document.hidden ? 2000 : 1000));
     }
     tickIv = setTimeout(qzTick, 250);
@@ -1523,6 +1536,7 @@ return function cleanup() {
   _dockBound = false; // allow ensureContainer to rebind on re-init
   if (_prefetchTimer) clearTimeout(_prefetchTimer);
   if (_refocusT) clearTimeout(_refocusT);
+  if (_queueDockT) clearTimeout(_queueDockT);
   if (_comboIv) clearInterval(_comboIv);
   if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; if (_origCAF) window.cancelAnimationFrame = _origCAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF + restore the paired cancel
   if (_fsOn) { fsBridge(false); _fsOn = false; }
