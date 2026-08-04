@@ -1,0 +1,7 @@
+# The installer artifacts must never be served stale: install.ps1 embeds the zip's
+# $ExpectedZipSha, so a cached install.ps1 paired with a freshly-deployed zip (or vice
+# versa) fails the integrity check. no-store keeps the edge from holding either one.
+/qobuzify.zip
+  Cache-Control: no-store
+/install.ps1
+  Cache-Control: no-store
