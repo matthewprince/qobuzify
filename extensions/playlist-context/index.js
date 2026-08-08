@@ -165,7 +165,10 @@ function toast(msg, bad) {
 
 Q.css(CSS_ID, [
   ".qz-ctx-chip{display:inline-flex;align-items:center;gap:7px;max-width:200px;height:32px;padding:0 11px;border-radius:18px;",
-    "border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c2cad6;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 0 auto;}",
+    // flex:0 1 auto + min-width:0 so the chip is what gives when the player bar's fixed-width track column
+    // runs out of room, instead of the native duration readout being pushed off the end and cut off. The
+    // name below already ellipsizes, and the full "Playing from X · track N" stays on the chip's tooltip.
+    "border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c2cad6;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 1 auto;min-width:0;}",
   ".qz-ctx-chip:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
   ".qz-ctx-chip svg{width:15px;height:15px;flex:0 0 auto;color:var(--qz-accent,#3DA8FE);}",
   ".qz-ctx-txt{display:flex;flex-direction:column;min-width:0;line-height:1.15;text-align:left;}",

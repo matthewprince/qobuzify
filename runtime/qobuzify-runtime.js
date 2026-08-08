@@ -1092,7 +1092,15 @@
     "transition:background .15s,opacity .15s;}",
     ".qz-navhist-btn:hover:not(:disabled){background:rgba(255,255,255,.10);opacity:1;}",
     ".qz-navhist-btn:disabled{opacity:.28;cursor:default;}",
-    ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 0 auto;}",
+    // Shrinkable on purpose. `.player__track` is a FIXED-width column (native: calc(50vw - 156px)) whose
+    // other children refuse to give: the cover is flex:none, .player__track-infos stops at min-width:200px,
+    // and .player__track-time can't go below its min-content. So every pixel this slot takes pushes the
+    // native duration readout PAST the column's right edge, where it gets cut off ("00:01 - 05:05" showing
+    // as "00:01 - 05" - reported with a long album/playlist name widening the playlist-context chip).
+    // Measured at a 1600px window: a short album name overflowed 0px, a long one 103px. Letting the slot
+    // shrink hands the pressure to the chip (the only child that can give - the icon buttons stay
+    // flex:0 0 auto and keep their size) so the chip ellipsizes instead of the timer being shoved out.
+    ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 1 auto;min-width:0;}",
     // Buttons flow in ascending `order` left-to-right, so the highest-order button (Full App Display = 40)
     // sits at the OUTER (right) edge and the lowest (Lyrics = 10) nearest the centred transport. fitPlayerSlots
     // drops from the inner edge on narrow windows, so the outer buttons survive longest.
