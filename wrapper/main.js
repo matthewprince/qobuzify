@@ -390,14 +390,19 @@ function mpvBinary() {
 //     idle, the server suspends it, and the device frees up. The web clock keeps running on the null sink,
 //     which is all the timeline needs.
 // --- async probe batch for the 1s watchdog --------------------------------------------------------
-// The per-second badge re-verify needs pw-dump/pactl/wpctl output every tick, but execFileSync on the
-// Electron main thread stalls IPC, feed chunks and every window event for as long as the daemon takes
-// to answer (up to the 4s timeout when it is wedged) - a per-second freeze while bit-perfect is on.
-// So the watchdog samples asynchronously, one in-flight batch at a time, and the sync helpers below
-// serve from the sampled raw outputs while they are fresh. Parsing and every decision stay exactly as
-// they were; only the acquisition moves off the hot path. Cold calls (enable click, a track-boundary
-// params event before the first sample) still exec synchronously, which is rare and user-initiated.
-const qzbpProbe = { at: 0, out: null, busy: false };
+// The badge re-verify needs pw-dump/pactl/wpctl output, but execFileSync on the Electron main thread
+// stalls IPC, feed chunks and every window event for as long as the daemon takes to answer (up to the
+// 4s timeout when it is wedged) - a per-second freeze while bit-perfect is on. So the watchdog samples
+// asynchronously, one in-flight batch at a time, and the sync helpers below serve from the sampled raw
+// outputs while they are fresh. Parsing and every decision stay exactly as they were.
+// Sampling is EVENT-DRIVEN, not per-tick: running the 5-command batch every second meant ~5 process
+// spawns/sec forever (pw-dump serializes the whole PipeWire graph each call) - measurably loading the
+// desktop while the app just sat there. A single long-lived `pactl subscribe` marks the probe dirty on
+// any audio-graph event (default-sink switch, volume, card/profile change - everything the verdict rests
+// on arrives as an event), the tick resamples only when dirty, and a 30s re-verify backstops a missed
+// event. If the subscription cannot be held (pactl gone, daemon cycling), we fall back to the old
+// poll-every-tick behaviour rather than serving stale answers.
+const qzbpProbe = { at: 0, out: null, busy: false, dirtyAt: 1, sub: null, subDeaths: [], pollFallback: false };
 function qzbpExecAsync(cmd, args) {
   return new Promise((resolve) => {
     try {
@@ -423,9 +428,48 @@ function qzbpSample(cb) {
     cb();
   });
 }
-// Fresh means sampled within 2s: newer than the watchdog period so the hot path never falls through
-// to a blocking exec, stale soon enough that a dead watchdog cannot serve old answers for long.
-function qzbpProbeFresh() { return qzbpProbe.out && Date.now() - qzbpProbe.at < 2000 ? qzbpProbe.out : null; }
+// One pactl subscribe for the app's lifetime; its stdout is only ever a dirty-flag. Respawn on death
+// (PipeWire restarts kill it) with a cap: 5 deaths inside a minute means we cannot hold a subscription
+// on this system, so revert to poll-every-tick - correctness beats elegance.
+function qzbpSubscribeStart() {
+  if (process.platform !== "linux" || qzbpProbe.sub || qzbpProbe.pollFallback) return;
+  let child;
+  try { child = require("child_process").spawn("pactl", ["subscribe"], { stdio: ["ignore", "pipe", "ignore"] }); }
+  catch (_) { qzbpProbe.pollFallback = true; return; }
+  qzbpProbe.sub = child;
+  child.stdout.on("data", () => { qzbpProbe.dirtyAt = Date.now(); });
+  child.on("error", () => {});
+  child.on("close", () => {
+    qzbpProbe.sub = null;
+    qzbpProbe.dirtyAt = Date.now(); // the daemon may have restarted under us; whatever we knew is suspect
+    const now = Date.now();
+    qzbpProbe.subDeaths = qzbpProbe.subDeaths.filter((t) => now - t < 60000);
+    qzbpProbe.subDeaths.push(now);
+    if (qzbpProbe.subDeaths.length >= 5) { qzbpProbe.pollFallback = true; return; }
+    const t = setTimeout(qzbpSubscribeStart, 2000);
+    if (t && t.unref) t.unref();
+  });
+}
+app.on("will-quit", () => { try { if (qzbpProbe.sub) qzbpProbe.sub.kill(); } catch (_) {} });
+function qzbpNeedsSample() {
+  return !qzbpProbe.out || qzbpProbe.at <= qzbpProbe.dirtyAt || Date.now() - qzbpProbe.at > 30000;
+}
+// The tick calls this instead of qzbpSample: resample only when an event invalidated the probe (or the
+// 30s backstop lapsed); otherwise the cached outputs are, by the absence of events, still the truth.
+function qzbpSampleIfDirty(cb) {
+  if (process.platform !== "linux") { cb(); return; }
+  qzbpSubscribeStart();
+  if (qzbpProbe.pollFallback || qzbpNeedsSample()) { qzbpSample(cb); return; }
+  cb();
+}
+// Fresh means "no audio-graph event since this was sampled" - age alone no longer stales it, because
+// with event-driven sampling an old-but-uninvalidated probe is correct by construction. In poll-fallback
+// mode the old 2s age rule applies unchanged (there are no events to trust there).
+function qzbpProbeFresh() {
+  if (!qzbpProbe.out) return null;
+  if (qzbpProbe.pollFallback) return Date.now() - qzbpProbe.at < 2000 ? qzbpProbe.out : null;
+  return qzbpProbe.at > qzbpProbe.dirtyAt ? qzbpProbe.out : null;
+}
 
 function pactl(args) {
   // Serve the async sample even when its value is null: that command just failed asynchronously, and
@@ -843,14 +887,15 @@ function qzbpStallCheck() {
   // no mpv event: the default sink can switch (wired -> Bluetooth, DAC-A -> DAC-B), the graph can re-pin the
   // same card to a new rate (96k -> 48k, which keeps the hw:C,D string identical so the device alone would
   // miss it), and the sink volume can change. Signature over device + hardware rate + gain catches all three;
-  // re-emitting only on a change keeps this to one probe batch per second and no IPC spam. A sink we can no
+  // all three surface as pactl-subscribe events, so the batch only actually runs on one of those (or the
+  // 30s backstop), and re-emitting only on a signature change keeps the IPC quiet. A sink we can no
   // longer name resolves to device-unknown - an honest degrade, never a stale claim. The probes run through
   // the async qzbpSample batch, so this tick never blocks the main thread on a subprocess; the logic below
   // reads the sampled outputs through the same helpers and is otherwise unchanged. NOT while stalled: after
   // a downgrade the audio path is the unmuted web element through the shared mixer, and re-emitting the dead
   // stream's params on a signature change could hand the badge a bit-perfect claim that is false.
   if (qzbp.enabled && qzbp.mode === "passthrough" && !qzbp.stalled && (qzbp.srcParams || qzbp.outParams)) {
-    qzbpSample(() => {
+    qzbpSampleIfDirty(() => {
       // state can move while the sample is in flight; re-check before emitting anything from it
       if (!(qzbp.enabled && qzbp.mode === "passthrough" && !qzbp.stalled && (qzbp.srcParams || qzbp.outParams))) return;
       const g = sinkState().gain;
