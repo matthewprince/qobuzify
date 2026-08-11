@@ -58,8 +58,10 @@
       "icon": "build/icon.png",
       "maintainer": "Qobuzify <hello@qobuzify.app>",
       "desktop": {
-        "Name": "Qobuzify",
-        "Comment": "Qobuz web player with Qobuzify themes + extensions"
+        "entry": {
+          "Name": "Qobuzify",
+          "Comment": "Qobuz web player with Qobuzify themes + extensions"
+        }
       },
       "extraResources": [
         {
