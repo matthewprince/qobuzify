@@ -1,4 +1,4 @@
-/* Lyra lyric renderer - built 2026-07-29T22:12:22Z */
+/* Lyra lyric renderer - built 2026-08-09T02:22:18Z */
 // Lyra parsers - TTML / lyrics-JSON / LRC in, one internal model out.
 // All times in MILLISECONDS (upstream JSON is seconds, converted here).
 //
@@ -1684,9 +1684,14 @@
   };
 })(typeof window !== "undefined" ? window : globalThis);
 // Lyra background - ambient drifting album art.
-// Cover gets crushed to a tiny canvas once (the downsample basically is the
-// blur), then two big layers drift on pure CSS transform animations. Nothing
-// repaints per frame. Cover changes crossfade two stacked groups. Always dark.
+// Cover gets crushed to a tiny canvas once, with the blur BAKED IN at that
+// size, then two big layers drift on pure CSS transform animations. The
+// layers are plain canvas textures with no CSS filter: a filter on the
+// displayed element forces the browser to keep a display-resolution surface
+// (thousands of px square) and re-run the blur whenever the layer changes,
+// which profiled at ~18% of a core on a 2560px viewport. Blurring 96px once
+// at draw time costs nothing and upscaling the soft texture is a free GPU
+// sample. Cover changes crossfade two stacked groups. Always dark.
 (function (global) {
   "use strict";
   var Lyra = global.Lyra = global.Lyra || {};
@@ -1696,8 +1701,12 @@
 ".lyra-bg~.lyra-viewport{z-index:1;}" +
 ".lyra-bg-grp{position:absolute;inset:0;opacity:0;transition:opacity 1.1s ease;}" +
 ".lyra-bg-grp.lyra-bg-in{opacity:1;}" +
+// 160vmax is the minimum for a rotating square to cover a worst-case (square)
+// viewport plus the orbit translate - not padding, don't shrink it. no filter
+// here on purpose (see the header); will-change names what actually animates
+// (keyframe/JS transforms + the per-frame luminance opacity writes)
 ".lyra-bg-layer{position:absolute;left:50%;top:50%;margin:-80vmax 0 0 -80vmax;width:160vmax;height:160vmax;" +
-"border-radius:38%;filter:blur(56px) saturate(1.6);will-change:transform;}" +
+"border-radius:38%;will-change:transform,opacity;}" +
 ".lyra-bg-a{animation:lyra-bg-a 80s linear infinite;opacity:.85;}" +
 ".lyra-bg-b{animation:lyra-bg-b 100s linear infinite;opacity:.6;}" +
 // with analysis, layer motion is JS-integrated (velocity rides the music) and
@@ -1706,8 +1715,11 @@
 // palette flow blobs: big soft colour fields from the cover's dominant colours,
 // orbiting independently - this is what makes the field ORGANIC instead of two
 // copies of the same texture spinning
+// blobs are canvases too: a 95vmax gradient DIV with will-change kept
+// display-resolution raster tiles alive (tens of MB each, re-rastered on
+// scale changes); a 64px radial-gradient texture scales for free
 ".lyra-bg-blob{position:absolute;left:50%;top:50%;width:95vmax;height:95vmax;margin:-47.5vmax 0 0 -47.5vmax;" +
-"border-radius:50%;pointer-events:none;will-change:transform;}" +
+"pointer-events:none;will-change:transform,opacity;}" +
 "@keyframes lyra-bg-a{from{transform:rotate(0deg) translate(6vmax,0) scale(1);}50%{transform:rotate(180deg) translate(6vmax,0) scale(1.18);}to{transform:rotate(360deg) translate(6vmax,0) scale(1);}}" +
 "@keyframes lyra-bg-b{from{transform:rotate(360deg) translate(-8vmax,2vmax) scale(1.25);}50%{transform:rotate(180deg) translate(-8vmax,2vmax) scale(1.05);}to{transform:rotate(0deg) translate(-8vmax,2vmax) scale(1.25);}}" +
 ".lyra-bg-scrim{position:absolute;inset:0;" +
@@ -1776,7 +1788,26 @@
     c.className = "lyra-bg-layer " + cls;
     var x = c.getContext("2d");
     x.imageSmoothingEnabled = true;
-    x.drawImage(srcCanvas, 0, 0, 96, 96);
+    // the whole blur, baked at source scale: 1.5px here reads as ~65px on the
+    // displayed layer, which is where the old CSS blur(56px) sat
+    try { x.filter = "saturate(1.6) blur(1.5px)"; } catch (e) {}
+    // overscan past the edges so the blur kernel never samples transparency -
+    // a see-through rim would sweep around as the layer rotates
+    x.drawImage(srcCanvas, -8, -8, 112, 112);
+    return c;
+  }
+
+  function makeBlob(col) {
+    var c = document.createElement("canvas");
+    c.width = c.height = 64;
+    c.className = "lyra-bg-blob";
+    var x = c.getContext("2d");
+    var g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(" + col[0] + "," + col[1] + "," + col[2] + ",.5)");
+    g.addColorStop(0.62, "rgba(" + col[0] + "," + col[1] + "," + col[2] + ",0)");
+    g.addColorStop(1, "rgba(" + col[0] + "," + col[1] + "," + col[2] + ",0)");
+    x.fillStyle = g;
+    x.fillRect(0, 0, 64, 64);
     return c;
   }
 
@@ -1843,10 +1874,7 @@
         // palette blobs ride between the layers and the wash
         var pal = art.palette || [];
         for (var bi = 0; bi < pal.length; bi++) {
-          var col = pal[bi];
-          var blob = document.createElement("div");
-          blob.className = "lyra-bg-blob";
-          blob.style.background = "radial-gradient(circle at 50% 50%, rgba(" + col[0] + "," + col[1] + "," + col[2] + ",.5) 0%, rgba(" + col[0] + "," + col[1] + "," + col[2] + ",0) 62%)";
+          var blob = makeBlob(pal[bi]);
           grp.appendChild(blob);
           curLayers.push({
             el: blob, base: 0, blob: true,
