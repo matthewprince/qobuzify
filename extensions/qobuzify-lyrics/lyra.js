@@ -1138,7 +1138,7 @@
       }
     }
     function onVisibility() {
-      if (!document.hidden && !destroyed && running) resync();
+      if (!document.hidden && !destroyed) resync();
     }
 
     // line states
@@ -1872,7 +1872,6 @@
 
       function pulse(pos) {
         if (destroyed || (!anSegs && !anEnergy)) return; // degrade: energy-only data still animates
-        if (Lyra.lowFx) return; // Qobuz appCapabilities "low": freeze the background (no per-frame JS motion)
         var dtL = lastPos < 0 ? 0 : Math.max(0, Math.min(100, pos - lastPos));
         var sc = 1;
         if (anSegs) {

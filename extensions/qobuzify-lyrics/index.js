@@ -253,15 +253,18 @@ var REFETCH_BASE = "https://api.qobuzify.app/v1/refetch";
 // the background non-reactive, and Lyra tolerates null. Memoised per track so a re-open or a re-render does
 // not re-request; the server serves warm hits in ~60ms and marks them immutable, so this is cheap.
 var ANALYSIS_BASE = "https://api.qobuzify.app/v2/analysis";
-var _anCache = {}, _anFor = null, _anReady = null;
+var _anCache = {}, _anFor = null, _anReady = null, _lowFx = false;
 function analysisKey(t) { return ((t && t.name) || "") + "|" + ((t && t.artist) || ""); }
 // Apply whatever we currently hold. Split out from the fetch because the two happen in EITHER order: lyrics
 // (and therefore the fetch) are resolved on a track change, but `_own` only exists once the lyrics VIEW is
 // built - so a fetch that completes while the view is closed must still land when the view opens, and
 // buildShell calls this after creating the renderer. Idempotent, so calling it twice is harmless.
+// Also the low-fx off switch: setAnalysis(null) turns analysisOn off inside Lyra, which stops it from ever
+// calling the background's pulse() driver - so low-fx mode is enforced through Lyra's own public API instead
+// of reaching into its (generated, vendor-owned) internals.
 function applyAnalysis() {
   if (!OWN_RENDERER || !_own || !_own.setAnalysis) return;
-  try { _own.setAnalysis(_anReady || null); } catch (e) {}
+  try { _own.setAnalysis(_lowFx ? null : (_anReady || null)); } catch (e) {}
 }
 function fetchAnalysis(track) {
   if (!track || !track.name || !track.artist) return Promise.resolve(null);
@@ -664,7 +667,8 @@ function ensureContainer() {
     "#qz-sl-root.qz-paused #qz-cbg .qz-blob{animation-play-state:paused;}" +
     "#qz-sl-root.qz-paused .lyra-bg-layer{animation-play-state:paused;}" +
     // low-fx (appCapabilities "low"): freeze the background static. CSS kills the keyframes and overrides
-    // any inline transform/scale/opacity pulse() already wrote (pulse() early-returns on Lyra.lowFx).
+    // any inline transform/scale/opacity pulse() already wrote; qzApplyFxMode also cuts pulse() off at the
+    // source via setAnalysis(null) (see applyAnalysis), so this CSS is a belt-and-suspenders visual guarantee.
     "#qz-sl-root.qz-lowfx .lyra-bg-layer,#qz-sl-root.qz-lowfx .lyra-bg-blob{animation:none!important;transform:none!important;}" +
     "#qz-sl-root.qz-lowfx .lyra-bg-grp{scale:1!important;}" +
     "#qz-sl-root.qz-lowfx .lyra-bg-energy{opacity:0!important;}" +
@@ -749,6 +753,7 @@ function ensureContainer() {
     "#qz-sl-root .MenuItem__text.icon-settings,#qz-sl-root .icon-settings{display:none!important;}" +
     ".sl-modal-overlay:has(.slmodal-settingsPanel){display:none!important;}");
   if (!OWN_RENDERER) ensureCoverBg(); // Lyra brings its own opaque background; don't build the legacy mesh behind it
+  ensureFsButton();
   // The clock is live and lyrics arrive synced, so SL's native per-word gradient
   // glow renders correctly - no readable-fallback override needed. (Unsynced
   // "static" tracks are styled bright by SL's own CSS, so they stay readable.)
@@ -880,9 +885,7 @@ function qzApplyFxMode() {
   var low = qzAppCapabilities() === "low";
   var root = document.getElementById("qz-sl-root");
   if (root) root.classList.toggle("qz-lowfx", low);
-  // module-global flag the Lyra background's pulse() driver reads (the Background instance itself is a
-  // closure-local inside the renderer and not reachable from here, so a global is the reliable channel)
-  try { if (window.Lyra) window.Lyra.lowFx = low; } catch (e) {}
+  if (low !== _lowFx) { _lowFx = low; applyAnalysis(); } // stop/resume the background's audio-reactive pulse via Lyra's public setAnalysis API - CSS above freezes the visuals either way, this also stops the per-frame JS work behind them
 }
 function ownOpen() { var r = ownEnsure(); qzApplyFxMode(); if (r) ownRenderCurrent(); if (_own && _own.setCover && _cbgWant) { try { _own.setCover(_cbgWant); } catch (e) {} } }
 function ownClose() { if (_own) _own.stop(); }
@@ -1478,42 +1481,85 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
 })();
 
 // ---- TRUE FULLSCREEN (OS borderless, via the main-process RPC bridge) -----------------------
-// No in-view button; this is only OS-level sync: the window can enter/leave borderless fullscreen
-// via F11, and the main process calls window.__qzOnLeaveFS on every OS-level leave (must exist).
-var _fsOn = false;
-// IPC first: contextBridge -> ipcMain -> win.setFullScreen, the exact call F11 makes. Keep the
-// loopback POST as a fallback for the Windows bake, where rpc-main.js is appended to the native
-// main process and __QZFS__ does not exist.
+// The lyrics view (#qz-sl-root) is docked as a flyout band, not a full-window overlay, so this button
+// stays a small floating control inside the band rather than chrome-covering the whole page. "True
+// fullscreen" pops the OS WINDOW itself to borderless full-monitor: IPC (contextBridge -> ipcMain ->
+// win.setFullScreen) or, as a fallback, POST to the localhost bridge (:7673, the Discord-RPC one) so
+// the main process can call BrowserWindow.setFullScreen. Esc exits; if the view closes while
+// full-monitor we drop back out so you are never stranded.
+// __QZFS__ and any F11 accelerator are wired up only in the dev wrapper's main process - the bake
+// most users run appends just rpc-main.js to the native main process, so it has neither. The in-view
+// button (via the POST fallback) is that build's ONLY path to true fullscreen: do not drop it in favor
+// of "F11 already does this", because on the bake nothing does.
+var _fsOn = false, _fsBtn = null, _fsObs = null;
+var FS_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>';
+var FS_ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg>';
 function fsBridge(on) {
   try { if (window.__QZFS__ && window.__QZFS__.set) { window.__QZFS__.set(!!on); return; } } catch (e) {}
   try { fetch("http://127.0.0.1:7673/fullscreen", { method: "POST", body: JSON.stringify({ on: !!on }) }).catch(function () {}); } catch (e) {}
 }
+function fsSyncBtn() { if (!_fsBtn) return; _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn); }
 function _fsEsc(e) { if (e.key === "Escape" && _fsOn) { e.stopPropagation(); e.preventDefault(); fsExit(); } }
+function fsEnter() {
+  if (_fsOn) return;
+  _fsOn = true; fsBridge(true); fsSyncBtn();
+  document.addEventListener("keydown", _fsEsc, true);
+  // if the lyrics view closes (route change / close button) while full-monitor, drop back out so
+  // the user is not stranded in a borderless window with no visible exit control.
+  try {
+    var root = document.getElementById("qz-sl-root");
+    if (root && window.MutationObserver) {
+      _fsObs = new MutationObserver(function () { if (root.style.display === "none") fsExit(); });
+      _fsObs.observe(root, { attributes: true, attributeFilter: ["style"] });
+    }
+  } catch (e) {}
+}
 function fsExit() {
   if (!_fsOn) return;
-  _fsOn = false; fsBridge(false);
+  _fsOn = false; fsBridge(false); fsSyncBtn();
   document.removeEventListener("keydown", _fsEsc, true);
+  if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
 }
+function fsToggle() { if (_fsOn) fsExit(); else fsEnter(); }
 // the main process calls this (via executeJavaScript) when the window leaves fullscreen by ANY
 // means - sync our state WITHOUT re-POSTing (the window is already out of fullscreen).
 window.__qzOnLeaveFS = function () {
   if (!_fsOn) return;
-  _fsOn = false;
+  _fsOn = false; fsSyncBtn();
   document.removeEventListener("keydown", _fsEsc, true);
+  if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
 };
-// Reverse sync over IPC: the window can enter OR leave fullscreen with no renderer request (F11,
-// the window manager). Mirror the real state.
+// Reverse sync over IPC: the window can enter OR leave fullscreen with no click on our button (F11, the
+// window manager), and the icon would keep claiming whatever the button last did. Mirror the real state.
 // Never call fsBridge from in here - the window has already changed, so re-sending would toggle it back.
 try {
   if (window.__QZFS__ && window.__QZFS__.onChange) {
     window.__QZFS__.onChange(function (fs) {
       if (!!fs === _fsOn) return;
-      _fsOn = !!fs;
+      _fsOn = !!fs; fsSyncBtn();
       if (_fsOn) { document.addEventListener("keydown", _fsEsc, true); return; }
       document.removeEventListener("keydown", _fsEsc, true);
+      if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
     });
   }
 } catch (e) {}
+function ensureFsButton() {
+  var root = document.getElementById("qz-sl-root"); if (!root) return;
+  var existing = document.getElementById("qz-lyrics-fs-btn");
+  if (existing) { _fsBtn = existing; fsSyncBtn(); return; }
+  var b = document.createElement("button");
+  b.id = "qz-lyrics-fs-btn"; b.type = "button"; b.className = "qz-lyrics-fs-btn"; b.setAttribute("aria-label", "Toggle full screen");
+  b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); fsToggle(); });
+  root.appendChild(b);
+  _fsBtn = b; fsSyncBtn();
+}
+Q.css("qz-lyrics-fs-css", [
+  ".qz-lyrics-fs-btn{position:absolute;top:16px;left:16px;z-index:40;width:40px;height:40px;border:0;border-radius:50%;",
+  "background:rgba(255,255,255,.08);color:#e7ecf3;cursor:pointer;display:flex;align-items:center;justify-content:center;",
+  "backdrop-filter:blur(6px);transition:background .15s ease,transform .12s ease,opacity .2s ease;opacity:.5;}",
+  ".qz-lyrics-fs-btn:hover{background:rgba(255,255,255,.18);opacity:1;transform:scale(1.06);}",
+  ".qz-lyrics-fs-btn.qz-lyrics-fs-on{color:var(--qz-accent,#e8eaed);}"
+].join(""));
 
 return function cleanup() {
   flushLyricsCache(true);
@@ -1541,7 +1587,10 @@ return function cleanup() {
   if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; if (_origCAF) window.cancelAnimationFrame = _origCAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF + restore the paired cancel
   if (_fsOn) { fsBridge(false); _fsOn = false; }
   document.removeEventListener("keydown", _fsEsc, true);
+  if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
   try { window.__qzOnLeaveFS = null; } catch (e) {}
+  var _fsb = document.getElementById("qz-lyrics-fs-btn"); if (_fsb) _fsb.remove();
+  var _fscss = document.getElementById("qz-lyrics-fs-css"); if (_fscss) _fscss.remove();
   if (offRealRoute) { try { offRealRoute(); } catch (e) {} offRealRoute = null; }
   if (_navClickBound) { try { document.removeEventListener("click", _onNavClick, true); } catch (e) {} _navClickBound = false; }
   try { undimNavIcon(); } catch (e) {}
