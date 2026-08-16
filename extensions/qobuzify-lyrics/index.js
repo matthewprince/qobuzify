@@ -625,6 +625,10 @@ function ensureContainer() {
     "@media (prefers-reduced-motion:reduce){#qz-sl-root{animation:none;}}" +
     "#qz-sl-root::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;z-index:30;pointer-events:none;" +
     "background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--qz-accent,#e8eaed) 40%,transparent) 50%,transparent);}" +
+    // fullscreen toggle: the band normally docks between NavBar/player-bar (qzPanelDock's inline top/bottom/right).
+    // !important here beats those inline styles so ONLY the lyrics fill the window - NavBar and the player
+    // bar sit at z=250 in .ui-responsive's stacking context, so this has to clear that to actually cover them.
+    "#qz-sl-root.qz-sl-fullscreen{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:9999!important;border:0!important;}" +
     "#qz-sl-root .lyra-bg{background:rgba(9,9,13,.34);}" + // let the glass read through; art layers + scrim still darken
     "#qz-sl-root .lyra-line{font-size:clamp(26px,3vw,46px);}" + // under Lyra's 52px cap; the band is shorter
     "#qz-sl-root .lyra-dot{font-size:clamp(26px,3vw,46px);}" +
@@ -1480,13 +1484,17 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
   } catch (e) { try { console.error("[QobuzifyLyrics] boot failed:", e); } catch (_) {} }
 })();
 
-// ---- TRUE FULLSCREEN (OS borderless, via the main-process RPC bridge) -----------------------
-// The lyrics view (#qz-sl-root) is docked as a flyout band, not a full-window overlay, so this button
-// stays a small floating control inside the band rather than chrome-covering the whole page. "True
-// fullscreen" pops the OS WINDOW itself to borderless full-monitor: IPC (contextBridge -> ipcMain ->
-// win.setFullScreen) or, as a fallback, POST to the localhost bridge (:7673, the Discord-RPC one) so
-// the main process can call BrowserWindow.setFullScreen. Esc exits; if the view closes while
-// full-monitor we drop back out so you are never stranded.
+// ---- TRUE FULLSCREEN (OS borderless + the lyrics band expanded over the chrome) --------------
+// The lyrics view (#qz-sl-root) is docked as a flyout band between NavBar and the player bar, so
+// two things have to happen together or "fullscreen" just makes the app window bigger with NavBar
+// and the player bar still visible around an unchanged band:
+// 1. OS WINDOW -> borderless full-monitor: IPC (contextBridge -> ipcMain -> win.setFullScreen) or,
+//    as a fallback, POST to the localhost bridge (:7673, the Discord-RPC one) so the main process
+//    can call BrowserWindow.setFullScreen.
+// 2. THE BAND -> qz-sl-fullscreen (toggled in fsSyncBtn) makes #qz-sl-root position:fixed/inset:0
+//    at a z-index above the chrome panels, so it actually covers NavBar + the player bar instead of
+//    just docking inside the bigger window.
+// Esc exits; if the view closes while full-monitor we drop back out so you are never stranded.
 // __QZFS__ and any F11 accelerator are wired up only in the dev wrapper's main process - the bake
 // most users run appends just rpc-main.js to the native main process, so it has neither. The in-view
 // button (via the POST fallback) is that build's ONLY path to true fullscreen: do not drop it in favor
@@ -1498,7 +1506,13 @@ function fsBridge(on) {
   try { if (window.__QZFS__ && window.__QZFS__.set) { window.__QZFS__.set(!!on); return; } } catch (e) {}
   try { fetch("http://127.0.0.1:7673/fullscreen", { method: "POST", body: JSON.stringify({ on: !!on }) }).catch(function () {}); } catch (e) {}
 }
-function fsSyncBtn() { if (!_fsBtn) return; _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn); }
+function fsSyncBtn() {
+  if (!_fsBtn) return;
+  _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn);
+  // the OS window going borderless is not enough on its own - the band still docks between NavBar/player
+  // unless we also expand it over them, or "fullscreen" just makes the whole app bigger with lyrics unchanged
+  var root = document.getElementById("qz-sl-root"); if (root) root.classList.toggle("qz-sl-fullscreen", _fsOn);
+}
 function _fsEsc(e) { if (e.key === "Escape" && _fsOn) { e.stopPropagation(); e.preventDefault(); fsExit(); } }
 function fsEnter() {
   if (_fsOn) return;
@@ -1585,7 +1599,7 @@ return function cleanup() {
   if (_queueDockT) clearTimeout(_queueDockT);
   if (_comboIv) clearInterval(_comboIv);
   if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; if (_origCAF) window.cancelAnimationFrame = _origCAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF + restore the paired cancel
-  if (_fsOn) { fsBridge(false); _fsOn = false; }
+  if (_fsOn) { fsBridge(false); _fsOn = false; if (container) container.classList.remove("qz-sl-fullscreen"); }
   document.removeEventListener("keydown", _fsEsc, true);
   if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
   try { window.__qzOnLeaveFS = null; } catch (e) {}
