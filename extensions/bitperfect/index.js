@@ -40,6 +40,23 @@ function setBpEnabled(v) { enabled = !!v; try { G.enabled = !!v; } catch (e) {} 
 // owns the stream: real Range seeking, no starvation, no ftyp-as-track-boundary guessing. The web element
 // still plays muted for its clock / scrobble / queue, and we drive mpv one-directionally off real events.
 // Flag lives on G (the tap dispatches globally and must see the same value across a re-init).
+// --- direct-mode outcome counter (local only, no network) ------------------------------------------
+// Direct stream is opt-in ("experimental") and the question blocking a default flip is simply: how often
+// does getFileUrl fail to produce a playable URL, and why. `directfail` already degrades gracefully (that
+// track plays through the muted web element, the next one retries), but nothing counted it, so the answer
+// was a guess. Keep a denominator (direct loads attempted) beside the reasons; read it with
+// JSON.parse(localStorage["qz-bitperfect:directstats"]). Bounded, swallowed, and never on the audio path.
+var LS_DSTATS = "qz-bitperfect:directstats";
+function dstat(field) {
+  try {
+    var o = {};
+    try { o = JSON.parse(localStorage.getItem(LS_DSTATS) || "{}") || {}; } catch (e) { o = {}; }
+    if (typeof o !== "object") o = {};
+    o[field] = (o[field] || 0) + 1;
+    o.since = o.since || new Date().toISOString().slice(0, 10);
+    localStorage.setItem(LS_DSTATS, JSON.stringify(o));
+  } catch (e) {}
+}
 var LS_DIRECT = "qz-bitperfect:direct";
 function directOn() { try { return localStorage.getItem(LS_DIRECT) === "1"; } catch (e) { return false; } }
 G.direct = directOn();
@@ -282,7 +299,7 @@ function loadCurrent() {
       if (String(tr.id) === _lastDirectId) return;
       _lastDirectId = String(tr.id);
       lastLoadAt = Date.now();
-      BP.send({ type: "directtrack", trackId: tr.id, token: tok, appId: BP_APPID, bundleUrl: bundleUrl(), playing: isPlaying(), startMs: posMs() }); return;
+      dstat("attempts"); BP.send({ type: "directtrack", trackId: tr.id, token: tok, appId: BP_APPID, bundleUrl: bundleUrl(), playing: isPlaying(), startMs: posMs() }); return;
     }
     // no token (not logged in yet) - fall through to plain transport; the next track change retries.
   }
@@ -607,7 +624,7 @@ var offBP = BP.on(function (m) {
     // Clear the measured terms like every OTHER give-up path does (:467, :482). Without this the badge kept
     // reporting the last successful track's rate while the audible path is the browser mixer, i.e. it claimed
     // bit-perfect over converted audio.
-    directFailed = true; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
+    dstat("fail_" + (m.reason || "unknown")); directFailed = true; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
     if (!directToldOnce) { directToldOnce = true; toast(m.reason === "restricted" ? "This track has no direct stream - playing normally" : "Direct stream unavailable right now - playing normally"); }
   }
   // The sidecar is gone for good. Unmuting once is NOT enough: syncTick re-mutes every 300ms while
