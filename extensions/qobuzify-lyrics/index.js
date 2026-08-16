@@ -216,6 +216,7 @@ function artistMatch(want, have) { want = norm(cleanArtist(want)); have = norm(h
 var CACHE_VER = 13; // bumped 2026-08-01: purge caches that predate ISRC-stamped entries - CDP found a poisoned entry (Castle on the Hill|Ed Sheeran holding Shape of You's lyrics) that the name+artist key served forever because the duration self-heal never triggered. 12 (2026-07-21): lyrKey carries feat credits now (same-title solo vs feat. versions split); pre-split entries may hold the wrong version. 11 (2026-07-07): match server PARSE_VER, drop the leaked source tag / credits footer. 10 (2026-07-05): reject wrong/reused-ISRC Spotify matches
 var LS_KEY = "qz-lyr-cache";
 var lsCache = {};
+var _cacheDirty = false, _cacheLastFlush = 0;
 try { var _raw = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); if (_raw && _raw.ver === CACHE_VER) lsCache = _raw.songs || {}; } catch (e) {}
 function lyrKey(track) {
   var k = ((track && track.name) || "") + "|" + ((track && track.artist) || "");
@@ -232,6 +233,15 @@ function saveCache() {
     try { var k2 = Object.keys(lsCache).sort(function (a, b) { return (lsCache[a].t || 0) - (lsCache[b].t || 0); }); for (var j = 0; j < Math.ceil(k2.length / 2); j++) delete lsCache[k2[j]]; localStorage.setItem(LS_KEY, JSON.stringify({ ver: CACHE_VER, songs: lsCache })); } catch (_) {}
   }
 }
+// Debounced cache persistence: writers mark dirty, the tick coalesces into one saveCache() per 5s
+// (or immediately on hide/teardown) - localStorage.setItem is synchronous and serialises the whole cache.
+function flushLyricsCache(force) {
+  if (!_cacheDirty) return;
+  var now = Date.now();
+  if (!force && now - _cacheLastFlush < 5000) return;
+  _cacheLastFlush = now; _cacheDirty = false;
+  saveCache();
+}
 // --- Cloudflare proxy (api.qobuzify.app): shared server-side cache + resolution. The client sends
 // track metadata and gets back pre-parsed, time-aligned lyrics plus a codename in a single
 // round-trip - no client-side parsing, and no upstream is ever contacted from the client.
@@ -243,15 +253,18 @@ var REFETCH_BASE = "https://api.qobuzify.app/v1/refetch";
 // the background non-reactive, and Lyra tolerates null. Memoised per track so a re-open or a re-render does
 // not re-request; the server serves warm hits in ~60ms and marks them immutable, so this is cheap.
 var ANALYSIS_BASE = "https://api.qobuzify.app/v2/analysis";
-var _anCache = {}, _anFor = null, _anReady = null;
+var _anCache = {}, _anFor = null, _anReady = null, _lowFx = false;
 function analysisKey(t) { return ((t && t.name) || "") + "|" + ((t && t.artist) || ""); }
 // Apply whatever we currently hold. Split out from the fetch because the two happen in EITHER order: lyrics
 // (and therefore the fetch) are resolved on a track change, but `_own` only exists once the lyrics VIEW is
 // built - so a fetch that completes while the view is closed must still land when the view opens, and
 // buildShell calls this after creating the renderer. Idempotent, so calling it twice is harmless.
+// Also the low-fx off switch: setAnalysis(null) turns analysisOn off inside Lyra, which stops it from ever
+// calling the background's pulse() driver - so low-fx mode is enforced through Lyra's own public API instead
+// of reaching into its (generated, vendor-owned) internals.
 function applyAnalysis() {
   if (!OWN_RENDERER || !_own || !_own.setAnalysis) return;
-  try { _own.setAnalysis(_anReady || null); } catch (e) {}
+  try { _own.setAnalysis(_lowFx ? null : (_anReady || null)); } catch (e) {}
 }
 function fetchAnalysis(track) {
   if (!track || !track.name || !track.artist) return Promise.resolve(null);
@@ -267,6 +280,7 @@ function fetchAnalysis(track) {
   return _origFetch(u).then(function (r) { return r.json(); }).then(function (j) {
     var a = (j && j.ok && j.analysis && j.analysis.available) ? j.analysis : null;
     _anCache[k] = a;                     // cache the null too - a track with no analysis must not be re-asked
+    if (Object.keys(_anCache).length > 24) _anCache = {}; // bound the map; a warm re-fetch is cheap
     return a;
   }).catch(function () { return null; });
 }
@@ -303,7 +317,7 @@ function ownRefetch() {
         // mirror resolveLyrics' cache policy: persist word-by-word, drop line-level so it stays re-resolvable
         if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: (t && t.isrc) || null, t: Date.now() }; }
         else { delete lsCache[key]; }
-        saveCache();
+        _cacheDirty = true;
         if (_own && _own.render) _own.render(pr.lyrics);   // r.load() the replacement
         return "Switched to a different version";
       }
@@ -356,14 +370,14 @@ function resolveLyrics(track) {
   // (>10s over), they belong to a different (longer) same-title song - drop them and re-resolve from
   // the proxy (mirrors the server's durationOk). this is what fixed Selena's "Wolves" (193s) cached
   // under Baby Keem's "Wolves" (83s) from before the client started sending duration.
-  if (hit && hit.ly && track.durationMs && lyrSpanSec(hit.ly) * 1000 > track.durationMs + 10000) { delete lsCache[key]; saveCache(); hit = null; }
+  if (hit && hit.ly && track.durationMs && lyrSpanSec(hit.ly) * 1000 > track.durationMs + 10000) { delete lsCache[key]; _cacheDirty = true; hit = null; }
   // ISRC guard. The cache key is only name+artist(+feats), so two different recordings that share a title
   // collide on one entry, and a poisoned write (CDP caught "Castle on the Hill|Ed Sheeran" holding Shape
   // of You's lyrics) then serves the wrong song forever - the duration self-heal above only catches a
   // LONGER mismatch. The ISRC uniquely identifies the recording, so if this track has one and it disagrees
   // with what the entry was stored against, the entry is for a different song: drop it and re-resolve.
-  if (hit && hit.isrc && track.isrc && hit.isrc !== track.isrc) { delete lsCache[key]; saveCache(); hit = null; }
-  pushAnalysis(track); // fire-and-forget: audio-reactive background data, never gates the lyric render
+  if (hit && hit.isrc && track.isrc && hit.isrc !== track.isrc) { delete lsCache[key]; _cacheDirty = true; hit = null; }
+  if (ownViewOpen()) pushAnalysis(track); // fire-and-forget: audio-reactive background data, never gates the lyric render
   if (hit && hit.ly) { hit.t = Date.now(); if (hit.src) curLyricSource = hit.src; return Promise.resolve(hit.ly); }
   return proxyLyrics(track).then(function (pr) {
     if (pr && pr.ok && pr.hasLyrics && pr.lyrics) {
@@ -371,7 +385,7 @@ function resolveLyrics(track) {
       // persist only high-confidence lyrics (the proxy sets pr.cacheable for word-by-word / syllable).
       // line-level results get shown but not cached, so they stay re-resolvable (and can upgrade to
       // word-by-word on a later play) instead of getting locked into the local cache.
-      if (pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: track.isrc || null, t: Date.now() }; saveCache(); }
+      if (pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: track.isrc || null, t: Date.now() }; _cacheDirty = true; }
       return pr.lyrics;
     }
     return null;
@@ -406,7 +420,7 @@ function prefetchNext() {
       if (meta.durationMs) u += "&durationMs=" + meta.durationMs;
       if (meta.isrc) u += "&isrc=" + encodeURIComponent(meta.isrc);
       _origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).then(function (pr) {
-        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || null, isrc: meta.isrc || null, t: Date.now() }; saveCache(); }
+        if (pr && pr.ok && pr.hasLyrics && pr.lyrics && pr.cacheable) { lsCache[key] = { ly: pr.lyrics, src: pr.source || null, isrc: meta.isrc || null, t: Date.now() }; _cacheDirty = true; }
       }).catch(function () {});
     }).catch(function () {});
   } catch (e) {}
@@ -536,7 +550,7 @@ function paintMesh(layer, pal) {
 function setCoverBg(url) {
   // Feed Lyra's ambient background the same cover this drives on the extension's own #qz-cbg, so the
   // renderer's album-art backdrop always tracks the playing song. No-op when the own renderer is off.
-  try { if (OWN_RENDERER && _own && _own.setCover && url) _own.setCover(url); } catch (e) {}
+  try { if (OWN_RENDERER && _own && _own.setCover && url && ownViewOpen()) _own.setCover(url); } catch (e) {}
   if (!url || _cbgWant === url) return; // dedupe repeated/echoed songchange emits
   if (OWN_RENDERER) { _cbgWant = url; return; } // Lyra's opaque .lyra-bg covers the view - skip the hidden legacy mesh (image decode + palette + five blurred infinite animations painting zero visible pixels); _cbgWant still tracks the cover for ownEnsure's priming
   ensureCoverBg();
@@ -573,7 +587,12 @@ function ensureContainer() {
     container = document.createElement("div");
     container.className = "Root__main-view";
     container.id = "qz-sl-root";
-    container.style.cssText = "position:fixed;inset:0;z-index:2147483500;display:none;background:#000;";
+    // top/bottom are fallbacks - qzPanelDock() measures the real chrome at open and on resize.
+    // position:absolute inside .ui-responsive (the app's fixed root) shares its stacking context:
+    // chrome panels (panel-top/-bottom, holding NavBar + bottom player) are z=250, content below that.
+    // z=249 sits just under the chrome - above the content, below the bars and their popovers.
+    // (absolute, not fixed: a fixed element escapes to the root stacking context, above .ui-responsive.)
+    container.style.cssText = "position:absolute;top:56px;left:0;right:0;bottom:75px;z-index:249;display:none;";
     var mvc = document.createElement("div");
     mvc.className = "main-view-container";
     mvc.style.cssText = "position:absolute;inset:0;";
@@ -583,14 +602,43 @@ function ensureContainer() {
     vp.style.cssText = "position:absolute;inset:0;overflow:auto;";
     mvc.appendChild(vp);
     container.appendChild(mvc);
-    document.body.appendChild(container);
+    // Append into .ui-responsive (the app's fixed root) instead of <body> so the band shares the
+    // app's stacking context and the z=249 layering below the chrome panels holds against the bars.
+    var appRoot = document.querySelector(".ui-responsive") || document.body;
+    appRoot.appendChild(container);
   }
+  qzPanelDock();
+  if (!_dockBound) { _dockBound = true; try { window.addEventListener("resize", qzPanelDock); } catch (e) {} }
   // the data-overlayscrollbars-viewport attr triggers OverlayScrollbars CSS that
   // hides the div until the OS lib inits (never happens here) - force it visible
   // and size the page to fill, or the whole lyrics view renders at 0x0.
   Q.css("qz-sl-size",
     "#qz-sl-root [data-overlayscrollbars-viewport]{display:block!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;overflow:auto!important;}" +
     "#QzLyricsPage{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;}");
+  // Id-scoped selectors beat Lyra's class rules without !important.
+  Q.css("qz-sl-panel",
+    "#qz-sl-root{background:rgba(10,10,14,.58);backdrop-filter:blur(26px) saturate(1.3);-webkit-backdrop-filter:blur(26px) saturate(1.3);" +
+    "border-top:1px solid rgba(255,255,255,.09);border-bottom:1px solid rgba(255,255,255,.05);" +
+    "overflow:hidden;animation:qz-sl-in .42s cubic-bezier(.32,.72,.24,1);}" +
+    // display:none->block restarts the keyframe = slide-in on open; close stays instant (gating contract untouched)
+    "@keyframes qz-sl-in{from{transform:translateY(100%);}to{transform:translateY(0);}}" +
+    "@media (prefers-reduced-motion:reduce){#qz-sl-root{animation:none;}}" +
+    "#qz-sl-root::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;z-index:30;pointer-events:none;" +
+    "background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--qz-accent,#e8eaed) 40%,transparent) 50%,transparent);}" +
+    // fullscreen toggle: the band normally docks between NavBar/player-bar (qzPanelDock's inline top/bottom/right).
+    // !important here beats those inline styles so ONLY the lyrics fill the window - NavBar and the player
+    // bar sit at z=250 in .ui-responsive's stacking context, so this has to clear that to actually cover them.
+    "#qz-sl-root.qz-sl-fullscreen{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:9999!important;border:0!important;}" +
+    "#qz-sl-root .lyra-bg{background:rgba(9,9,13,.34);}" + // let the glass read through; art layers + scrim still darken
+    "#qz-sl-root .lyra-line{font-size:clamp(26px,3vw,46px);}" + // under Lyra's 52px cap; the band is shorter
+    "#qz-sl-root .lyra-dot{font-size:clamp(26px,3vw,46px);}" +
+    // no in-panel close button: closing is the player-bar lyrics toggle or clicking a top-bar tab
+    "#qz-sl-root .lyra-close{display:none!important;}");
+  // while lyrics are open the active top-bar tab renders exactly like an inactive one (gated on the
+  // persistent root class, so a React re-render of the NavBar can't undo it)
+  Q.css("qz-nav-dim",
+    ".qz-lyrics-open .NavBar .ui-block-nav-item.bg-surface-default-secondary{background-color:transparent!important;outline-color:transparent!important;cursor:pointer!important;}" +
+    ".qz-lyrics-open .NavBar .ui-block-nav-item.bg-surface-default-secondary:hover{background-color:rgb(36,36,36)!important;}");
   // our blurred album-cover background (replaces the bundle's dead WebGL one)
   Q.css("qz-cbg-style",
     // only the lyrics view goes neutral-accented: override the inherited global brand --qz-accent inside #qz-sl-root.
@@ -621,6 +669,13 @@ function ensureContainer() {
     "#qz-cbg .qz-blob.b3{animation:qzb3 17s linear -10s infinite;}" +
     "#qz-cbg .qz-blob.b4{animation:qzb4 23s linear -5s infinite;}" +
     "#qz-sl-root.qz-paused #qz-cbg .qz-blob{animation-play-state:paused;}" +
+    "#qz-sl-root.qz-paused .lyra-bg-layer{animation-play-state:paused;}" +
+    // low-fx (appCapabilities "low"): freeze the background static. CSS kills the keyframes and overrides
+    // any inline transform/scale/opacity pulse() already wrote; qzApplyFxMode also cuts pulse() off at the
+    // source via setAnalysis(null) (see applyAnalysis), so this CSS is a belt-and-suspenders visual guarantee.
+    "#qz-sl-root.qz-lowfx .lyra-bg-layer,#qz-sl-root.qz-lowfx .lyra-bg-blob{animation:none!important;transform:none!important;}" +
+    "#qz-sl-root.qz-lowfx .lyra-bg-grp{scale:1!important;}" +
+    "#qz-sl-root.qz-lowfx .lyra-bg-energy{opacity:0!important;}" +
     "#qz-sl-root .qz-dynamic-bg,#qz-sl-root .ColorBackground{display:none!important;}" +
     "#qz-lyric-server{font:600 11px/1.4 system-ui,sans-serif;opacity:.5;text-align:center;letter-spacing:.04em;margin-top:3px;}" +
     "#qz-lyric-server b{color:var(--qz-accent,#e8eaed);font-weight:700;}" +
@@ -697,10 +752,8 @@ function ensureContainer() {
   // it is intentionally not surfaced. Control bar left with just the auto Romanization toggle (non-Latin) + Close.
   Q.css("qz-remove-controls",
     "#SettingsToggle,#CinemaView,#NowBarToggle,#NowBarSideToggle,#SidebarModeToggle,#CompactModeToggle,#LyricsManager{display:none!important;}" +
-    // IMPORTANT: scoped to #qz-sl-root - a global `.icon-settings` rule hides the NATIVE Qobuz
-    // account-menu row "Configuracoes" (class MenuItem__text icon-settings) whenever this
-    // extension is active. CDP-verified: the only .icon-settings element in the whole page is
-    // that native row; nothing inside the lyrics view uses these classes.
+    // Scoped to #qz-sl-root: a global `.icon-settings` rule hides the NATIVE account-menu row
+    // ("Configuracoes") whenever this extension is active - nothing inside the lyrics view uses it.
     "#qz-sl-root .MenuItem__text.icon-settings,#qz-sl-root .icon-settings{display:none!important;}" +
     ".sl-modal-overlay:has(.slmodal-settingsPanel){display:none!important;}");
   if (!OWN_RENDERER) ensureCoverBg(); // Lyra brings its own opaque background; don't build the legacy mesh behind it
@@ -708,6 +761,28 @@ function ensureContainer() {
   // The clock is live and lyrics arrive synced, so SL's native per-word gradient
   // glow renders correctly - no readable-fallback override needed. (Unsynced
   // "static" tracks are styled bright by SL's own CSS, so they stay readable.)
+}
+// Flyout geometry: dock between NavBar (bottom) and player bar (top), measured live.
+// Lyra's own ResizeObserver on the viewport re-measures the lyric layout when these edges move.
+var _dockBound = false, _navClickBound = false, _lastQueueOpen = false, _queueDockT = null;
+function qzPanelDock() {
+  if (!ownViewOpen()) return; // skip the layout reads while the flyout is hidden; onRouteChange re-docks on open
+  var top = 56, bottom = 75, right = 0;
+  try {
+    var nav = document.querySelector(".NavBar");
+    if (nav) { var nr = nav.getBoundingClientRect(); if (nr.height > 0 && nr.bottom > 0 && nr.bottom < window.innerHeight) top = Math.round(nr.bottom); }
+  } catch (e) {}
+  try {
+    var pl = document.querySelector(".player");
+    if (pl) { var pr = pl.getBoundingClientRect(); if (pr.height > 0 && pr.top > 0 && pr.top < window.innerHeight) bottom = Math.round(window.innerHeight - pr.top); }
+  } catch (e) {}
+  try {
+    var pq = document.querySelector(".Playqueue--isVisible"); // the play-queue panel slides in on the right; shrink the lyric band so both fit side-by-side. Use the panel's width (stable, animation-independent) rather than its live left edge (which animates from off-screen and would read 0 mid-slide).
+    if (pq) { var qr = pq.getBoundingClientRect(); if (qr.width > 0 && qr.height > 0) right = Math.round(qr.width); }
+  } catch (e) {}
+  container.style.top = top + "px";
+  container.style.bottom = bottom + "px";
+  container.style.right = right + "px";
 }
 // suppress the line fade only during the brief rebuild window after the window regains focus /
 // becomes visible / the lyrics route opens (see qz-sl-refocus above). outside this window every ease
@@ -722,8 +797,11 @@ function qzSuppressFade(ms) {
 function _onWinFocus() { qzSuppressFade(800); }
 function _onVis() { if (!document.hidden) qzSuppressFade(800); }
 try {
-  window.addEventListener("focus", _onWinFocus, true);
-  document.addEventListener("visibilitychange", _onVis, true);
+  if (!OWN_RENDERER) {
+    window.addEventListener("focus", _onWinFocus, true);
+    document.addEventListener("visibilitychange", _onVis, true);
+  }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) flushLyricsCache(true); });
 } catch (e) {}
 // --- OUR renderer (QZLyricsRenderer, prepended at build): stable-DOM karaoke, no vendor ---
 var _own = null, _ownKey = null, _ownReq = 0;
@@ -763,6 +841,8 @@ function ownRenderCurrent() {
   // rendered the older song and never retried the new one. Snapshot curMeta so a mid-resolve change
   // can't mislabel the result.
   var myReq = ++_ownReq, snap = curMeta;
+  // clear the previous track's lyric wall so only the loading status shows (status() overlays, never clears)
+  if (r.lineCount) { try { r.render({ lines: [] }); } catch (e) {} }
   r.status("Loading lyrics…");
   resolveLyrics(snap).then(function (ly) {
     if (myReq !== _ownReq) return; // a newer track superseded this resolve
@@ -781,31 +861,103 @@ function ownRenderCurrent() {
 }
 var _ownDiagOn = false; try { _ownDiagOn = !!localStorage.getItem("qz-own-diag-on"); } catch (e) {} // dev-only breadcrumb, off unless armed
 function ownDiag(o) { if (!_ownDiagOn) return; try { localStorage.setItem("qz-own-diag", JSON.stringify(Object.assign({ t: Date.now() }, o))); } catch (e) {} }
-function ownOpen() { var r = ownEnsure(); if (r) ownRenderCurrent(); }
+// Qobuz's visual-effects mode ("Baixo/Alto/Automático") lives as `appCapabilities` in the Redux
+// `settings` slice ("low"|"high"|"auto") - not in localStorage or any class, so read it via a React
+// fiber walk. "low" = no effects -> freeze the Lyra background into a static, lighter visual.
+function qzAppCapabilities() {
+  try {
+    var sels = [".ui-responsive", ".Root", "#main", "#root", "body"];
+    for (var si = 0; si < sels.length; si++) {
+      var el = document.querySelector(sels[si]);
+      if (!el) continue;
+      var fk = Object.keys(el).find(function (k) { return k.indexOf("__reactFiber") === 0 || k.indexOf("__reactInternal") === 0 || k.indexOf("__reactContainer") === 0; });
+      if (!fk) continue;
+      var fiber = el[fk];
+      while (fiber) {
+        var p = fiber.memoizedProps;
+        if (p) {
+          if (p.store && p.store.getState) { var s = p.store.getState(); return (s.settings && s.settings.appCapabilities) || null; }
+          if (p.value && p.value.store && p.value.store.getState) { var s2 = p.value.store.getState(); return (s2.settings && s2.settings.appCapabilities) || null; }
+        }
+        fiber = fiber.return;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+function qzApplyFxMode() {
+  var low = qzAppCapabilities() === "low";
+  var root = document.getElementById("qz-sl-root");
+  if (root) root.classList.toggle("qz-lowfx", low);
+  if (low !== _lowFx) { _lowFx = low; applyAnalysis(); } // stop/resume the background's audio-reactive pulse via Lyra's public setAnalysis API - CSS above freezes the visuals either way, this also stops the per-frame JS work behind them
+}
+function ownOpen() { var r = ownEnsure(); qzApplyFxMode(); if (r) ownRenderCurrent(); if (_own && _own.setCover && _cbgWant) { try { _own.setCover(_cbgWant); } catch (e) {} } }
 function ownClose() { if (_own) _own.stop(); }
 function ownOnTrackChange() {
-  if (!(OWN_RENDERER && ownViewOpen())) return;
-  // Do NOT blanket-null _ownKey here. This runs several times per track change (the poll's remap, the
-  // ISRC/title correction, the empty-title resolve-by-id), and nulling the key defeats ownRenderCurrent's
-  // "already rendered this track" short-circuit, so every one of those calls re-ran r.render() and Lyra
-  // stacked another copy of the same lyrics. Let the lyrKey check decide instead: a genuinely new track
-  // has a new key and re-renders; a repeat call for the same track short-circuits to r.start().
-  if (_own) _own.scrollToTop();
-  ownRenderCurrent();
+  if (!OWN_RENDERER) return;
+  if (ownViewOpen()) {
+    // Do NOT blanket-null _ownKey here. This runs several times per track change (the poll's remap, the
+    // ISRC/title correction, the empty-title resolve-by-id), and nulling the key defeats ownRenderCurrent's
+    // "already rendered this track" short-circuit, so every one of those calls re-ran r.render() and Lyra
+    // stacked another copy of the same lyrics. Let the lyrKey check decide instead: a genuinely new track
+    // has a new key and re-renders; a repeat call for the same track short-circuits to r.start().
+    if (_own) _own.scrollToTop();
+    ownRenderCurrent();
+  } else if (curMeta) { try { resolveLyrics(curMeta); } catch (e) {} } // flyout closed: warm the lyrics cache in the background so a later open is instant (resolveLyrics is lsCache-backed, so the open then hits the cache)
+}
+
+// React swaps the sprite <use> to the filled "Active" variant on the active tab, and CSS can't swap
+// a <use> symbol - so we swap it in JS while the flyout is open (and restore it ourselves on close).
+var dimmedNavIcon = null; // { use, activeHref } while dimmed
+function dimActiveNavIcon() {
+  undimNavIcon();
+  var item = document.querySelector(".NavBar .ui-block-nav-item.outline-separator-border");
+  var use = item && item.querySelector("use");
+  if (!use) return; // e.g. the Stats tab's inline SVG has no sprite use
+  var href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
+  if (href.slice(-6) !== "Active") return; // no filled variant to undo
+  var base = href.slice(0, -6);
+  use.setAttribute("href", base);
+  use.setAttribute("xlink:href", base);
+  dimmedNavIcon = { use: use, activeHref: href };
+}
+function undimNavIcon() {
+  var d = dimmedNavIcon; dimmedNavIcon = null;
+  if (!d) return;
+  // skip restore if the user navigated away: React already reset that tab's icon to outline
+  if (d.use.isConnected && d.use.closest(".ui-block-nav-item.outline-separator-border")) {
+    d.use.setAttribute("href", d.activeHref);
+    d.use.setAttribute("xlink:href", d.activeHref);
+  }
 }
 
 function onRouteChange(loc) {
   var open = loc && loc.pathname === "/QzLyrics";
   if (OWN_RENDERER) {
-    if (container) container.style.display = open ? "block" : "none";
+    if (container) { container.style.display = open ? "block" : "none"; if (open) { _lastQueueOpen = !!document.querySelector(".Playqueue--isVisible"); qzPanelDock(); } }
+    // NO real router navigation here: the origin screen stays mounted behind the flyout (no re-render
+    // blink), and "return to where you were" is automatic on close. The root class drives the tab deselection.
+    document.documentElement.classList.toggle("qz-lyrics-open", !!open);
+    if (open) dimActiveNavIcon(); else undimNavIcon();
     if (open) ownOpen(); else ownClose();
     var btnO = document.getElementById("qz-sl-btn"); if (btnO) btnO.classList.toggle("qz-sl-btn--active", !!open);
     return;
   }
   if (open) qzSuppressFade(850);
-  if (container) container.style.display = open ? "block" : "none";
+  if (container) { container.style.display = open ? "block" : "none"; if (open) { _lastQueueOpen = !!document.querySelector(".Playqueue--isVisible"); qzPanelDock(); } }
+  document.documentElement.classList.toggle("qz-lyrics-open", !!open);
+  if (open) dimActiveNavIcon(); else undimNavIcon();
   var btn = document.getElementById("qz-sl-btn");
   if (btn) btn.classList.toggle("qz-sl-btn--active", !!open);
+}
+
+// capture-phase: any top-bar click closes the lyrics (covers clicking the SAME tab, which may not
+// emit a route change). Never preventDefault/stopPropagation - Qobuz navigates naturally.
+function _onNavClick(e) {
+  if (!ownViewOpen()) return;
+  var a = e.target && e.target.closest ? e.target.closest(".NavBar a[href^='/']") : null;
+  if (!a) return;
+  try { window.Spicetify.Platform.History.push({ pathname: "/" }); } catch (e) {}
 }
 
 // --- the Spicetify shim ---
@@ -900,7 +1052,15 @@ function ensureButton() {
     if (!h) return;
     if (h.location.pathname === "/QzLyrics") h.push({ pathname: "/" }); else h.push({ pathname: "/QzLyrics" });
   });
-  Q.css("qz-sl-btn-css", ".qz-sl-btn--active{color:var(--qz-accent,#3DA8FE) !important;}");
+  // Match native transport controls: bare icon, #e6e6e6 default, opacity hover fade, Qobuz blue
+  // active (orange under .player.hires). Scoped to .qz-sl-btn so shared qz-pbtn styles are untouched.
+  Q.css("qz-sl-btn-css",
+    ".qz-pbtn.qz-sl-btn{width:36px;height:36px;color:#e6e6e6;transition:background .15s,color .12s,transform .08s,opacity .15s;}" +
+    ".qz-pbtn.qz-sl-btn svg{width:24px;height:24px;}" +
+    ".qz-pbtn.qz-sl-btn:hover{background:transparent;color:#e6e6e6;opacity:.7;}" +
+    ".qz-pbtn.qz-sl-btn.qz-sl-btn--active{color:#0070EF !important;}" +
+    ".hires .qz-pbtn.qz-sl-btn.qz-sl-btn--active{color:#F5A623 !important;}" +
+    ".qz-slot-right:has(#qz-sl-btn){margin-right:-9px;}");
   // register in the shared right-zone slot (runtime places + spaces + keeps alive)
   if (Q.playerSlot) { var slot = Q.playerSlot({ id: "qz-lyrics", zone: "right", order: 10, el: btn }); return function () { slot.remove(); }; }
   // fallback for an older runtime without the slot API
@@ -957,6 +1117,7 @@ function bpAudioOffset() {
 }
 function autoOffsetMs() { return _offOverride != null ? _offOverride : bpAudioOffset(); }
 function setLyricServerTag() {
+  if (OWN_RENDERER) return; // under Lyra the full-subtree scan can never find vendor credit lines - dead work
   try {
     var root = document.getElementById("qz-sl-root"); if (!root || root.style.display === "none") return; // skip the full-subtree scan while the lyrics view is closed
     if (_tagSong === curLyricSource && document.getElementById("qz-lyric-server")) return; // already tagged this source - nothing to re-scan
@@ -1185,10 +1346,10 @@ function _comboTick() {
 }
 
 // --- boot ---
-var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null;
+var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null, offRealRoute = null;
 (async function boot() {
   try {
-    await Promise.resolve(); // let the rest of the module finish evaluating (FS icon vars live below) before any DOM work; boot used to inherit this ordering from the React-import await, which the own path no longer performs
+    await Promise.resolve(); // let the rest of the module finish evaluating (the FS bridge lives below) before any DOM work; boot used to inherit this ordering from the React-import await, which the own path no longer performs
     // The lyrics view builds on a small Spicetify-compatible host object (Platform.History, Player) that
     // Qobuzify's extensions target. Lyra reads only that scaffolding and is React-free, so the host is
     // built directly with no network imports (an offline launch never blocks the button or the lyrics).
@@ -1265,11 +1426,34 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
     };
     offBridge = Q.player.onChange(handleTrack);
     handleTrack(Q.player.getTrack());
-    tickIv = setInterval(function () { handleTrack(Q.player.getTrack()); emit("onprogress", { data: Q.player.getPositionMs() }); setLyricServerTag(); }, 250);
+    var _fxCounter = 0;
+    function qzTick() {
+      handleTrack(Q.player.getTrack());
+      if (listeners.onprogress.length) emit("onprogress", { data: Q.player.getPositionMs() });
+      setLyricServerTag();
+      flushLyricsCache();
+      if (++_fxCounter >= 20) { _fxCounter = 0; if (ownViewOpen()) qzApplyFxMode(); }
+      if (ownViewOpen()) {
+        var _pqOpen = !!document.querySelector(".Playqueue--isVisible");
+        if (_pqOpen !== _lastQueueOpen) {
+          _lastQueueOpen = _pqOpen;
+          qzPanelDock();
+          if (_pqOpen) { if (_queueDockT) clearTimeout(_queueDockT); _queueDockT = setTimeout(function () { _queueDockT = null; if (ownViewOpen()) qzPanelDock(); }, 400); } // re-dock after the slide-in animation settles to the final width
+        }
+      }
+      tickIv = setTimeout(qzTick, ownViewOpen() ? 250 : (document.hidden ? 2000 : 1000));
+    }
+    tickIv = setTimeout(qzTick, 250);
     var lastPlaying = Q.player.isPlaying();
     offPP = Q.subscribe(function () { var p = Q.player.isPlaying(); if (p !== lastPlaying) { lastPlaying = p; emit("onplaypause", { data: { isPaused: !p } }); var _r = document.getElementById("qz-sl-root"); if (_r) _r.classList.toggle("qz-paused", !p); } }); // freeze the mesh orbits while paused (window never goes document.hidden)
 
     offBtn = ensureButton();
+    // we never navigate the real router on open, so ANY real route change while open is a genuine
+    // user navigation -> close (safety net; the click listener below is the primary path)
+    if (!offRealRoute && Q.onRoute) offRealRoute = Q.onRoute(function (path) {
+      if (path && ownViewOpen()) { try { window.Spicetify.Platform.History.push({ pathname: "/" }); } catch (e) {} }
+    });
+    if (!_navClickBound) { _navClickBound = true; document.addEventListener("click", _onNavClick, true); }
     // Vendor-only: the bloom driver polls #QzLyricsPage/.line.Active and pulses #qz-cbg, none of which
     // exist under Lyra (it renders .lyra-line/.lyra-active and pulses its own background on beats via
     // setAnalysis) - so under OWN_RENDERER this was a 13Hz zombie whose feature was silently dead.
@@ -1300,27 +1484,35 @@ var offBridge = null, tickIv = null, offPP = null, offBtn = null, tokenIv = null
   } catch (e) { try { console.error("[QobuzifyLyrics] boot failed:", e); } catch (_) {} }
 })();
 
-// ---- TRUE FULLSCREEN (OS borderless, via the main-process RPC bridge) -----------------------
-// The lyrics view (#qz-sl-root) is ALREADY a body-level, position:fixed, max-z, opaque overlay
-// (see ensureContainer), so it covers the whole app window on its own - no chrome to hide, and no
-// containing-block trap (it is a direct <body> child). "True fullscreen" just pops the OS WINDOW
-// itself to borderless full-monitor: POST to the localhost bridge (:7673, the Discord-RPC one) and
-// the main process calls BrowserWindow.setFullScreen. An expand/collapse button lives in the view;
+// ---- TRUE FULLSCREEN (OS borderless + the lyrics band expanded over the chrome) --------------
+// The lyrics view (#qz-sl-root) is docked as a flyout band between NavBar and the player bar, so
+// two things have to happen together or "fullscreen" just makes the app window bigger with NavBar
+// and the player bar still visible around an unchanged band:
+// 1. OS WINDOW -> borderless full-monitor: IPC (contextBridge -> ipcMain -> win.setFullScreen) or,
+//    as a fallback, POST to the localhost bridge (:7673, the Discord-RPC one) so the main process
+//    can call BrowserWindow.setFullScreen.
+// 2. THE BAND -> qz-sl-fullscreen (toggled in fsSyncBtn) makes #qz-sl-root position:fixed/inset:0
+//    at a z-index above the chrome panels, so it actually covers NavBar + the player bar instead of
+//    just docking inside the bigger window.
 // Esc exits; if the view closes while full-monitor we drop back out so you are never stranded.
+// __QZFS__ and any F11 accelerator are wired up only in the dev wrapper's main process - the bake
+// most users run appends just rpc-main.js to the native main process, so it has neither. The in-view
+// button (via the POST fallback) is that build's ONLY path to true fullscreen: do not drop it in favor
+// of "F11 already does this", because on the bake nothing does.
 var _fsOn = false, _fsBtn = null, _fsObs = null;
 var FS_ICON_EXPAND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>';
 var FS_ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg>';
-// IPC first: contextBridge -> ipcMain -> win.setFullScreen, the exact call F11 makes. Nothing goes over
-// the network, so there is nothing left to block. The loopback POST below is why this button was the ONLY
-// broken fullscreen path: this page is https and the request to http://127.0.0.1 never left the renderer,
-// while the .catch swallowed the failure and fsEnter had already flipped the icon to "collapse" - so the
-// view claimed it was fullscreen and the window never moved. Keep the POST as a fallback for the Windows
-// bake, where rpc-main.js is appended to the native main process and __QZFS__ does not exist.
 function fsBridge(on) {
   try { if (window.__QZFS__ && window.__QZFS__.set) { window.__QZFS__.set(!!on); return; } } catch (e) {}
   try { fetch("http://127.0.0.1:7673/fullscreen", { method: "POST", body: JSON.stringify({ on: !!on }) }).catch(function () {}); } catch (e) {}
 }
-function fsSyncBtn() { if (!_fsBtn) return; _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn); }
+function fsSyncBtn() {
+  if (!_fsBtn) return;
+  _fsBtn.innerHTML = _fsOn ? FS_ICON_COLLAPSE : FS_ICON_EXPAND; _fsBtn.title = _fsOn ? "Exit full screen (Esc)" : "Full screen"; _fsBtn.classList.toggle("qz-lyrics-fs-on", _fsOn);
+  // the OS window going borderless is not enough on its own - the band still docks between NavBar/player
+  // unless we also expand it over them, or "fullscreen" just makes the whole app bigger with lyrics unchanged
+  var root = document.getElementById("qz-sl-root"); if (root) root.classList.toggle("qz-sl-fullscreen", _fsOn);
+}
 function _fsEsc(e) { if (e.key === "Escape" && _fsOn) { e.stopPropagation(); e.preventDefault(); fsExit(); } }
 function fsEnter() {
   if (_fsOn) return;
@@ -1384,12 +1576,13 @@ Q.css("qz-lyrics-fs-css", [
 ].join(""));
 
 return function cleanup() {
+  flushLyricsCache(true);
   // Lyra's teardown contract: destroy() (not just stop) releases its rAF loop, the document-level
   // visibilitychange listener, the ResizeObserver, the background layers and the DOM. A re-init without this
   // would leak an orphan renderer still ticking against a dead instance.
   if (_own) { try { _own.destroy(); } catch (e) {} _own = null; }
   if (offBridge) offBridge();
-  if (tickIv) clearInterval(tickIv);
+  if (tickIv) clearTimeout(tickIv);
   if (tokenIv) clearInterval(tokenIv);
   if (offPP) offPP();
   if (offBtn) offBtn();
@@ -1399,14 +1592,21 @@ return function cleanup() {
   if (_onUserScroll) { document.removeEventListener("wheel", _onUserScroll, true); document.removeEventListener("pointerdown", _onUserScroll, true); document.removeEventListener("touchstart", _onUserScroll, true); }
   window.__QZ_SL_SCROLLGUARD__ = false;
   try { window.removeEventListener("focus", _onWinFocus, true); document.removeEventListener("visibilitychange", _onVis, true); } catch (e) {}
+  try { window.removeEventListener("resize", qzPanelDock); } catch (e) {}
+  _dockBound = false; // allow ensureContainer to rebind on re-init
   if (_prefetchTimer) clearTimeout(_prefetchTimer);
   if (_refocusT) clearTimeout(_refocusT);
+  if (_queueDockT) clearTimeout(_queueDockT);
   if (_comboIv) clearInterval(_comboIv);
   if (window.__QZ_SL_RAFCO__ && _origRAF) { window.requestAnimationFrame = _origRAF; if (_origCAF) window.cancelAnimationFrame = _origCAF; window.__QZ_SL_RAFCO__ = false; } // un-cap rAF + restore the paired cancel
-  if (_fsOn) { fsBridge(false); _fsOn = false; }
+  if (_fsOn) { fsBridge(false); _fsOn = false; if (container) container.classList.remove("qz-sl-fullscreen"); }
   document.removeEventListener("keydown", _fsEsc, true);
   if (_fsObs) { try { _fsObs.disconnect(); } catch (e) {} _fsObs = null; }
   try { window.__qzOnLeaveFS = null; } catch (e) {}
   var _fsb = document.getElementById("qz-lyrics-fs-btn"); if (_fsb) _fsb.remove();
   var _fscss = document.getElementById("qz-lyrics-fs-css"); if (_fscss) _fscss.remove();
+  if (offRealRoute) { try { offRealRoute(); } catch (e) {} offRealRoute = null; }
+  if (_navClickBound) { try { document.removeEventListener("click", _onNavClick, true); } catch (e) {} _navClickBound = false; }
+  try { undimNavIcon(); } catch (e) {}
+  try { document.documentElement.classList.remove("qz-lyrics-open"); } catch (e) {}
 };
