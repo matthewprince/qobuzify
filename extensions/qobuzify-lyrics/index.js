@@ -629,6 +629,15 @@ function ensureContainer() {
     // !important here beats those inline styles so ONLY the lyrics fill the window - NavBar and the player
     // bar sit at z=250 in .ui-responsive's stacking context, so this has to clear that to actually cover them.
     "#qz-sl-root.qz-sl-fullscreen{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;z-index:9999!important;border:0!important;}" +
+    // Fullscreen used to restore GEOMETRY ONLY, so expanding just gave a bigger pane of frosted glass.
+    // The docked band is deliberately translucent (.58 glass + 26px blur) and deliberately dims Lyra's
+    // background to .34 so the app reads through it - correct for a docked panel, but it also cuts the
+    // CONTRAST the background animation lives in. The motion never changed; its amplitude did, which is
+    // why fullscreen still felt flat. Restore the pre-flyout presentation here and ONLY here: opaque
+    // black, no blur, full-strength art, and Lyra's own 52px type cap instead of the band's 46px.
+    "#qz-sl-root.qz-sl-fullscreen{background:#000!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}" +
+    "#qz-sl-root.qz-sl-fullscreen .lyra-bg{background:#000!important;}" +
+    "#qz-sl-root.qz-sl-fullscreen .lyra-line,#qz-sl-root.qz-sl-fullscreen .lyra-dot{font-size:clamp(26px,3.3vw,52px)!important;}" +
     "#qz-sl-root .lyra-bg{background:rgba(9,9,13,.34);}" + // let the glass read through; art layers + scrim still darken
     "#qz-sl-root .lyra-line{font-size:clamp(26px,3vw,46px);}" + // under Lyra's 52px cap; the band is shorter
     "#qz-sl-root .lyra-dot{font-size:clamp(26px,3vw,46px);}" +
