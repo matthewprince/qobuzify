@@ -87,6 +87,13 @@ Hide the top-nav items you don't use. A funnel button opens a checklist; hidden 
 ### ux-tweaks (Quality of Life)
 Four small annoyances fixed: double-click a track row to play it, the library opens on your last-used tab, your grid/list view choice sticks, and an optional switch to hide the Hi-Res badges. A good example of a small extension that adds a toggle to the Qobuzify settings panel.
 
+### hires-filter (Hi-Res Filter)
+A **Hi-Res** chip on the library that swaps the track list for just your 24-bit favourites, each row showing its exact bit depth and sample rate. Click a row to open its album, or hit play to start that track. 24-bit is the same line Qobuz's own Hi-Res Audio badge draws, so the chip and the badge can never disagree.
+
+It renders its own list rather than filtering the real one, because both cheaper approaches were measured and ruled out. Hiding non-hi-res rows fails: the library list is **windowed** — scrolling a 512-track library to the bottom moves the rendered row count 21 → 18, it never grows. It is a custom `ui-scroll` list rather than ReactVirtualized, so the usual virtualisation check misses it and the idea looks viable until you try it. Filtering Qobuz's own fetch by wrapping `Q.api` fails too: `Q.api` is Qobuzify's helper and Qobuz's list does not use it — spying across a full navigate-away-and-back to the library captured zero calls. Reaching the real request would mean patching `window.fetch`, which puts us in the path of every request the app makes.
+
+So it reads the data `library-load` has already cached (it stores `maximum_bit_depth` per track) and drives playback through the album page, the one path proven to work on the sealed player. Nothing touches Qobuz's data layer. Requires the Library cache extension; without it the panel says so instead of silently showing nothing. The chip is re-asserted on DOM mutations, since Qobuz re-renders the layout host and takes it with it.
+
 ### copy-share
 Right-click a track to copy "Artist - Title" or a shareable `play.qobuz.com` link. Works on list rows and the player bar's current track. It owns the right-click on those rows, so when Smart Radio is also enabled its "Start song radio" action appears at the top of this menu rather than as a second competing one.
 
