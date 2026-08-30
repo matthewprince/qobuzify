@@ -40,10 +40,13 @@ function removeMenu() { var m = document.getElementById("qz-copy-menu"); if (m) 
 function onDocDown(e) { var m = document.getElementById("qz-copy-menu"); if (m && !m.contains(e.target)) removeMenu(); }
 function onEsc(e) { if (e.key === "Escape") removeMenu(); }
 function toastCopy(label) { toast("Copied " + label); }
-function showMenu(x, y, info) {
+function showMenu(x, y, info, radioSeed) {
   removeMenu();
   var link = qobuzLink(info);
   var opts = [];
+  // Smart Radio owns the engine; this menu already owns the right-click on track rows, so when that
+  // extension is enabled its song radio is offered here rather than as a second competing menu.
+  if (radioSeed) opts.push({ label: "Start song radio", act: function () { try { window.__qzSmartRadio.songRadio(radioSeed); } catch (e) {} } });
   if (info.artist || info.title) opts.push({ label: 'Copy "Artist - Title"', text: [info.artist, info.title].filter(Boolean).join(" - "), t: "track" });
   if (info.title) opts.push({ label: "Copy title", text: info.title, t: "title" });
   if (info.artist) opts.push({ label: "Copy artist", text: info.artist, t: "artist" });
@@ -52,7 +55,11 @@ function showMenu(x, y, info) {
   var m = document.createElement("div"); m.id = "qz-copy-menu"; m.className = "qz-copy-menu";
   opts.forEach(function (o) {
     var b = document.createElement("button"); b.className = "qz-copy-item"; b.textContent = o.label;
-    b.addEventListener("click", function (e) { e.stopPropagation(); copyText(o.text).then(function () { toastCopy(o.t); }, function () { toast("Copy failed"); }); removeMenu(); });
+    b.addEventListener("click", function (e) {
+      e.stopPropagation(); removeMenu();
+      if (o.act) { o.act(); return; }
+      copyText(o.text).then(function () { toastCopy(o.t); }, function () { toast("Copy failed"); });
+    });
     m.appendChild(b);
   });
   m.style.visibility = "hidden"; document.body.appendChild(m);
@@ -70,8 +77,17 @@ function onContext(e) {
   if (row) info = rowInfo(row);
   else if (inPlayer) info = playerInfo();
   if (!info || (!info.title && !info.artist)) return;
+  var radioSeed = null;
+  try {
+    var sr = window.__qzSmartRadio;
+    if (sr && sr.songRadio) {
+      radioSeed = row && sr.seedFromEvent ? sr.seedFromEvent(e) : null;
+      // the player bar has no row to parse; the currently playing track id is right there on the API
+      if (!radioSeed && inPlayer && info.trackId) radioSeed = { trackId: info.trackId, title: info.title, artist: info.artist };
+    }
+  } catch (err) {}
   e.preventDefault(); e.stopPropagation();
-  showMenu(e.clientX, e.clientY, info);
+  showMenu(e.clientX, e.clientY, info, radioSeed);
 }
 
 Q.css(CSS_ID, [

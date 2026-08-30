@@ -123,6 +123,32 @@ function userPlaylists() { return api("playlist/getUserPlaylists?limit=200").the
 function albumGet(id) { return api("album/get?album_id=" + id); }   // album/get returns its tracks by default; &extra=tracks 400s
 function playlistGet(id) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500"); }
 function artistGet(id) { return api("artist/get?artist_id=" + id + "&extra=albums,playlists,tracks&limit=40"); }
+// artist/get&extra=tracks is NOT a popularity list. It returns the artist's newest release first and repeats
+// it once per album variant, so "Top tracks" came out as ten rows of the same new single. artist/page is the
+// route Qobuz's own clients use for "Most listened to" and its top_tracks IS ranked by plays. That route
+// speaks the newer track shape (name.display, physical_support.track_number, rights.streamable,
+// audio_info.*), so normalise back to the legacy shape every row/queue/radio helper here already expects.
+function dispName(n) { return (n && typeof n === "object") ? (n.display || "") : (n || ""); }
+function normTopTrack(t) {
+  if (!t || t.performer || t.track_number != null) return t;      // already legacy-shaped -> leave alone
+  var ar = t.artist || {}, ai = t.audio_info || {}, ri = t.rights || {}, ps = t.physical_support || {};
+  return {
+    id: t.id, title: t.title, version: t.version, duration: t.duration, isrc: t.isrc,
+    parental_warning: t.parental_warning, album: t.album,
+    performer: ar.id ? { id: ar.id, name: dispName(ar.name) } : null,
+    track_number: ps.track_number, media_number: ps.media_number,
+    streamable: ri.streamable !== false, hires_streamable: !!ri.hires_streamable,
+    maximum_bit_depth: ai.maximum_bit_depth, maximum_sampling_rate: ai.maximum_sampling_rate,
+    maximum_channel_count: ai.maximum_channel_count
+  };
+}
+// Ranked top tracks, with the old behaviour as the fallback so an artist/page outage (or an app id that
+// isn't served that route) degrades to the previous list rather than an empty section.
+function artistTopTracksD(id) {
+  return api("artist/page?artist_id=" + id)
+    .then(function (p) { var tt = (p && p.top_tracks) || []; if (!tt.length) throw new Error("no top_tracks"); return tt.map(normTopTrack); })
+    .catch(function () { return artistGet(id).then(function (a) { return (a.tracks && a.tracks.items) || []; }).catch(function () { return []; }); });
+}
 
 // ------------------------------------------------------------------ Discover data helpers + utils [M4]
 // All via the cached api(); personalized rails are favorites-seeded (same building blocks recommended.js uses).
@@ -546,27 +572,51 @@ function queueViaMenu(path, pick, mode, done) {
   function finish(ok) { clearInterval(iv); if (_navIv === iv) _navIv = null; playBusy = false; if (done) done(ok); }
 }
 
-// Public: queue/play-next an arbitrary track described by {albumId,title,num}. mode = "queue" | "next".
+// Public: queue/play-next a track described by {id,albumId,title,num}. mode = "queue" | "next".
+// The store path is tried FIRST whenever we know the track id: it is exact and instant. The old
+// menu-driving path had to navigate to the album behind the overlay, scroll a virtualised list until the
+// row appeared, open its kebab and find the right menu entry - four DOM contracts, any one of which
+// failing makes every queue attempt report "Couldn't queue that". It stays as the fallback for rows that
+// only carry an album id.
 function queueTrackData(d, mode) {
   var aid = d.albumId, title = d.title || "", num = d.num || "";
-  if (!aid) { qToast("Can't queue this track"); return; }
-  if (!hasTrack()) { playFromAlbum(aid, title, num); qToast("Playing"); return; }
-  queueViaMenu("/album/" + aid, function (rows) { return matchRow(rows, title, num) || rows[0]; }, mode, function (ok) {
+  if (!d.id && !aid) { qToast("Can't queue this track"); return; }
+  // nothing playing -> there is no queue to merge into, so just start the track from its album
+  if (!hasTrack()) { if (!aid) { qToast("Play something first"); return; } playFromAlbum(aid, title, num, d.id); qToast("Playing"); return; }
+  if (d.id && queueViaStore(d.id, mode)) { qToast(mode === "next" ? "Playing next" : "Added to queue"); return; }
+  if (!aid) { qToast("Couldn't queue that"); return; }
+  queueViaMenu("/album/" + aid, function (rows) { return matchRow(rows, title, num, d.id) || rows[0]; }, mode, function (ok) {
     qToast(ok ? (mode === "next" ? "Playing next" : "Added to queue") : "Couldn't queue that");
   });
 }
 function queueAdd(d) { queueTrackData(d, "queue"); }       // Add to queue
 function queueNext(d) { queueTrackData(d, "next"); }       // Play next
 
-// OPTIONAL best-effort append (playqueue/set, same primitive dropUpcoming uses). Append-only.
-function queueAppendViaStore(trackId) {
+// Insert into the sealed play queue via the partial "playqueue/set" merge the app's own remove-from-queue
+// uses (the desktop multi-select extension runs the same primitive). Three details are what make the app
+// accept the entry rather than silently drop it: the id is coerced to a NUMBER when it is numeric (the
+// app's own items are numeric), queueItemId follows the app's "q<N>" counter rather than an invented
+// string, and contextUuid is inherited from the currently playing item. Never touches the playing track.
+// mode "next" inserts just after it; "queue" appends. Returns false if there is no queue to merge into,
+// which is the caller's cue to fall back.
+function queueViaStore(trackId, mode) {
   try {
-    var pq = Q.getState().playqueue; if (!pq) return false;
-    var mk = function () { return { queueItemId: "qzm-" + Date.now() + "-" + Math.floor(Math.random() * 1e6), trackId: String(trackId), trackOrigin: { from: "qobuzify-mobile" } }; };
-    var payload = { index: pq.currentIndex || 0, dirty: true };
-    if (pq.shuffled && Array.isArray(pq.shuffledItems)) payload.shuffledItems = pq.shuffledItems.concat(mk());
-    else if (Array.isArray(pq.items)) payload.items = pq.items.concat(mk());
-    else return false;
+    if (!Q.store || typeof Q.store.dispatch !== "function") return false;
+    var pq = Q.getState().playqueue;
+    if (!pq || !Array.isArray(pq.items) || !pq.items.length) return false;
+    var ci = pq.currentIndex || 0;
+    var shuf = !!(pq.shuffled && Array.isArray(pq.shuffledItems) && pq.shuffledItems.length);
+    var tmpl = (shuf ? pq.shuffledItems[ci] : pq.items[ci]) || pq.items[0] || {};
+    var maxN = 0;
+    function scanMax(arr) { (arr || []).forEach(function (it) { if (it && typeof it.queueItemId === "string") { var n = Number(it.queueItemId.slice(1)); if (!isNaN(n) && n > maxN) maxN = n; } }); }
+    scanMax(pq.items); scanMax(pq.shuffledItems);
+    var entry = { trackId: /^\d+$/.test(String(trackId)) ? Number(trackId) : trackId, queueItemId: "q" + (maxN + 1), cloudItemId: null, contextUuid: tmpl.contextUuid };
+    function insert(arr) { var out = arr.slice(); out.splice(Math.min(ci + 1, out.length), 0, entry); return out; }
+    var payload = { index: ci, dirty: true };
+    // when shuffled, shuffledItems is the play order currentIndex points into - that is the array the
+    // position matters in; items just has to contain the entry so it is a member of the queue at all.
+    if (shuf) { payload.shuffledItems = mode === "next" ? insert(pq.shuffledItems) : pq.shuffledItems.concat(entry); payload.items = pq.items.concat(entry); }
+    else payload.items = mode === "next" ? insert(pq.items) : pq.items.concat(entry);
     Q.store.dispatch({ type: "playqueue/set", payload: payload });
     return true;
   } catch (e) { return false; }
@@ -575,14 +625,13 @@ function queueAppendViaStore(trackId) {
 // ---- RADIO (built queue -> temp playlist -> proven native play) ----
 function addTracksBatched(pid, ids) { return chunk(ids, 50).reduce(function (p, c) { return p.then(function () { return Q.api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + c.join(",")); }); }, Promise.resolve()); }
 function radioPool(artistId) {
-  return artistGet(artistId).then(function (a) {
-    var ids = ((a.tracks && a.tracks.items) || []).map(function (t) { return t.id; }).filter(Boolean);
+  return artistTopTracksD(artistId).then(function (tt) {
+    var ids = (tt || []).map(function (t) { return t.id; }).filter(Boolean);
     return api("artist/getSimilarArtists?artist_id=" + artistId + "&limit=6").then(function (s) {
       var sim = ((s.artists && s.artists.items) || []).map(function (x) { return x.id; }).filter(Boolean).slice(0, 6);
       if (!sim.length) return ids;
       return Promise.all(sim.map(function (sid) {
-        return api("artist/get?artist_id=" + sid + "&extra=tracks&limit=10")
-          .then(function (sa) { return ((sa.tracks && sa.tracks.items) || []).slice(0, 6).map(function (t) { return t.id; }); })
+        return artistTopTracksD(sid).then(function (st) { return (st || []).slice(0, 6).map(function (t) { return t.id; }); })
           .catch(function () { return []; });
       })).then(function (lists) { lists.forEach(function (l) { ids = ids.concat(l); }); return ids; });
     }).catch(function () { return ids; });   // similar-artists endpoint missing -> seed-artist radio
@@ -634,32 +683,36 @@ function createRadioPlaylist(name, ids) {
 // only trigger is a button on the desktop player bar that this interface covers. We take its track list
 // and still write the playlist ourselves, so the toast and the "keep one radio playlist" bookkeeping stay
 // the mobile app's. Falls back to radioPool whenever the extension is off or absent.
-function radioIdsFor(artistId, artistNm) {
+function radioIdsFor(artistId, artistNm, leadId) {
   var sr = null; try { sr = window.__qzSmartRadio; } catch (e) {}
   if (sr && typeof sr.buildRadio === "function") {
-    return Promise.resolve(sr.buildRadio({ id: artistId, name: artistNm || "Artist" }))
+    return Promise.resolve(sr.buildRadio({ id: artistId, name: artistNm || "Artist" }, leadId))
       .then(function (ids) { return (ids && ids.length) ? ids : radioPool(artistId); })
       .catch(function () { return radioPool(artistId); });
   }
   return radioPool(artistId);
 }
-function startRadioFromArtist(artistId, artistNm) {
+// leadId = the track the sheet was opened on. Radio from a song should start WITH that song, so it is
+// pulled out of the shuffle and put back on the front rather than landing somewhere in the middle.
+function startRadioFromArtist(artistId, artistNm, leadId, label) {
   if (!artistId) { qToast("No artist to seed a radio"); return; }
   qToast("Building radio…");
-  radioIdsFor(artistId, artistNm).then(function (ids) {
-    ids = shuffleIds(dedupe(ids)).slice(0, 100);
+  radioIdsFor(artistId, artistNm, leadId).then(function (ids) {
+    ids = shuffleIds(dedupe(ids).filter(function (id) { return String(id) !== String(leadId || ""); })).slice(0, 100);
+    if (leadId) ids.unshift(leadId);
     if (!ids.length) { qToast("Couldn't build a radio"); return; }
-    return createRadioPlaylist("Radio · " + (artistNm || "Artist"), ids);
+    return createRadioPlaylist("Radio · " + (label || artistNm || "Artist"), ids);
   }).catch(function () { qToast("Couldn't build a radio"); });
 }
 function startRadioFromData(d) {
-  var arId = (d.performer && d.performer.id) || (d.artist && d.artist.id) || (d.album && d.album.artist && d.album.artist.id);
-  var arName = (d.performer && d.performer.name) || (d.artist && d.artist.name) || d.artistName || "";
-  if (arId) { startRadioFromArtist(arId, arName); return; }
+  var arId = (d.performer && d.performer.id) || (d.artist && d.artist.id) || (d.album && d.album.artist && d.album.artist.id) || d.artistId;
+  var arName = (d.performer && d.performer.name) || (d.artist && d.artist.name) || d.artistName || d.artist || "";
+  var lead = d.id || null, label = lead && d.title ? d.title : arName;   // opened on a track -> song radio
+  if (arId) { startRadioFromArtist(arId, arName, lead, label); return; }
   var aid = (d.album && d.album.id) || d.albumId;
   if (!aid) { qToast("No artist to seed a radio"); return; }
   qToast("Building radio…");
-  albumGet(aid).then(function (al) { startRadioFromArtist(al.artist && al.artist.id, (al.artist && al.artist.name) || arName); })
+  albumGet(aid).then(function (al) { startRadioFromArtist(al.artist && al.artist.id, (al.artist && al.artist.name) || arName, lead, label); })
     .catch(function () { qToast("Couldn't build a radio"); });
 }
 function startRadioCurrent() {
@@ -1674,7 +1727,6 @@ function artistScreen(id) {
     loading(el);
     artistGet(id).then(function (a) {
       var albums = dedupeById((a.albums && a.albums.items) || []).sort(byNewestD);   // discography newest-first
-      var tracks = (a.tracks && a.tracks.items) || [];
       var img = cover(a);
       var bioRaw = a.biography ? stripHtml(a.biography.content || a.biography.summary || a.biography) : "";
       var bioHTML = bioRaw ? '<section class="qz-sec qz-about"><h3 class="qz-shelf__h">Biography</h3>' +
@@ -1685,11 +1737,19 @@ function artistScreen(id) {
         '<div class="qz-dhead__t">' + esc(a.name || "") + "</div>" +
         '<div class="qz-dhead__actions">' + favBtnHTML("artist", id, "qz-dhead__fav") + "</div>" +
         "</div>" +
-        (tracks.length ? '<section class="qz-sec"><h3 class="qz-shelf__h">Top tracks</h3>' + trackListHTML(tracks.slice(0, 10), null) + "</section>" : "") +
+        '<div class="qz-tophost"></div>' +
         '<div class="qz-fanshost"></div>' +
         (albums.length ? '<section class="qz-sec"><h3 class="qz-shelf__h">Discography</h3>' + gridHTML(albums, "album") + "</section>" : "") +
         bioHTML;
       // (bio tap-to-expand is handled by the delegated onContentTap, bound once on contentEl)
+      // "Top tracks" is its own fetch (artist/page), so it fills in lazily like the rails below - same
+      // capture-the-host + isConnected guard so a slow response can't land on a page you already left.
+      var topHost = el.querySelector(".qz-tophost");
+      artistTopTracksD(id).then(function (tracks) {
+        if (!topHost || !topHost.isConnected) return;
+        tracks = dedupeById((tracks || []).filter(function (t) { return t && t.id; })).slice(0, 10);
+        if (tracks.length) topHost.innerHTML = '<section class="qz-sec"><h3 class="qz-shelf__h">Top tracks</h3>' + trackListHTML(tracks, null) + "</section>";
+      });
       // "Fans also like" rail (lazy; capture THIS mount's host + bail if navigated away, so it can't inject onto another page)
       var fansHost = el.querySelector(".qz-fanshost");
       similarArtistsD(id).then(function (sim) {
