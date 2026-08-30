@@ -42,6 +42,29 @@ function addBadge(host, q, col) {
   var el = badgeEl(); if (col) el.classList.add("qz-badge--col"); host.appendChild(el);
 }
 
+// Some views render Qobuz's OWN Hi-Res badge already - the artist "Most popular" full list
+// (/artist/<id>/top-tracks) puts one in its own column - so adding ours there shows the logo twice on the
+// same row. Detect a hires image that is not inside one of our spans. Ordering is not guaranteed: the
+// native badge can render after we have painted, so this is used both to skip and to undo (see
+// dedupeRow), rather than only as an up-front guard.
+function hasNativeBadge(row) {
+  try {
+    var imgs = row.querySelectorAll('img[src*="hires"], img[alt*="Hi-Res"]');
+    for (var i = 0; i < imgs.length; i++) if (!imgs[i].closest("[data-qz-badge]")) return true;
+  } catch (e) {}
+  return false;
+}
+// Returns true if this row is settled and the caller should move on: either it already carries a badge,
+// or the native one turned up late and ours has just been removed.
+function dedupeRow(row) {
+  var ours = row.querySelector("[data-qz-badge]");
+  if (hasNativeBadge(row)) {
+    if (ours) ours.remove();     // native won; never show the logo twice
+    return true;
+  }
+  return !!ours;
+}
+
 function routeAlbumId() { try { var p = Q.getState().router.location.pathname || ""; var m = p.match(/\/album\/([^/?#]+)/); return m ? m[1] : null; } catch (e) { return null; } }
 function rowAlbumId(row) { var a = row.querySelector('a[href*="/album/"]'); if (!a) return null; var m = (a.getAttribute("href") || "").match(/\/album\/([^/?#]+)/); return m ? m[1] : null; }
 function titleHost(row) { return row.querySelector(".ListItem__title, .track-name") || row.querySelector(".ListItem__titleWithArtists") || row; }
@@ -64,7 +87,7 @@ function paintListItems() {
   var routeId = routeAlbumId();
   var rows = document.querySelectorAll(".ListItem");
   for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]; if (row.querySelector("[data-qz-badge]")) continue;
+    var row = rows[i]; if (dedupeRow(row)) continue;
     var rid = rowAlbumId(row);
     var id = rid || routeId; if (!id) continue;
     var data = albums[id];
@@ -84,7 +107,7 @@ function paintListItems() {
 function paintTrackItems() {
   var rows = document.querySelectorAll(".track-item");
   for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]; if (row.querySelector("[data-qz-badge]")) continue;
+    var row = rows[i]; if (dedupeRow(row)) continue;
     var id = rowAlbumId(row); if (!id) continue;
     var data = albums[id];
     if (data === undefined) { ensureAlbum(id); continue; }
@@ -100,7 +123,7 @@ function paintWebRows() {
   var routeId = routeAlbumId();
   var rows = document.querySelectorAll(".ui-module-track-row");
   for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]; if (row.querySelector("[data-qz-badge]")) continue;
+    var row = rows[i]; if (dedupeRow(row)) continue;
     var rid = rowAlbumId(row);
     var id = rid || routeId; if (!id) continue;
     var data = albums[id];
