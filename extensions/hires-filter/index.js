@@ -32,10 +32,14 @@ function isLibraryRoute(p) { return /^\/user-library(\/|$)/.test(p || route()); 
 // 24-bit is the line Qobuz's own Hi-Res Audio badge draws, so use the same one: the chip and the badge
 // must never disagree about what "hi-res" means.
 function isHires(t) { return !!t && ((t.maximum_bit_depth || 0) >= 24 || t.hires === true); }
-function specOf(t) {
-  var sr = t.maximum_sampling_rate || 0;
-  return (t.maximum_bit_depth || 24) + "-bit" + (sr ? " / " + (sr % 1 === 0 ? sr : sr.toFixed(1)) + " kHz" : "");
-}
+
+// Qobuz's own Hi-Res AUDIO logo, straight from the app's bundle so it looks native and is never tinted.
+// Same dual path quality-badges uses: on the DESKTOP app it resolves relative to app.html out of the
+// unpacked bundle, but on the WEB player (play.qobuz.com - what the Linux/Mac wrapper loads) that
+// node_modules path returns the SPA's HTML fallback with a 200, which renders as a broken image.
+var HIRES_IMG = (location.host.indexOf("play.qobuz.com") >= 0)
+  ? "/assets/images/logos/hires.png"
+  : "node_modules/@qobuz/qobuz-dwp-ui/dist/assets/images/logos/hires.png";
 
 function libTracks() {
   try { return (Q.library && typeof Q.library.tracks === "function") ? (Q.library.tracks() || []) : null; }
@@ -153,7 +157,9 @@ function rowHTML(t, i) {
     '<span class="qz-hrf-meta"><span class="qz-hrf-t">' + esc(t.title) + "</span>" +
       '<span class="qz-hrf-s">' + esc((t.performer && t.performer.name) || "") +
       (t.album && t.album.title ? " &middot; " + esc(t.album.title) : "") + "</span></span>" +
-    '<span class="qz-hrf-spec">' + esc(specOf(t)) + "</span>" +
+    // Just the logo. Every row here is 24-bit by definition, so spelling out "24-bit / 44.1 kHz" on all
+    // 199 of them is a column of noise restating the filter you just applied.
+    '<span class="qz-hrf-spec"><img src="' + esc(HIRES_IMG) + '" alt="Hi-Res Audio" draggable="false"></span>' +
     '<span class="qz-hrf-dur">' + fmtDur(t.duration) + "</span>" +
     "</div>";
 }
@@ -319,8 +325,9 @@ Q.css(CSS_ID, [
   ".qz-hrf-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px;}",
   ".qz-hrf-t{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
   ".qz-hrf-s{font-size:12px;color:#8b95a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-hrf-spec{flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--qz-accent,#3DA8FE);",
-  "font-variant-numeric:tabular-nums;}",
+  // no tint, no filter: it is Qobuz's own gold logo and it should look exactly like it does everywhere else
+  ".qz-hrf-spec{flex:0 0 auto;display:inline-flex;align-items:center;}",
+  ".qz-hrf-spec img{height:26px;width:auto;display:block;}",
   ".qz-hrf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:#7d8798;font-variant-numeric:tabular-nums;}"
 ].join(""));
 
