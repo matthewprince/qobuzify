@@ -41,6 +41,15 @@ var HIRES_IMG = (location.host.indexOf("play.qobuz.com") >= 0)
   ? "/assets/images/logos/hires.png"
   : "node_modules/@qobuz/qobuz-dwp-ui/dist/assets/images/logos/hires.png";
 
+// Sample rate only. The bit depth is the one thing every row here shares - the filter guarantees 24-bit -
+// so printing it is dead weight, but the rate is what actually varies (44.1 / 48 / 88.2 / 96 / 176.4 /
+// 192) and is the reason to look at this column at all.
+function rateOf(t) {
+  var sr = t.maximum_sampling_rate || 0;
+  if (!sr) return "";
+  return (sr % 1 === 0 ? sr : sr.toFixed(1)) + " kHz";
+}
+
 function libTracks() {
   try { return (Q.library && typeof Q.library.tracks === "function") ? (Q.library.tracks() || []) : null; }
   catch (e) { return null; }
@@ -158,9 +167,9 @@ function rowHTML(t, i) {
     '<span class="qz-hrf-meta"><span class="qz-hrf-t">' + esc(t.title) + "</span>" +
       '<span class="qz-hrf-s">' + esc((t.performer && t.performer.name) || "") +
       (t.album && t.album.title ? " &middot; " + esc(t.album.title) : "") + "</span></span>" +
-    // Just the logo. Every row here is 24-bit by definition, so spelling out "24-bit / 44.1 kHz" on all
-    // 199 of them is a column of noise restating the filter you just applied.
-    '<span class="qz-hrf-spec"><img src="' + esc(HIRES_IMG) + '" alt="Hi-Res Audio" draggable="false"></span>' +
+    // Qobuz's own logo, untinted, with just the sample rate beside it.
+    '<span class="qz-hrf-spec"><img src="' + esc(HIRES_IMG) + '" alt="Hi-Res Audio" draggable="false">' +
+      '<span class="qz-hrf-rate">' + esc(rateOf(t)) + "</span></span>" +
     '<span class="qz-hrf-dur">' + fmtDur(t.duration) + "</span>" +
     "</div>";
 }
@@ -326,8 +335,10 @@ Q.css(CSS_ID, [
   ".qz-hrf-t{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
   ".qz-hrf-s{font-size:12px;color:#8b95a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
   // no tint, no filter: it is Qobuz's own gold logo and it should look exactly like it does everywhere else
-  ".qz-hrf-spec{flex:0 0 auto;display:inline-flex;align-items:center;}",
+  ".qz-hrf-spec{flex:0 0 auto;display:inline-flex;align-items:center;gap:9px;}",
   ".qz-hrf-spec img{height:26px;width:auto;display:block;}",
+  // fixed width + tabular figures so the rates form a straight column instead of jittering per row
+  ".qz-hrf-rate{min-width:62px;font-size:12px;font-weight:600;color:#8b95a6;font-variant-numeric:tabular-nums;}",
   ".qz-hrf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:#7d8798;font-variant-numeric:tabular-nums;}"
 ].join(""));
 
