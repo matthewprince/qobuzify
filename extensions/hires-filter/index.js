@@ -150,8 +150,9 @@ function layout() {
 
 function rowHTML(t, i) {
   var art = (t.album && t.album.image && (t.album.image.small || t.album.image.thumbnail)) || "";
+  // No row number: this is a filtered view of a library, not an ordered tracklist, so the index counts
+  // nothing meaningful - and Qobuz's own library rows are unnumbered too.
   return '<div class="qz-hrf-row" data-i="' + i + '">' +
-    '<span class="qz-hrf-idx">' + (i + 1) + "</span>" +
     '<span class="qz-hrf-art">' + (art ? '<img loading="lazy" src="' + esc(art) + '">' : "") +
       '<button class="qz-hrf-play" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></button></span>' +
     '<span class="qz-hrf-meta"><span class="qz-hrf-t">' + esc(t.title) + "</span>" +
@@ -315,7 +316,6 @@ Q.css(CSS_ID, [
   ".qz-hrf-empty{color:#8b95a6;font-size:14px;padding:26px 14px;line-height:1.6;max-width:640px;}",
   ".qz-hrf-row{display:flex;align-items:center;gap:14px;padding:7px 14px;border-radius:9px;cursor:pointer;}",
   ".qz-hrf-row:hover{background:rgba(255,255,255,.06);}",
-  ".qz-hrf-idx{flex:0 0 34px;text-align:right;font-size:12px;color:#6b7488;font-variant-numeric:tabular-nums;}",
   ".qz-hrf-art{position:relative;flex:0 0 42px;width:42px;height:42px;border-radius:5px;overflow:hidden;background:#131823;}",
   ".qz-hrf-art img{width:100%;height:100%;object-fit:cover;display:block;}",
   ".qz-hrf-play{position:absolute;inset:0;display:none;align-items:center;justify-content:center;",
