@@ -1,8 +1,8 @@
 {
   "id": "smart-playback",
   "name": "Smart Radio",
-  "description": "One click builds a genuinely related queue from what you're playing - the current artist plus similar artists' top tracks, weighted to your favorites and deduped against recent plays - and plays it. A real fix for Qobuz's weak autoplay. Adds a Radio button to the player bar.",
+  "description": "One click builds a genuinely related queue - the seed artist plus similar artists' most-listened tracks, weighted to your favorites and deduped against recent plays - and plays it. A real fix for Qobuz's weak autoplay. Radio button on the player bar for what's playing, or right-click any track for a song radio that starts with that song.",
   "icon": "icon-magic-stars",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "matthewprince"
 }

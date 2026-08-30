@@ -13,7 +13,11 @@ A personalized home page built entirely from your own Qobuz data (favorites and 
 Replaces Qobuz's weak native search with an instant, ranked, filterable full-page takeover. It hooks the real search box and, as you type, covers the content region so the native `/search` page never shows. Multi-word queries are scored per word with a full-phrase bonus; results you've heard before surface higher. Filters for quality, year, and sort; a Spotify-style "Top result" hero next to a Songs column, then card grids. Cover play buttons play the specific thing, including a specific track (not the album's track 1), which takes real work on a sealed player. Closing restores the route you were on.
 
 ### smart-playback (Smart Radio)
-A real fix for Qobuz's weak autoplay. The queue lives in the sealed player module, so instead of swapping its picks, one click builds a genuinely related set from what's playing (the current artist plus similar artists' top tracks, weighted to your favorites, deduped against recent plays), drops it into a fresh "Qobuzify Radio" playlist, and plays that through the app. The old radio playlist is deleted right after, so the library holds exactly one, and a fresh id each run sidesteps Qobuz's playlist-content cache.
+A real fix for Qobuz's weak autoplay. The queue lives in the sealed player module, so instead of swapping its picks, one click builds a genuinely related set from a seed artist (plus similar artists' top tracks, weighted to your favorites, deduped against recent plays), drops it into a fresh "Qobuzify Radio" playlist, and plays that through the app. The old radio playlist is deleted right after, so the library holds exactly one, and a fresh id each run sidesteps Qobuz's playlist-content cache.
+
+Two ways in: the player-bar button seeds from what's playing, and right-clicking any track row starts a **song radio** seeded from that recording's credited performer, with the track you clicked playing first. Rows are resolved to a track id the same way multi-select does it (the dwp row's own DOM id, or the store's track dictionary for web-player rows that carry none). Where Copy & Share is enabled it owns the right-click and offers the action inside its menu instead, so the two never both open.
+
+"Top tracks" comes from `artist/page`, the route Qobuz's own clients use for *Most listened to*. The older `artist/get&extra=tracks` is ordered by release, not plays, and repeats the newest record once per album variant, so radios built on it circled the same handful of new songs. The old call remains as a fallback.
 
 ### genre-filter
 Finer genre browsing for Discover. Qobuz's genre chips are coarse (Pop and Rock share a chip), so this adds a "Genres" pill next to them that opens a picker built from Qobuz's own genre tree, sub-genres included. Picking one opens a scoped, Discover-style overlay of that exact genre: New Releases, Most Streamed, Press Awards, and Playlists, all through the app's own featured endpoints with the in-app token. Inert off the Discover page.
@@ -84,7 +88,7 @@ Hide the top-nav items you don't use. A funnel button opens a checklist; hidden 
 Four small annoyances fixed: double-click a track row to play it, the library opens on your last-used tab, your grid/list view choice sticks, and an optional switch to hide the Hi-Res badges. A good example of a small extension that adds a toggle to the Qobuzify settings panel.
 
 ### copy-share
-Right-click a track to copy "Artist - Title" or a shareable `play.qobuz.com` link. Works on list rows and the player bar's current track.
+Right-click a track to copy "Artist - Title" or a shareable `play.qobuz.com` link. Works on list rows and the player bar's current track. It owns the right-click on those rows, so when Smart Radio is also enabled its "Start song radio" action appears at the top of this menu rather than as a second competing one.
 
 ### block-trash
 Two buttons: a ban icon on artist pages to block the artist, a trash icon on track rows and the player bar to bin a song. Anything blocked or trashed greys out everywhere and never plays, enforced in three layers: pulled from the upcoming queue, denied at the stream-URL layer, and skipped if it still becomes current. A shield in the player bar lists everything you've blocked so you can undo it. All state is local.
@@ -104,6 +108,8 @@ Private, on-device listening history. A 1-second tick logs each play you actuall
 
 ### mobile-app
 On a narrow screen, replaces Qobuz's desktop-only web layout with a purpose-built mobile app: our own Home, Search, Library, and Now Playing, a bottom tab bar, and a mini player, rendered in a container the extension fully owns so nothing gets cut off. Qobuz stays mounted underneath as the engine only (auth, API, audio, and the album pages it navigates invisibly to start playback). Completely inert on desktop and wide windows.
+
+"Play next" and "Add to queue" merge straight into the app's own play-queue state rather than driving the native kebab menu behind the overlay: the old path had to navigate to the album, scroll a virtualised list to the row, open its menu and find the entry, and any one of those four DOM contracts breaking made every queue attempt fail. The menu path is still the fallback for rows that carry only an album id. Artist "Top tracks" uses `artist/page` (Qobuz's *Most listened to*) instead of the release-ordered `artist/get&extra=tracks`, which returned the newest single repeated once per album variant.
 
 ## Defaults
 

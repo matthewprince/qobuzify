@@ -359,7 +359,18 @@ Q.css("qz-fy-mix-css", [
   ".qz-fy-building .qz-fy-mixspin{display:flex;}",
   "@keyframes qz-fy-mspin{to{transform:rotate(360deg)}}"
 ].join(""));
-function artistTopTracks(id) { return api("artist/get?artist_id=" + id + "&extra=tracks&limit=12").then(function (j) { var t = j.tracks; return (t && (t.items || t)) || []; }).catch(function () { return []; }); }
+// artist/get&extra=tracks is ordered by release, not by plays - it hands back the artist's newest record
+// repeated once per album variant, so mixes built from it kept circling the same few new tracks. artist/page
+// is the "Most listened to" route Qobuz's own clients use; map its newer track shape down to the two fields
+// used below (id, streamable) and keep the old call as the fallback.
+function artistTopTracks(id) {
+  return api("artist/page?artist_id=" + id).then(function (p) {
+    var tt = (p && p.top_tracks) || []; if (!tt.length) throw new Error("no top_tracks");
+    return tt.slice(0, 12).map(function (t) { return { id: t.id, title: t.title, streamable: !(t.rights && t.rights.streamable === false) }; });
+  }).catch(function () {
+    return api("artist/get?artist_id=" + id + "&extra=tracks&limit=12").then(function (j) { var t = j.tracks; return (t && (t.items || t)) || []; }).catch(function () { return []; });
+  });
+}
 function createPlaylist(name, desc) { return api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false&description=" + encodeURIComponent(desc || "")).then(function (c) { return String(c.id); }); }
 function fillPlaylist(pid, ids) { return api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + ids.join(",")); }
 function deletePlaylist(pid) { return api("playlist/delete?playlist_id=" + pid).catch(function () {}); }
