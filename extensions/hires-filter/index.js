@@ -115,10 +115,25 @@ function playTrack(albumId, title, num) {
 // dropdowns still open above it, and sized to the content region so the sidebar and player bar stay
 // usable - a body-level max-z overlay covers them and feels like a modal, which this is not.
 function layoutHost() { var pt = document.querySelector(".ui-layout--root--panel-top"); return (pt && pt.parentElement) || document.body; }
+// Starts BELOW the library toolbar, not at the top of the scroll region. The toolbar is the chip's home,
+// so covering it left the chip hidden and unclickable while the filter was on (measured: elementFromPoint
+// at the chip's centre returned the panel) - the only way back out was the panel's own button. Leaving the
+// toolbar exposed also keeps Qobuz's search, sort and genre filter usable alongside this one.
 function contentRect() {
   var sc = document.querySelector(".ui-layout--root--scroll-main") || document.querySelector(".ui-layout--root--main") || document.querySelector(".ui-scroll");
-  if (sc) { var r = sc.getBoundingClientRect(); if (r.width > 200 && r.height > 200) return { top: r.top, left: r.left, width: r.width, height: r.height }; }
-  return { top: 56, left: 0, width: window.innerWidth, height: Math.max(300, window.innerHeight - 56 - 78) };
+  if (sc) {
+    var r = sc.getBoundingClientRect();
+    if (r.width > 200 && r.height > 200) {
+      var top = r.top;
+      var tb = document.querySelector(".ui-section-toolbar");
+      if (tb) {
+        var tr = tb.getBoundingClientRect();
+        if (tr.height > 0 && tr.top <= r.top + 8) top = tr.bottom;   // only when it really is the header
+      }
+      return { top: top, left: r.left, width: r.width, height: Math.max(160, (r.top + r.height) - top) };
+    }
+  }
+  return { top: 133, left: 0, width: window.innerWidth, height: Math.max(300, window.innerHeight - 133 - 78) };
 }
 function layout() {
   if (!panel) return;
@@ -208,20 +223,42 @@ function setOn(v) {
 }
 
 // ---------- chip ----------
+// The chip sits INSIDE the library toolbar's right-hand control group, as a real flex child next to the
+// sort and genre-filter buttons, so it flows with their gap and can never overlap them.
+//
+// It used to be position:fixed at "content rect, top-right minus 132px". That is precisely where Qobuz
+// puts its own "Filter by genre" button (measured: x 2348-2526), so the chip rendered ON TOP of it. The
+// DOM check that was supposed to catch this asked elementFromPoint what was at the chip's centre, got the
+// chip back, and read that as "nothing is covering it" - true, and exactly backwards. Being on top WAS
+// the bug. Anchoring to a real container removes the whole class of problem.
+function toolbarHost() {
+  var tb = document.querySelector(".ui-section-toolbar");
+  if (!tb) return null;
+  var gen = tb.querySelector("[class*='genres-selector--trigger']");
+  if (gen) {
+    // walk out to the first ancestor that is a laid-out flex row (React fragments in between render as
+    // display:contents with a zero rect, so skip anything without real geometry)
+    var n = gen.parentElement;
+    while (n && n !== tb) {
+      if (getComputedStyle(n).display === "flex" && n.getBoundingClientRect().width > 100) return n;
+      n = n.parentElement;
+    }
+  }
+  return tb.querySelector(".ui-base-bar") || tb;
+}
 function ensureChip() {
-  if (chip && chip.isConnected) return;
-  chip = el('<button id="' + CHIP_ID + '" title="Show only 24-bit tracks">' +
-    '<span class="qz-hrf-dot"></span>Hi-Res</button>');
-  chip.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); setOn(!on); });
-  layoutHost().appendChild(chip);
+  var host = toolbarHost();
+  if (!host) { if (chip) { chip.remove(); chip = null; } return; }   // toolbar not up yet; try next tick
+  if (chip && chip.isConnected && chip.parentElement === host) return;
+  if (!chip) {
+    chip = el('<button id="' + CHIP_ID + '" type="button" title="Show only 24-bit tracks">' +
+      '<span class="qz-hrf-dot"></span>Hi-Res</button>');
+    chip.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); setOn(!on); });
+  }
+  host.appendChild(chip);                        // re-home after a React re-render
   chip.classList.toggle("qz-hrf-active", on);
 }
-function placeChip() {
-  if (!chip) return;
-  var r = contentRect();
-  chip.style.top = (r.top + 14) + "px";
-  chip.style.left = (r.left + r.width - 132) + "px";
-}
+function placeChip() { /* in-flow now: the toolbar lays it out. Kept so callers read the same. */ }
 
 // Only exists on the library. Anywhere else the chip is REMOVED (not just hidden) and the filter resets -
 // leaving it engaged would silently re-cover the library next time you walked back into it.
@@ -248,10 +285,11 @@ function onResize() { if (isLibraryRoute()) { placeChip(); if (on) layout(); } }
 function onEsc(e) { if (e.key === "Escape" && on) { e.stopPropagation(); setOn(false); } }
 
 Q.css(CSS_ID, [
-  "#" + CHIP_ID + "{position:fixed;z-index:221;display:inline-flex;align-items:center;gap:7px;",
-  "padding:7px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.14);cursor:pointer;",
-  "background:rgba(18,22,31,.92);color:#cdd6e2;font:inherit;font-size:12.5px;font-weight:650;",
-  "letter-spacing:.2px;transition:background .13s,color .13s,border-color .13s;}",
+  // sized to sit level with Qobuz's own 45px-tall toolbar controls rather than floating over them
+  "#" + CHIP_ID + "{flex:0 0 auto;height:45px;display:inline-flex;align-items:center;gap:8px;",
+  "padding:0 18px;border-radius:999px;border:1px solid rgba(255,255,255,.14);cursor:pointer;",
+  "background:rgba(255,255,255,.06);color:#cdd6e2;font:inherit;font-size:13px;font-weight:650;",
+  "letter-spacing:.2px;white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
   "#" + CHIP_ID + ":hover{border-color:rgba(255,255,255,.26);color:#eef2f7;}",
   "#" + CHIP_ID + ".qz-hrf-active{background:var(--qz-accent,#3DA8FE);border-color:transparent;color:#06090a;}",
   ".qz-hrf-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.65;}",
