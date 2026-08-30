@@ -169,7 +169,38 @@ function onSegment(u8) {
     BP.feed(u8.slice(0));
   }
 }
-function onNewSourceBuffer(sb) { try { if (sourceBuffers.indexOf(sb) < 0) sourceBuffers.push(sb); } catch (e) {} }
+// DIAG ONLY: record every change in the buffered SHAPE. A stall is caused by a HOLE, and a hole is born
+// at exactly one transition - the moment a second range appears because appends resumed somewhere ahead
+// of where they stopped. Sampling the shape 4x a second from outside cannot say which append did it;
+// this can. Deliberately NOT one entry per append (there are many per second): only shape changes, into
+// a bounded ring. Purely observational - this listener never touches the buffer.
+var BPAPP = (window.__QZBP_APPENDS__ = window.__QZBP_APPENDS__ || []);
+function bpShapeWatch(sb) {
+  if (sb.__qzbpDiag) return;
+  sb.__qzbpDiag = 1;
+  sb.addEventListener("updateend", function () {
+    try {
+      var r = [], i;
+      for (i = 0; i < sb.buffered.length && i < 8; i++) r.push([Math.round(sb.buffered.start(i) * 1000), Math.round(sb.buffered.end(i) * 1000)]);
+      var sig = r.map(function (x) { return x[0] + "-" + x[1]; }).join(",");
+      if (sig === sb.__qzbpSig) return;
+      var prev = sb.__qzbpShape || [];
+      sb.__qzbpSig = sig; sb.__qzbpShape = r;
+      // only the interesting transitions: a range appeared or vanished, or the head of the buffer moved
+      var interesting = r.length !== prev.length || (r.length && prev.length && r[0][0] !== prev[0][0]);
+      if (!interesting) return;
+      var holes = [];
+      for (i = 1; i < r.length; i++) if (r[i][0] - r[i - 1][1] > 250) holes.push([r[i - 1][1], r[i][0]]);
+      BPAPP.push({ t: Date.now(), ranges: r, was: prev, holes: holes, tid: lastTrackId || null });
+      if (BPAPP.length > 120) BPAPP.splice(0, BPAPP.length - 120);
+      if (holes.length) bpLog("BUFFER HOLE formed: " + JSON.stringify(holes) + " ranges=" + JSON.stringify(r));
+    } catch (e) {}
+  });
+}
+function onNewSourceBuffer(sb) {
+  try { if (sourceBuffers.indexOf(sb) < 0) sourceBuffers.push(sb); } catch (e) {}
+  try { bpShapeWatch(sb); } catch (e) {}
+}
 
 function tapMse() {
   try {
