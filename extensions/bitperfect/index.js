@@ -868,8 +868,34 @@ window.__QZBP_DIAG__ = function () {
     sinceLoad: lastLoadAt ? now - lastLoadAt : null,
     endedLatch: endedLatch, bpStalled: bpStalled, directFailed: directFailed,
     feedId: lastFeedId, directId: _lastDirectId, lastTrackId: lastTrackId, seq: bpSeq,
-    // the element is the third clock: when it disagrees with both the store and mpv, that is the re-init
-    el: el ? { cur: Math.round((el.currentTime || 0) * 1000), dur: isFinite(el.duration) ? Math.round(el.duration * 1000) : 0, paused: !!el.paused, ready: el.readyState, net: el.networkState, buf: (function () { try { return el.buffered.length ? Math.round(el.buffered.end(el.buffered.length - 1) * 1000) : 0; } catch (e) { return -1; } })() } : null
+    // The element is the third clock: when it disagrees with both the store and mpv, that is the re-init.
+    // buffered RANGES, not just the far end. MEASURED 2026-08-30 on a live stall: the element sat frozen
+    // at 53.44s with buffered.end() reporting 120.37s, which reads as "two minutes buffered, why is it
+    // stuck?" - the truth was TWO ranges, [33.65,53.50] and [80.25,120.37], and currentTime parked on the
+    // edge of the first with a 26.7s HOLE in front of it. A media element does not skip a gap; it stalls
+    // there forever. Reporting only the last range's end actively hid the cause, so report the shape.
+    // isConnected matters for the same reason: that element was DETACHED, so nothing in the app was
+    // watching it to recover it either.
+    elCount: (function () { try { return (G.mediaEls || []).length; } catch (e) { return -1; } })(),
+    el: el ? (function () {
+      var cur = el.currentTime || 0, ranges = [], inRange = null, gapTo = null;
+      try {
+        for (var j = 0; j < el.buffered.length && j < 8; j++) ranges.push([Math.round(el.buffered.start(j) * 1000), Math.round(el.buffered.end(j) * 1000)]);
+      } catch (e) {}
+      for (var k = 0; k < ranges.length; k++) {
+        if (cur * 1000 >= ranges[k][0] - 50 && cur * 1000 <= ranges[k][1] + 50) inRange = k;
+      }
+      if (inRange === null || (ranges[inRange] && cur * 1000 >= ranges[inRange][1] - 250)) {
+        for (var g = 0; g < ranges.length; g++) { if (ranges[g][0] > cur * 1000 + 250) { gapTo = ranges[g][0]; break; } }
+      }
+      return {
+        cur: Math.round(cur * 1000), dur: isFinite(el.duration) ? Math.round(el.duration * 1000) : 0,
+        paused: !!el.paused, seeking: !!el.seeking, ready: el.readyState, net: el.networkState,
+        conn: !!el.isConnected, err: (el.error && el.error.code) || null,
+        buf: ranges.length ? ranges[ranges.length - 1][1] : 0,
+        ranges: ranges, inRange: inRange, gapTo: gapTo
+      };
+    })() : null
   };
 };
 
