@@ -923,6 +923,11 @@ window.__QZBP_DIAG__ = function () {
         cur: Math.round(cur * 1000), dur: isFinite(el.duration) ? Math.round(el.duration * 1000) : 0,
         paused: !!el.paused, seeking: !!el.seeking, ready: el.readyState, net: el.networkState,
         conn: !!el.isConnected, err: (el.error && el.error.code) || null,
+        // In direct mode mpv is the sink and the web element is supposed to be silent. A rebuild makes a
+        // FRESH element, and a fresh element is not muted until we mute it - so an unmuted element here
+        // means the page is audibly playing the track from 0 over the top of mpv. Cheap to record, and it
+        // is the difference between "the UI restarted" and "you heard it restart".
+        muted: !!el.muted, vol: el.volume,
         buf: ranges.length ? ranges[ranges.length - 1][1] : 0,
         ranges: ranges, inRange: inRange, gapTo: gapTo
       };
