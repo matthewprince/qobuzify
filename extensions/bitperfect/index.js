@@ -207,7 +207,21 @@ function tapMse() {
 
 // Say what happened. Enabling used to either work or produce silence with no explanation anywhere, which
 // is the single most expensive failure mode in this codebase.
-function bpLog(m) { try { console.log("[Qobuzify bit-perfect] " + m); } catch (e) {} }
+//
+// MEASURED 2026-08-30: `String(console.log)` in this build is "function(){}" - Qobuz's bundle replaces the
+// console with no-ops. So every line this wrote went nowhere, and reading these decisions over CDP came
+// back empty no matter how long you listened, which is exactly the trap that led to diagnosing playback
+// from theory instead of from the log. Keep the console call (free, and correct again if a build ever
+// restores it) but the ring below is the real sink: bounded, in-page, and pollable by the debug tracer.
+var BPLOG = (window.__QZBP_LOG__ = window.__QZBP_LOG__ || []);
+var bpSeq = 0;
+function bpLog(m) {
+  try {
+    BPLOG.push({ n: ++bpSeq, t: Date.now(), m: String(m) });
+    if (BPLOG.length > 400) BPLOG.splice(0, BPLOG.length - 400);
+  } catch (e) {}
+  try { console.log("[Qobuzify bit-perfect] " + m); } catch (e) {}
+}
 
 // Enabling mid-track: hand mpv this track's codec header and let the tap forward whatever segments the
 // player appends next. If the track is still playing (segments are still being appended progressively),
@@ -401,7 +415,24 @@ function syncTick() {
   if (playing) {
     var expected = lastWebMs + (now - lastWall);
     if (Math.abs(pm - expected) > 900) {
-      if (sane && now - lastSeekAt > 900) {
+      // ZERO-ANCHOR GUARD. ROOT CAUSE (runtime getPositionMs): `base = pos.value || 0`. When Qobuz
+      // re-initialises its media element mid-track - which is what the ERR_ABORTED on the stream fetch is -
+      // position.value is briefly ABSENT, so an UNKNOWN position is returned as position ZERO, and then
+      // counts up from 0 off a fresh timestamp. It is therefore self-consistent and indistinguishable from a
+      // real restart by any amount of watching: confirming it over time only confirms the lie. The one
+      // component that still knows the truth is mpv.
+      // MEASURED: mpv playing cleanly at 38.61s, web reported ~0, this detector seeked mpv to 0.14 and the
+      // song restarted. Again at 29.71 -> 9.72. Meanwhile mpv sat at 103s, speed 1.0, buffer 100, while the
+      // transport was frozen at 53s - so mpv was demonstrably the correct clock.
+      // Refuse a near-zero target while mpv is demonstrably mid-track and healthy. Requires a FRESH mpv
+      // report (stale -> fall through, fail open) and mpv well past the start, so this cannot fire on a
+      // genuine track start. A real repeat-one is still honoured because mpv is then at EOF, not mid-track.
+      var mpvNow = (lastMpvMs != null && (now - lastMpvAt) < 2500) ? lastMpvMs + (now - lastMpvAt) : null;
+      var nearEof = durMs ? (mpvNow != null && mpvNow >= durMs - 5000) : false;
+      if (pm < 2000 && mpvNow != null && mpvNow > 10000 && !nearEof) {
+        bpLog("zero-anchor jump IGNORED pm=" + pm + " mpv=" + mpvNow + " dur=" + durMs +
+              " - element re-init reported position 0; trusting mpv, not restarting");
+      } else if (sane && now - lastSeekAt > 900) {
         BP.send({ type: "seek", ms: pm }); lastSeekAt = now;
         // A backward jump to ~0 on the SAME id is repeat-one / restart-from-top. mpv sits in keep-open
         // pause at EOF then, and the ~3s periodic reassert was the only thing that unpaused it - a 1-3s
@@ -427,9 +458,11 @@ function syncTick() {
           bpLog("drift seek pm=" + pm + " mpv=" + mpvExtrap + " dur=" + durMs + " anchorAge=" + aAge);
           BP.send({ type: "seek", ms: pm }); lastSeekAt = now;
         } else bpLog("drift SUPPRESSED pm=" + pm + " mpv=" + mpvExtrap + " dur=" + durMs + " sane=" + sane + " anchorFresh=" + anchorFresh + " sinceSeek=" + (now - lastSeekAt));
-      } else if (mpvExtrap - pm > 1500 && now - lastAheadLog > 5000) {
-        lastAheadLog = now;
-        bpLog("mpv ahead of web clock by " + (mpvExtrap - pm) + "ms (element lagging/starving) - not seeking, lyrics follow mpv");
+      } else if (mpvExtrap - pm > 1500) {
+        if (now - lastAheadLog > 5000) {
+          lastAheadLog = now;
+          bpLog("mpv ahead of web clock by " + (mpvExtrap - pm) + "ms (element lagging/starving) - not seeking, lyrics follow mpv");
+        }
       }
     }
     // Tap mode: announce the feed's clean end once the page has appended the whole track, so mpv gets a
@@ -607,11 +640,34 @@ var offBP = BP.on(function (m) {
       var etr = curTrack(); var esid = etr && etr.id != null ? String(etr.id) : null;
       var mpvId = G.direct ? _lastDirectId : lastFeedId;
       var epm = posMs(); var edur = (etr && etr.durationMs) || 0;
-      if (esid && esid === mpvId && edur && (edur - epm) > 3000 && (Date.now() - lastLoadAt) > 5000) {
+      // JUDGE "ENDED EARLY" BY MPV'S OWN CLOCK, NOT THE WEB CLOCK. epm is the store's anchor, and a
+      // starving muted element is exactly when that anchor stops tracking reality - so using it here asks
+      // the broken clock whether the good one is broken. MEASURED 2026-08-23 in direct mode: mpv played a
+      // 2:58 track through to 178.4s (real EOF, speed 1.0, buffer full) while the element crawled to 0:54.
+      // (edur - epm) was 124s, so this fired, seeked mpv BACK to 54s, and set endedLatch - mpv then raced
+      // to EOF again with the latch spent, and sat in keep-open pause producing silence for the rest of
+      // the track. mpv had done nothing wrong; it finished the song.
+      var emp = (lastMpvMs != null && (Date.now() - lastMpvAt) < 8000) ? lastMpvMs : null;
+      // Genuinely early = MPV stopped well short of the end. Unknown mpv position -> fall back to the old
+      // web-clock test rather than doing nothing, so a real truncated-stream tail is still rescued.
+      var reallyEarly = emp != null ? (edur && (edur - emp) > 3000) : (edur && (edur - epm) > 3000);
+      if (esid && esid === mpvId && edur && reallyEarly && (Date.now() - lastLoadAt) > 5000) {
         endedLatch = true;
-        bpLog("mpv ended early (pm=" + epm + " dur=" + edur + ") - resyncing to the web clock");
+        bpLog("mpv ended early (mpv=" + emp + " web=" + epm + " dur=" + edur + ") - resyncing to the web clock");
         BP.send({ type: "seek", ms: epm });
         if (isPlaying()) BP.send({ type: "play" });
+      } else if (esid && esid === mpvId && edur && emp != null && (edur - emp) <= 3000 && (edur - epm) > 3000) {
+        // mpv reached the true end while the element is still far behind. Nothing is going to produce sound
+        // until the element gets there, and it is the component that owns the queue - so hand it the end of
+        // the track and let Qobuz's own auto-advance move on, instead of leaving a silent tail.
+        endedLatch = true;
+        bpLog("mpv finished (mpv=" + emp + " dur=" + edur + ") but the element is at " + epm + " - jumping it to the end so auto-advance fires");
+        try {
+          for (var ei = 0; ei < G.mediaEls.length; ei++) {
+            var el = G.mediaEls[ei];
+            if (el && !el.paused && isFinite(el.duration) && el.duration > 0 && el.currentTime < el.duration - 1) el.currentTime = el.duration;
+          }
+        } catch (e) {}
       }
     }
   }
@@ -792,8 +848,34 @@ Q.css(CSS_ID, [
 // restore last state
 if (on()) enable(); else renderBadge();
 
+// READ-ONLY diagnostics snapshot for the audio tracer (qz-audio-debug.py). These are the exact inputs the
+// jump/drift/EOF branches decide on, so a restart in the log can be matched to what the extension believed
+// at that instant instead of being reconstructed afterwards. Calling it has no side effects and it is only
+// ever read by tooling; nothing in the extension depends on it existing.
+window.__QZBP_DIAG__ = function () {
+  var now = Date.now(), tr = null;
+  try { tr = curTrack(); } catch (e) {}
+  var el = null;
+  try { el = (G.mediaEls || []).filter(function (x) { return x && !x.paused; })[0] || (G.mediaEls || [])[0] || null; } catch (e) {}
+  return {
+    t: now, enabled: enabled, direct: !!G.direct, disposed: disposed,
+    trackId: tr && tr.id != null ? String(tr.id) : null,
+    durMs: (tr && tr.durationMs) || 0,
+    webMs: (function () { try { return posMs(); } catch (e) { return null; } })(),
+    playing: (function () { try { return isPlaying(); } catch (e) { return null; } })(),
+    mpvMs: lastMpvMs, mpvAge: lastMpvMs == null ? null : now - lastMpvAt,
+    sinceSeek: lastSeekAt ? now - lastSeekAt : null,
+    sinceLoad: lastLoadAt ? now - lastLoadAt : null,
+    endedLatch: endedLatch, bpStalled: bpStalled, directFailed: directFailed,
+    feedId: lastFeedId, directId: _lastDirectId, lastTrackId: lastTrackId, seq: bpSeq,
+    // the element is the third clock: when it disagrees with both the store and mpv, that is the re-init
+    el: el ? { cur: Math.round((el.currentTime || 0) * 1000), dur: isFinite(el.duration) ? Math.round(el.duration * 1000) : 0, paused: !!el.paused, ready: el.readyState, net: el.networkState, buf: (function () { try { return el.buffered.length ? Math.round(el.buffered.end(el.buffered.length - 1) * 1000) : 0; } catch (e) { return -1; } })() } : null
+  };
+};
+
 return function cleanup() {
   disposed = true;
+  try { if (window.__QZBP_DIAG__) delete window.__QZBP_DIAG__; } catch (e) {}
   if (syncTimer) clearInterval(syncTimer);
   if (offChange) offChange();
   if (modeWaitT) { clearTimeout(modeWaitT); modeWaitT = null; }
