@@ -460,10 +460,27 @@ function syncTick() {
       // genuine track start. A real repeat-one is still honoured because mpv is then at EOF, not mid-track.
       var mpvNow = (lastMpvMs != null && (now - lastMpvAt) < 2500) ? lastMpvMs + (now - lastMpvAt) : null;
       var nearEof = durMs ? (mpvNow != null && mpvNow >= durMs - 5000) : false;
-      if (pm < 2000 && mpvNow != null && mpvNow > 10000 && !nearEof) {
-        bpLog("zero-anchor jump IGNORED pm=" + pm + " mpv=" + mpvNow + " dur=" + durMs +
-              " - element re-init reported position 0; trusting mpv, not restarting");
+      // A REAL restart looks identical to this guard as the re-init it exists for: pm ~0 while mpv is
+      // mid-track. MEASURED 2026-09-05 (instrumented repro): the user's restart-to-0 was swallowed here
+      // twice ("zero-anchor jump IGNORED pm=2", then "pm=291"), mpv never followed, and the two clocks then
+      // sat ~110s apart for the rest of the track - so any later web-side jump the loop DOES trust yanks
+      // mpv back by that much. The guard had traded one restart bug for another.
+      // The discriminator is the store's RAW anchor, not the runtime's derived position: a real seek WRITES
+      // position.value (measured: 1) with a fresh timestamp, whereas the re-init this guard was built for
+      // leaves the value ABSENT and getPositionMs() turns that absence into 0 (`pos.value || 0`). So read
+      // the raw field, and honour a near-zero that the store actually wrote a moment ago.
+      var rawPos = null, rawFresh = false;
+      try {
+        var sp = Q.getState().player.position;
+        if (sp && typeof sp.value === "number" && isFinite(sp.value)) { rawPos = sp.value; rawFresh = !!sp.timestamp && (now - sp.timestamp) < 3000; }
+      } catch (e) {}
+      var realRestart = rawPos != null && rawPos < 2000 && rawFresh;
+      if (pm < 2000 && mpvNow != null && mpvNow > 10000 && !nearEof && !realRestart) {
+        bpLog("zero-anchor jump IGNORED pm=" + pm + " mpv=" + mpvNow + " dur=" + durMs + " raw=" + rawPos +
+              " - element re-init reported position 0 (store value absent/stale); trusting mpv, not restarting");
       } else if (sane && now - lastSeekAt > 900) {
+        if (realRestart && pm < 2000 && mpvNow != null && mpvNow > 10000)
+          bpLog("zero-anchor HONOURED as a real restart: store wrote value=" + rawPos + " fresh - seeking mpv " + mpvNow + " -> " + pm);
         BP.send({ type: "seek", ms: pm }); lastSeekAt = now;
         // A backward jump to ~0 on the SAME id is repeat-one / restart-from-top. mpv sits in keep-open
         // pause at EOF then, and the ~3s periodic reassert was the only thing that unpaused it - a 1-3s
@@ -893,6 +910,10 @@ window.__QZBP_DIAG__ = function () {
     trackId: tr && tr.id != null ? String(tr.id) : null,
     durMs: (tr && tr.durationMs) || 0,
     webMs: (function () { try { return posMs(); } catch (e) { return null; } })(),
+    // The RAW store anchor beside the derived position. A null value here is the re-init signature the
+    // zero-anchor guard keys on; a number with a fresh anchorAge is a real seek. Recorded so the next
+    // capture settles which one a given zero was, instead of inferring it after the fact.
+    storeRaw: (function () { try { var sp = Q.getState().player.position || {}; return { value: (typeof sp.value === "number" ? sp.value : null), anchorAge: sp.timestamp ? now - sp.timestamp : null }; } catch (e) { return null; } })(),
     playing: (function () { try { return isPlaying(); } catch (e) { return null; } })(),
     mpvMs: lastMpvMs, mpvAge: lastMpvMs == null ? null : now - lastMpvAt,
     sinceSeek: lastSeekAt ? now - lastSeekAt : null,
