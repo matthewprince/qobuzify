@@ -175,6 +175,13 @@ export default function Downloads() {
             Patches the official Qobuz desktop app you already installed, keeping its native
             bit-perfect playback with the full Qobuzify suite on top.
           </p>
+          {/* Name the shell explicitly. A user pasted this into the Node.js REPL and got
+              "SyntaxError: Unexpected identifier 'https'" - a fair reading of a bare command sitting
+              next to a "Needs Node.js" chip, which looks like an instruction about where to run it
+              rather than a dependency of the installer. */}
+          <p className="route-note">
+            Run it in <b>Windows PowerShell</b>, not in Node or Command Prompt.
+          </p>
           <button className="cmd cmd-lg" onClick={copyCmd} title="Copy install command">
             <code>{INSTALL_CMD}</code>
             <span className="copy">{copied ? "copied" : "copy"}</span>
@@ -182,7 +189,7 @@ export default function Downloads() {
           <div className="chips-req">
             <span className="req">Windows 10 / 11</span>
             <a className="req req-link" href="https://nodejs.org" target="_blank" rel="noopener">
-              Needs Node.js
+              Needs Node.js installed
             </a>
             <span className="req">Qobuz app installed</span>
           </div>
