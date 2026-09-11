@@ -1,6 +1,6 @@
 # The bundled extensions
 
-Twenty-nine extensions ship with Qobuzify. Each lives in `extensions/<id>/` and is toggled from the Marketplace. A fresh install turns on a curated few (Quality of Life, Simple Client, For You, Qobuzify Lyrics, Better Search) and leaves the rest for you to enable; installs from before this default flipped keep whatever they already had on. (A few are platform-scoped and inert elsewhere: bitperfect only does anything in the standalone wrapper, mobile-app only on a narrow screen.) This is what they do and, where it's interesting, how.
+Thirty-one extensions ship with Qobuzify. Each lives in `extensions/<id>/` and is toggled from the Marketplace. A fresh install turns on a curated few (Quality of Life, Simple Client, For You, Qobuzify Lyrics, Better Search) and leaves the rest for you to enable; installs from before this default flipped keep whatever they already had on. (A few are platform-scoped and inert elsewhere: bitperfect only does anything in the standalone wrapper, mobile-app only on a narrow screen.) This is what they do and, where it's interesting, how.
 
 Reading these is also the fastest way to learn the API, since they exercise all of it against real problems. If you're going to write your own, skim [feat-artists](#feat-artists) and [ux-tweaks](#ux-tweaks) first; they're the smallest complete examples.
 
