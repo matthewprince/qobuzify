@@ -87,6 +87,13 @@ Hide the top-nav items you don't use. A funnel button opens a checklist; hidden 
 ### ux-tweaks (Quality of Life)
 Four small annoyances fixed: double-click a track row to play it, the library opens on your last-used tab, your grid/list view choice sticks, and an optional switch to hide the Hi-Res badges. A good example of a small extension that adds a toggle to the Qobuzify settings panel.
 
+### playlist-finder (Playlist Finder)
+Answers two things the native library cannot: which playlists a song is already on, and which songs you have never filed anywhere. A **Playlists** chip on the library lists every favourite with its playlist membership as clickable tags (tag opens that playlist), plus an **In no playlist** filter and a title/artist search.
+
+Qobuz has no track-to-playlists endpoint, so the index is built once by walking your own playlists (`playlist/get?extra=tracks`, four at a time) and cached behind a fingerprint of `id:tracks_count` per playlist. That fingerprint moves whenever any playlist gains or loses a track, which is exactly when the index is stale, and stays put on a rename or reorder, which is exactly when a rebuild would be waste. **Refresh** forces one.
+
+Qobuzify's own generated playlists are excluded, by the ids the creating extensions already store (`mob:shuffle`, `mob:radio`, `smart:pid`, `ms:tmp`, `mix:<theme>`), with a name pattern as a fallback. Measured on a 512-track library: with "Shuffle · My Tracks" indexed the orphan count was **2**; excluding the generated ones it is **121**, which is the number the question was actually asking for. Favourites come from library-load's cache, and the list is rendered rather than filtered in place because the native library list is windowed.
+
 ### hires-filter (Hi-Res Filter)
 A **Hi-Res** chip on the library that swaps the track list for just your 24-bit favourites, each row showing its exact bit depth and sample rate. Click a row to open its album, or hit play to start that track. 24-bit is the same line Qobuz's own Hi-Res Audio badge draws, so the chip and the badge can never disagree.
 
