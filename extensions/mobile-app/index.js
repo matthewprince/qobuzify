@@ -225,6 +225,7 @@ function paintFav(kind, id) {
     b.innerHTML = on ? IC.heartFilled : IC.heart;
     b.setAttribute("aria-pressed", on ? "true" : "false");
   });
+  paintNpLike();
 }
 // repaint ALL hearts from the Set (called once id-sets finish loading, so early-rendered hollow hearts fill)
 function repaintFavAll() {
@@ -235,8 +236,20 @@ function repaintFavAll() {
     b.innerHTML = on ? IC.heartFilled : IC.heart;
     b.setAttribute("aria-pressed", on ? "true" : "false");
   });
+  paintNpLike();
 }
 // flip a favourite and update every matching heart on screen. Optimistic: Set + UI first, revert on failure.
+// The Now Playing heart is static markup built once and lives outside the row/header heart family, so it is
+// painted explicitly instead of through the [data-act="fav"] sweep.
+function npLikeId() { try { var t = Q.getState().player.currentTrack || {}; return t.id == null ? "" : String(t.id); } catch (e) { return ""; } }
+function paintNpLike() {
+  if (!npEl) return;
+  var b = npEl.querySelector(".qz-np__like"); if (!b) return;
+  var id = npLikeId(), on = id ? isFav("track", id) : false;
+  b.classList.toggle("is-on", on);
+  b.innerHTML = on ? IC.heartFilled : IC.heart;
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+}
 var _favBusy = {};   // (kind:id) -> 1 while a write is in flight, so a rapid double-tap can't fire two opposite writes
 function toggleFavorite(kind, id) {
   var spec = FAV_KINDS[kind]; if (!spec || id == null) return Promise.resolve();
@@ -2721,6 +2734,7 @@ function renderTrack() {
     if (tk.cover) npArtBox.appendChild(bigArtImg(tk.cover)); else npArtBox.innerHTML = ph("track");   // full-screen art = hi-res
     npEl.querySelector(".qz-np__t").textContent = tk.title || "";
     npEl.querySelector(".qz-np__s").textContent = tk.artist || "";
+    paintNpLike();                   // the heart belongs to the TRACK, so it must follow a track change
   }
   applyTint(on ? tk.cover : null);   // wash the app in the album's dominant color (beta signature)
   paintNpQuality();
@@ -3608,7 +3622,18 @@ function buildShell() {
   npEl.querySelector(".qz-np__nx").addEventListener("click", function () { playNext(); setTimeout(function () { renderTransport(true); }, 150); });
   npEl.querySelector(".qz-np__sh").addEventListener("click", function () { clickEl(".pct-shuffle, .player__action-shuffle"); });
   npEl.querySelector(".qz-np__rp").addEventListener("click", function () { clickEl(".pct-repeat, .player__action-repeat"); });
-  npEl.querySelector(".qz-np__like").addEventListener("click", function () { clickEl(".player .ButtonFavorite, .player__action-favorite"); });
+  // Favourite the CURRENT track through the same API path every other heart here uses. It used to drive
+  // Qobuz's own player-bar button by selector (clickEl ".player .ButtonFavorite, .player__action-favorite");
+  // when that selector does not match the running build the tap silently does nothing and the heart never
+  // fills - reported as "Like button from now playing screen does not work". toggleFavorite is already proven
+  // on rows, detail headers and the track sheet, and brings the optimistic repaint + toast with it.
+  // Deliberately NOT given data-act="fav": npEl sits inside the delegated tap root, so a data-act would fire
+  // the delegate AND this listener for a single tap.
+  npEl.querySelector(".qz-np__like").addEventListener("click", function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var id = npLikeId(); if (!id) return;
+    toggleFavorite("track", id);
+  });
   npEl.querySelector(".qz-np__more").addEventListener("click", openCurrentTrackSheet);   // NP kebab -> current-track options sheet
   npEl.querySelector(".qz-np__act--lyrics").addEventListener("click", function () { lyState.open ? closeLyrics() : openLyrics(); });
   npEl.querySelector('.qz-np__act[data-np="info"]').addEventListener("click", openCurrentAlbum);      // info -> current album
