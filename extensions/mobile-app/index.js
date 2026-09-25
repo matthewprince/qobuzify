@@ -1896,7 +1896,10 @@ var EXT_CLASS = {
   "multi-select":      { kind: "desktop" }, "playlist-context": { kind: "desktop" },
   "playlist-power":    { kind: "desktop" }, "playlist-tools":  { kind: "desktop" },
   "recommended":       { kind: "desktop" }, "simple-client":   { kind: "desktop" },
-  "ux-tweaks":         { kind: "desktop" }
+  "ux-tweaks":         { kind: "desktop" },
+  // Both mount a chip into the web player's library toolbar, which sits behind this interface, so on a
+  // phone they would be switches that visibly do nothing.
+  "hires-filter":      { kind: "desktop" }, "playlist-finder": { kind: "desktop" }
 };
 var EXT_DESKTOP_WHY = "Adds to the Qobuz desktop layout, which this interface replaces";
 // Ask the runtime instead of reading localStorage ourselves. The default is platform-dependent now
