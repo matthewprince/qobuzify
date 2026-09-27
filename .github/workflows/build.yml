@@ -83,6 +83,9 @@ jobs:
       # anylinux == portable across distros. Extracted tree lands at wrapper/resources/mpv (extraResources).
       # Runs BEFORE the payload bake: prebuild.js hard-fails a Linux build with no resources/mpv.
       # Pinned tag + sha256 (env at top of file), verified before extraction.
+      # Its get-yt-dlp and self-updater hooks are dropped at package time (extraResources filter in
+      # wrapper/package.json): mpv inherits $APPIMAGE from our runtime, so they popped dialogs about OUR AppImage.
+      # Re-check bin/*.hook for anything that calls `notify` whenever MPV_APPIMAGE_TAG is bumped.
       - name: Bundle mpv (Linux)
         if: matrix.os == 'ubuntu-latest'
         working-directory: wrapper
