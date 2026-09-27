@@ -1207,7 +1207,12 @@ function qzbpSpawn(mode) {
   qzbp.socketPath = qzbpSocketPath();
   try { if (process.platform !== "win32" && fs.existsSync(qzbp.socketPath)) fs.unlinkSync(qzbp.socketPath); } catch (_) {}
   let proc;
-  try { proc = spawn(bin, mpvArgs(qzbp.socketPath, mode), { stdio: ["ignore", "ignore", "pipe"] }); }
+  // The bundled anylinux mpv runs its own AppImage hooks on every start, and it inherits $APPIMAGE from OUR
+  // runtime - so its self-updater asked "Allow Qobuzify-x.y.z.AppImage to check for updates?" (from the second
+  // launch on) and its yt-dlp hook offered a download. package.json drops both hooks from the bundle; this is
+  // the second layer, for an mpv bump that renames them: the updater's own opt-out.
+  const env = Object.assign({}, process.env, { DISABLE_AUTO_UPDATES: "1" });
+  try { proc = spawn(bin, mpvArgs(qzbp.socketPath, mode), { stdio: ["ignore", "ignore", "pipe"], env }); }
   catch (e) { qzbpEvt({ type: "error", what: "spawn", msg: String(e && e.message) }); return; }
   qzbp.proc = proc;
   // spawn() does NOT throw synchronously when the binary is missing: it returns a ChildProcess and emits
