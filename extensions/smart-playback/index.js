@@ -251,10 +251,10 @@ function songSeedFromEvent(e) {
 }
 function songRadio(seed) { if (seed && seed.trackId) smartRadio(seed); }
 
-// This listener is deliberately BUBBLE phase. copy-share owns the right-click on track rows and cancels the
-// event during capture, so when it is enabled this never fires (no two menus fighting) - it offers the same
-// action inside its own menu through the published hook instead. With copy-share off nothing stops the
-// event and this one-item menu is the whole feature.
+// This listener is deliberately BUBBLE phase. On the desktop app copy-share owns the right-click on track rows
+// and cancels the event during capture, so this never fires there (no two menus fighting) - it offers the same
+// action inside its own menu through the published hook instead. Everywhere else (the web player's rows, or
+// copy-share off) the item goes into Qobuz's own track menu, with a one-item box only when no menu opens.
 function removeRadioMenu() {
   var m = document.getElementById("qz-radio-menu"); if (m) m.remove();
   document.removeEventListener("mousedown", onRadioDocDown, true);
@@ -264,18 +264,15 @@ function removeRadioMenu() {
 }
 function onRadioDocDown(e) { var m = document.getElementById("qz-radio-menu"); if (m && !m.contains(e.target)) removeRadioMenu(); }
 function onRadioEsc(e) { if (e.key === "Escape") removeRadioMenu(); }
-function onRadioContext(e) {
-  if (e.target.closest && e.target.closest(".qz-slot-left, .qz-slot-right, [data-qz-slot]")) return;
-  var seed = songSeedFromEvent(e); if (!seed) return;
-  e.preventDefault(); e.stopPropagation();
+function showRadioBox(x, y, seed) {
   removeRadioMenu();
   var m = document.createElement("div"); m.id = "qz-radio-menu"; m.className = "qz-radio-menu";
   var b = document.createElement("button"); b.className = "qz-radio-item"; b.textContent = "Start song radio";
   b.addEventListener("click", function (ev) { ev.stopPropagation(); removeRadioMenu(); songRadio(seed); });
   m.appendChild(b);
   m.style.visibility = "hidden"; document.body.appendChild(m);
-  m.style.left = Math.min(e.clientX, window.innerWidth - m.offsetWidth - 8) + "px";
-  m.style.top = Math.min(e.clientY, window.innerHeight - m.offsetHeight - 8) + "px";
+  m.style.left = Math.min(x, window.innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(y, window.innerHeight - m.offsetHeight - 8) + "px";
   m.style.visibility = "";
   setTimeout(function () {
     document.addEventListener("mousedown", onRadioDocDown, true);
@@ -283,6 +280,54 @@ function onRadioContext(e) {
     document.addEventListener("scroll", removeRadioMenu, true);
     window.addEventListener("blur", removeRadioMenu);
   }, 0);
+}
+// The web player opens its OWN track menu on right-click (a React portal that is already in the DOM by the time
+// this bubble-phase listener runs), so the box above used to appear next to it: two menus at once. Put the item
+// INSIDE Qobuz's menu instead, cloned from its "Play next" row so it is native in everything but label and icon.
+// Found by Qobuz's row keys (ui-base-menu--item-row--<key>), never by English labels, so any UI language works.
+function nativeTrackMenu() {
+  var box = document.querySelector(".ui-base-menu--item-row--items");
+  return box && box.querySelector('[class*="ui-base-menu--item-row--add-to-queue"], [class*="ui-base-menu--item-row--play-next"]') ? box : null;
+}
+function injectNativeItem(box, seed) {
+  if (box.querySelector(".qz-radio-native")) return true;
+  var ref = box.querySelector('[class*="ui-base-menu--item-row--play-next"]') || box.querySelector('[class*="ui-base-menu--item-row--add-to-queue"]');
+  if (!ref) return false;
+  var item = ref.cloneNode(true);
+  // drop the row-key classes so nothing keyed on "play-next" can take the clone for that action
+  item.className = String(item.className).replace(/\bui-base-menu--item-row--[a-z0-9-]+/g, "").replace(/\s+/g, " ").trim() + " qz-radio-native";
+  var lab = item.querySelector(".typo-main-default-m") || item.querySelector('[class*="typo-main"]');
+  if (lab) { lab.textContent = "Start song radio"; lab.className = String(lab.className).replace(/\bui-(base-tooltip|float)--[a-z0-9-]+/g, "").replace(/\s+/g, " ").trim(); }
+  [].forEach.call(item.querySelectorAll("use"), function (u) {   // Qobuz's own sprite has a radio glyph
+    var h = (u.getAttribute("href") || u.getAttribute("xlink:href") || "").replace(/#.*$/, "#qobuz-icon-radio");
+    u.setAttribute("href", h); try { u.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", h); } catch (e) {}
+  });
+  // Stopped on the item itself, so the click never bubbles to React's root: the clone cannot fire "Play next".
+  // Escape is Qobuz's own close path for this menu.
+  item.addEventListener("click", function (ev) {
+    ev.preventDefault(); ev.stopPropagation();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+    songRadio(seed);
+  }, true);
+  ref.parentNode.insertBefore(item, ref.nextSibling);
+  return true;
+}
+function onRadioContext(e) {
+  if (e.target.closest && e.target.closest(".qz-slot-left, .qz-slot-right, [data-qz-slot]")) return;
+  var seed = songSeedFromEvent(e); if (!seed) return;
+  e.preventDefault(); e.stopPropagation();
+  removeRadioMenu();
+  var box = nativeTrackMenu();
+  if (box && injectNativeItem(box, seed)) return;
+  // No native menu yet: give a slower page a few frames, and only then fall back to our own one-item box
+  // (the desktop app with copy-share switched off opens no menu at all).
+  var x = e.clientX, y = e.clientY, t0 = Date.now();
+  (function wait() {
+    var b = nativeTrackMenu();
+    if (b && injectNativeItem(b, seed)) return;
+    if (Date.now() - t0 < 250) { requestAnimationFrame(wait); return; }
+    showRadioBox(x, y, seed);
+  })();
 }
 document.addEventListener("contextmenu", onRadioContext, false);
 
