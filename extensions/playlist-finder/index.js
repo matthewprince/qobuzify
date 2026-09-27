@@ -332,10 +332,13 @@ function onEsc(e) { if (e.key === "Escape" && on) { e.stopPropagation(); setOn(f
 
 Q.css(CSS_ID, [
   "#" + CHIP_ID + "{flex:0 0 auto;height:45px;display:inline-flex;align-items:center;gap:8px;",
-  "padding:0 18px;border-radius:999px;border:1px solid rgba(255,255,255,.14);cursor:pointer;",
-  "background:rgba(255,255,255,.06);color:#cdd6e2;font:inherit;font-size:13px;font-weight:650;",
+  "padding:0 18px;border-radius:999px;cursor:pointer;",
+  // colour comes from the toolbar the chip sits in, so it reads on Qobuz's light appearance too - a fixed light
+  // grey was near-invisible on white. Border and fill are mixes of that same colour.
+  "color:inherit;border:1px solid color-mix(in srgb,currentColor 18%,transparent);",
+  "background:color-mix(in srgb,currentColor 6%,transparent);font:inherit;font-size:13px;font-weight:650;",
   "letter-spacing:.2px;white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
-  "#" + CHIP_ID + ":hover{border-color:rgba(255,255,255,.26);color:#eef2f7;}",
+  "#" + CHIP_ID + ":hover{border-color:color-mix(in srgb,currentColor 34%,transparent);background:color-mix(in srgb,currentColor 10%,transparent);}",
   "#" + CHIP_ID + ".qz-plf-active{background:var(--qz-accent,#3DA8FE);border-color:transparent;color:#06090a;}",
   "#" + PANEL_ID + "{position:fixed;z-index:220;display:none;flex-direction:column;color:#eef2f7;",
   "background:linear-gradient(180deg,#0a0e17,#060a12 60%);opacity:0;transition:opacity .16s ease;font-family:inherit;overflow:hidden;}",
