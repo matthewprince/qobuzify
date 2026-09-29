@@ -111,10 +111,51 @@ jobs:
         run: npm run prebuild
 
       - name: Build installers
+        if: matrix.os != 'macos-14'
         working-directory: wrapper
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx --no-install electron-builder ${{ matrix.args }} -p never
+
+      # macOS: sign the merged universal app with Qobuzify's own self-signed identity, then build the dmg/zip from
+      # that signed app. Without a stable signature macOS cannot remember a privacy decision, so users were asked
+      # "Allow 'Qobuzify' to access your microphone?" over and over (the request comes from native audio code; web
+      # permission requests are already denied in main.js). Not an Apple Developer ID, so Gatekeeper's warning is
+      # unchanged. Signing can't be done in afterPack (it runs per-arch before the universal merge). Best-effort:
+      # without the secret, or if any signing step fails, this ships the unsigned build exactly as before.
+      - name: Build installers (macOS, signed)
+        if: matrix.os == 'macos-14'
+        working-directory: wrapper
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -uo pipefail
+          plain() { npx --no-install electron-builder ${{ matrix.args }} -p never; }
+          if [ -z "${MAC_CERT_P12:-}" ]; then echo "::warning::MAC_CERT_P12 not set; unsigned build"; plain; exit $?; fi
+          npx --no-install electron-builder ${{ matrix.args }} --dir -p never || { echo "::warning::--dir build failed; unsigned build"; plain; exit $?; }
+          APP=$(ls -d dist/mac-universal/*.app 2>/dev/null | head -1)
+          if [ -z "$APP" ]; then echo "::warning::no universal .app found; unsigned build"; plain; exit $?; fi
+          KC="$RUNNER_TEMP/qz-sign.keychain-db"; KCP=$(openssl rand -hex 16)
+          signed=0
+          if security create-keychain -p "$KCP" "$KC" \
+             && security set-keychain-settings -lut 3600 "$KC" \
+             && security unlock-keychain -p "$KCP" "$KC" \
+             && printf '%s' "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/qz-sign.p12" \
+             && security import "$RUNNER_TEMP/qz-sign.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign \
+             && security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCP" "$KC" >/dev/null \
+             && security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"') \
+             && codesign --force --deep --timestamp=none --keychain "$KC" --sign "Qobuzify" "$APP"; then
+            signed=1
+            codesign -dvv "$APP" 2>&1 | grep -E '^(Identifier|Authority)=' || true
+            codesign --verify --deep "$APP" && echo "signature verifies" || echo "::warning::codesign --verify complained (self-signed); shipping it signed anyway"
+          else
+            echo "::warning::signing failed; packaging the unsigned app"
+          fi
+          rm -f "$RUNNER_TEMP/qz-sign.p12"
+          echo "signed=$signed"
+          npx --no-install electron-builder --mac --universal --prepackaged "$APP" -p never || { echo "::warning::prepackaged packaging failed; unsigned rebuild"; plain; }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
