@@ -79,7 +79,9 @@ var IC = {
   info: '<svg viewBox="0 0 24 24" fill="none"><path d="M12,16.75C12.213,16.75 12.391,16.678 12.535,16.534C12.678,16.391 12.75,16.212 12.75,16V11.75C12.75,11.538 12.678,11.359 12.534,11.216C12.39,11.072 12.212,11 12,11C11.787,11 11.609,11.072 11.465,11.216C11.322,11.359 11.25,11.538 11.25,11.75V16C11.25,16.212 11.322,16.391 11.466,16.534C11.609,16.678 11.788,16.75 12,16.75ZM12,9.288C12.229,9.288 12.421,9.211 12.575,9.056C12.73,8.901 12.808,8.71 12.808,8.481C12.808,8.252 12.73,8.06 12.575,7.905C12.421,7.751 12.229,7.673 12,7.673C11.771,7.673 11.579,7.751 11.425,7.905C11.27,8.06 11.192,8.252 11.192,8.481C11.192,8.71 11.27,8.901 11.425,9.056C11.579,9.211 11.771,9.288 12,9.288ZM12.002,21.5C10.688,21.5 9.453,21.251 8.297,20.752C7.14,20.253 6.135,19.576 5.28,18.722C4.424,17.867 3.747,16.862 3.248,15.706C2.749,14.55 2.5,13.316 2.5,12.002C2.5,10.688 2.749,9.453 3.248,8.297C3.747,7.14 4.423,6.135 5.278,5.28C6.133,4.424 7.138,3.747 8.294,3.248C9.45,2.749 10.684,2.5 11.998,2.5C13.312,2.5 14.547,2.749 15.703,3.248C16.86,3.747 17.865,4.423 18.721,5.278C19.576,6.133 20.253,7.138 20.752,8.294C21.25,9.45 21.5,10.684 21.5,11.998C21.5,13.312 21.251,14.547 20.752,15.703C20.253,16.86 19.576,17.865 18.722,18.721C17.867,19.576 16.862,20.253 15.706,20.752C14.55,21.25 13.316,21.5 12.002,21.5ZM12,20C14.233,20 16.125,19.225 17.675,17.675C19.225,16.125 20,14.233 20,12C20,9.767 19.225,7.875 17.675,6.325C16.125,4.775 14.233,4 12,4C9.767,4 7.875,4.775 6.325,6.325C4.775,7.875 4,9.767 4,12C4,14.233 4.775,16.125 6.325,17.675C7.875,19.225 9.767,20 12,20Z" fill="currentColor"/></svg>',
   queue: '<svg viewBox="0 0 26 26" fill="none"><path d="M22.62 20.04c0.45 0 0.81 0.37 0.81 0.81 0 0.45-0.36 0.82-0.8 0.82H3.65c-0.45 0-0.81-0.37-0.81-0.82 0-0.44 0.36-0.8 0.81-0.8h18.96Z" fill="currentColor"/><path d="M20.98 9.2c1.2 0 2.17 0.98 2.17 2.18v3.25c0 1.2-0.97 2.16-2.17 2.16H4.73c-1.2 0-2.16-0.97-2.16-2.16v-3.25c0-1.2 0.97-2.17 2.16-2.17h16.25Zm-15.7 1.63c-0.6 0-1.09 0.49-1.09 1.09v2.16c0 0.6 0.49 1.09 1.08 1.09h15.17c0.6 0 1.08-0.49 1.08-1.09v-2.16c0-0.6-0.48-1.09-1.08-1.09H5.27Z" fill="currentColor"/><path d="M22.34 4.33c0.45 0 0.81 0.37 0.81 0.82 0 0.44-0.36 0.8-0.81 0.8H3.38c-0.45 0-0.81-0.36-0.81-0.8 0-0.45 0.36-0.82 0.8-0.82h18.97Z" fill="currentColor"/></svg>',
   hires: '<svg viewBox="0 0 24 25" fill="none"><path d="M11.358,16.409V13.222C11.352,13.113 11.404,13.061 11.513,13.067C11.606,13.069 11.698,13.069 11.79,13.069C11.974,13.069 12.159,13.069 12.343,13.084C12.683,13.107 12.931,13.286 13.057,13.608C13.115,13.758 13.167,13.908 13.202,14.064C13.276,14.415 13.349,14.767 13.42,15.118C13.493,15.469 13.565,15.821 13.639,16.173C13.657,16.247 13.674,16.322 13.697,16.409H14.832C14.828,16.382 14.824,16.357 14.821,16.334C14.815,16.296 14.811,16.262 14.803,16.23C14.761,16.044 14.719,15.858 14.678,15.671C14.595,15.299 14.511,14.926 14.423,14.553C14.325,14.127 14.221,13.706 14.106,13.286C14.014,12.963 13.841,12.692 13.519,12.537C13.513,12.531 13.513,12.514 13.513,12.496C13.519,12.493 13.524,12.488 13.529,12.484C13.539,12.475 13.549,12.466 13.565,12.462C14.106,12.214 14.389,11.77 14.504,11.206C14.59,10.779 14.573,10.353 14.463,9.932C14.308,9.327 13.956,8.89 13.351,8.699C13.121,8.624 12.867,8.584 12.625,8.578C12.063,8.565 11.504,8.565 10.946,8.566C10.807,8.567 10.667,8.567 10.528,8.567C10.484,8.567 10.44,8.572 10.398,8.578C10.379,8.58 10.361,8.582 10.344,8.584C10.28,8.838 10.292,16.242 10.355,16.409H11.358ZM11.372,9.631C11.377,9.62 11.384,9.606 11.392,9.587C11.529,9.59 11.666,9.587 11.803,9.584C12.1,9.577 12.397,9.57 12.689,9.633C13.063,9.713 13.305,9.944 13.409,10.313C13.49,10.606 13.495,10.9 13.426,11.194C13.317,11.667 12.983,11.972 12.499,12.007C12.273,12.027 12.044,12.027 11.814,12.028C11.716,12.028 11.618,12.028 11.519,12.03C11.415,12.03 11.352,11.995 11.352,11.88C11.358,11.148 11.358,10.411 11.358,9.667C11.358,9.66 11.362,9.65 11.372,9.631Z" fill="currentColor"/><path d="M1.303,12.946C1.574,12.882 3.62,12.9 3.798,12.969V16.403H4.858V8.584H3.81L3.808,8.615C3.803,8.7 3.798,8.778 3.798,8.855C3.798,9.794 3.798,10.727 3.792,11.667C3.792,11.88 3.781,11.891 3.573,11.891H1.505C1.456,11.891 1.406,11.884 1.346,11.876L1.292,11.868V8.584H0.226V16.409H1.303V12.946Z" fill="currentColor"/><path d="M18.975,16.293C18.076,16.53 17.195,16.564 16.371,16.046C15.956,15.786 15.662,15.418 15.489,14.968C15.017,13.701 15.028,12.433 15.639,11.212C16.117,10.249 17.028,9.921 18.042,10.146C18.566,10.261 18.923,10.595 19.165,11.062C19.367,11.442 19.465,11.851 19.505,12.272C19.532,12.545 19.538,12.82 19.545,13.097C19.548,13.234 19.551,13.372 19.557,13.51C19.557,13.539 19.551,13.568 19.54,13.62C19.508,13.622 19.477,13.625 19.447,13.627C19.388,13.632 19.33,13.637 19.269,13.637H16.567C16.48,13.637 16.394,13.643 16.313,13.649C16.307,14.703 16.901,15.441 17.84,15.446C18.097,15.446 18.35,15.415 18.613,15.382C18.722,15.368 18.833,15.355 18.946,15.343C18.946,15.343 18.975,15.377 18.981,15.418L18.993,15.497C19.024,15.694 19.053,15.888 19.079,16.086C19.09,16.178 19.09,16.265 18.975,16.293ZM18.278,11.569C17.961,10.889 17.137,10.802 16.688,11.402C16.417,11.77 16.342,12.203 16.29,12.681L16.375,12.685C16.446,12.689 16.502,12.692 16.561,12.692H18.278C18.445,12.681 18.462,12.663 18.462,12.496C18.462,12.174 18.416,11.863 18.278,11.569Z" fill="currentColor"/><path d="M22.029,15.417C21.931,15.441 21.827,15.452 21.729,15.452C21.297,15.464 20.882,15.366 20.468,15.239C20.393,15.216 20.318,15.193 20.22,15.164C20.145,15.504 20.076,15.815 20.001,16.143C20.324,16.282 20.64,16.351 20.963,16.397C21.516,16.483 22.064,16.501 22.6,16.316C23.21,16.109 23.619,15.705 23.735,15.054C23.856,14.357 23.712,13.729 23.107,13.291C22.89,13.136 22.655,13.009 22.42,12.883C22.341,12.841 22.263,12.799 22.185,12.755C22.088,12.7 21.989,12.648 21.889,12.597C21.762,12.532 21.636,12.467 21.516,12.392C21.246,12.22 21.176,11.949 21.228,11.649C21.28,11.361 21.47,11.194 21.741,11.113C21.851,11.085 21.972,11.067 22.081,11.061C22.427,11.056 22.755,11.131 23.083,11.234C23.121,11.248 23.161,11.258 23.204,11.268C23.233,11.275 23.264,11.283 23.297,11.292C23.327,11.158 23.358,11.029 23.388,10.902L23.388,10.901C23.432,10.716 23.475,10.534 23.516,10.347C23.479,10.333 23.445,10.317 23.413,10.303C23.379,10.287 23.346,10.272 23.314,10.261C22.813,10.094 22.294,10.03 21.77,10.088C21.551,10.111 21.32,10.163 21.119,10.249C20.537,10.485 20.168,10.917 20.082,11.545C19.984,12.22 20.162,12.802 20.744,13.211C20.924,13.334 21.118,13.444 21.309,13.552L21.378,13.591C21.475,13.644 21.573,13.694 21.671,13.744C21.831,13.826 21.991,13.907 22.144,14C22.26,14.069 22.369,14.167 22.45,14.277C22.795,14.72 22.576,15.296 22.029,15.417Z" fill="currentColor"/><path d="M7.117,10.791C7.175,10.97 7.192,16.155 7.135,16.403H6.126C6.075,16.247 6.063,11.096 6.121,10.791H7.117Z" fill="currentColor"/><path d="M9.324,11.909H8.148V13.044H9.324V11.909Z" fill="currentColor"/><path d="M7.152,8.584V9.662H6.086L6.086,9.649C6.08,9.291 6.075,8.949 6.092,8.584H7.152Z" fill="currentColor"/></svg>',
-  gear: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 12.9a7.7 7.7 0 0 0 .06-.9 7.7 7.7 0 0 0-.06-.9l1.62-1.26a.4.4 0 0 0 .1-.5l-1.54-2.66a.4.4 0 0 0-.48-.18l-1.9.77a7.5 7.5 0 0 0-1.56-.9l-.29-2.02a.4.4 0 0 0-.39-.33h-3.08a.4.4 0 0 0-.39.33l-.29 2.02a7.5 7.5 0 0 0-1.56.9l-1.9-.77a.4.4 0 0 0-.48.18L3.72 8.34a.4.4 0 0 0 .1.5l1.62 1.26a7.7 7.7 0 0 0 0 1.8L3.82 13.16a.4.4 0 0 0-.1.5l1.54 2.66a.4.4 0 0 0 .48.18l1.9-.77a7.5 7.5 0 0 0 1.56.9l.29 2.02a.4.4 0 0 0 .39.33h3.08a.4.4 0 0 0 .39-.33l.29-2.02a7.5 7.5 0 0 0 1.56-.9l1.9.77a.4.4 0 0 0 .48-.18l1.54-2.66a.4.4 0 0 0-.1-.5L19.4 12.9Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>'
+  // Qobuz's own settings glyph from the page's sprite (same origin on play.qobuz.com). The hand-drawn gear this
+  // replaces was lopsided with a broken tooth: "extremely weird looking" (user report, 2026-09-28).
+  gear: '<svg viewBox="0 0 24 24"><use href="/assets/images/sprite.svg#qobuz-icon-settings"></use></svg>'
 };
 
 // ------------------------------------------------------------------ Qobuz API (cached read calls)
@@ -99,11 +101,27 @@ function featuredAlbumsG(type, gid, limit) { return api("album/getFeatured?type=
 function featuredPlaylistsG(type, gid, limit) { return api("playlist/getFeatured?type=" + type + "&genres_id=" + gid + "&limit=" + (limit || 18)).then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function genreList() { return api("genre/list").then(function (j) { return (j.genres && j.genres.items) || j.items || []; }).catch(function () { return []; }); }
 function favorites(type, limit) { return api("favorite/getUserFavorites?type=" + type + "&limit=" + (limit || 100)).then(function (j) { return (j[type] && j[type].items) || []; }).catch(function () { return []; }); }
-// Every favorite track id, paged. The library screens ask for 200 because that is all a list needs to
-// show; a whole-library shuffle needs the actual whole library, so this walks offsets until the API stops
-// returning rows. Capped like the desktop extension: past a few thousand a shuffle is a fair sample of
-// your library either way, and the queue has to end somewhere.
+// Every favorite track id, paged. A whole-library shuffle needs the actual whole library, so this walks
+// offsets until the API stops returning rows. Capped like the desktop extension: past a few thousand a
+// shuffle is a fair sample of your library either way, and the queue has to end somewhere.
 var SHUFFLE_CAP = 5000, FAV_PAGE = 500;
+// Every favorite track, same paging, for the Library Songs tab. It used to ask for the first 200 only (all a
+// list could afford to draw), so a bigger library simply ended there; the list is windowed now, so the whole
+// thing costs no more to show than 200 did. Same pages and URLs as the id walk below, so they share the cache.
+function allFavoriteTracks() {
+  var out = [];
+  function page(offset) {
+    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset)
+      .then(function (j) {
+        var items = (j.tracks && j.tracks.items) || [];
+        out = out.concat(items);
+        if (items.length < FAV_PAGE || out.length >= SHUFFLE_CAP) return out;
+        return page(offset + FAV_PAGE);
+      })
+      .catch(function () { return out; });   // keep whatever already arrived
+  }
+  return page(0);
+}
 function allFavoriteTrackIds() {
   var ids = [];
   function page(offset) {
@@ -122,6 +140,10 @@ function allFavoriteTrackIds() {
 function userPlaylists() { return api("playlist/getUserPlaylists?limit=200").then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function albumGet(id) { return api("album/get?album_id=" + id); }   // album/get returns its tracks by default; &extra=tracks 400s
 function playlistGet(id) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500"); }
+// playlist/get pages at 500 tracks, and everything past the first page used to be silently missing: a 512-track
+// playlist showed 500, and a longer one simply ended "a few hundred songs in" (user report, 2026-09-28).
+var PL_PAGE = 500, PL_MAX = 10000;
+function playlistPage(id, offset) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset); }
 function artistGet(id) { return api("artist/get?artist_id=" + id + "&extra=albums,playlists,tracks&limit=40"); }
 // artist/get&extra=tracks is NOT a popularity list. It returns the artist's newest release first and repeats
 // it once per album variant, so "Top tracks" came out as ten rows of the same new single. artist/page is the
@@ -498,9 +520,19 @@ function matchRowByPos(rows, pos, title) {
   });
   return bestScore >= 30 ? best : null;
 }
+// 0-based position of a native row. Playlist rows carry no number on the current web player, but the list is
+// ReactVirtualized and places each row absolutely: its wrapper's top / height IS the index (row 0 is 87px tall,
+// the rest 64px, and the extra 23px never reaches half a row, so rounding stays exact at any depth).
+function nativeRowIndex(r) {
+  var ne = r.querySelector(".ListItem__number, .ListItem__numberText"), n = ne ? parseInt(ne.textContent, 10) : NaN;
+  if (n > 0) return n - 1;
+  var w = r.parentElement, top = w ? parseFloat(w.style.top) : NaN, hh = w ? parseFloat(w.style.height) : NaN;
+  return (isFinite(top) && hh > 0) ? Math.round(top / hh) : -1;
+}
 // navigate the invisible native page, poll for the target row (scrolling the virtualized list if needed),
-// click its .ListItem__player. Never hangs (header-Play last resort so the queue is at least the right context).
-function navClickRow(path, pick) {
+// click its .ListItem__player. Never hangs. wantPos (1-based, playlists) jumps the native list straight at the
+// row; onMiss, when given, replaces the header-Play last resort.
+function navClickRow(path, pick, wantPos, onMiss) {
   _navCancel(); playBusy = true;
   Q.navigate(path);
   var scroller = null, tries = 0, id = path.split("/").pop();
@@ -513,8 +545,23 @@ function navClickRow(path, pick) {
       var hit = target.querySelector(".ListItem__player") || target.querySelector(".ListItem__number");
       if (hit) { fireClick(hit); return done(); }
     }
+    // Jump, don't crawl. 0.85 of a screen per step only reaches ~250 rows before the give-up below, so tapping
+    // song 400 of a long playlist played the playlist from the TOP (measured 2026-09-28). The rendered rows'
+    // positions say how far off we are.
+    if (scroller && wantPos && rows.length && tries % 2 === 0) {
+      var idx = rows.map(nativeRowIndex).filter(function (x) { return x >= 0; });
+      if (idx.length) {
+        var lo = Math.min.apply(null, idx), hi = Math.max.apply(null, idx), want = wantPos - 1;
+        var rh = rows[rows.length - 1].getBoundingClientRect().height || 64;
+        if (want > hi) { scroller.scrollTop += (want - hi + 3) * rh; return; }
+        if (want < lo) { scroller.scrollTop = Math.max(0, scroller.scrollTop - (lo - want + 3) * rh); return; }
+      }
+    }
     if (scroller && tries % 3 === 0) scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + scroller.clientHeight * 0.85);
-    if (tries > 60) { var hb = document.querySelector("[class*='PageHeader'] button[aria-label='Play']"); if (hb) fireClick(hb); return done(); }
+    if (tries > 60) {
+      if (onMiss) { done(); return onMiss(); }
+      var hb = document.querySelector("[class*='PageHeader'] button[aria-label='Play']"); if (hb) fireClick(hb); return done();
+    }
   }, 130);
   function done() { clearInterval(iv); if (_navIv === iv) _navIv = null; playBusy = false; }
 }
@@ -522,7 +569,9 @@ function playInContext(el) {
   var kind = el.getAttribute("data-ctx-kind"), cid = el.getAttribute("data-ctx-id"),
       pos = +el.getAttribute("data-pos") || 0, album = el.getAttribute("data-album"),
       title = el.getAttribute("data-title"), num = el.getAttribute("data-num"), tid = el.getAttribute("data-id");
-  if (kind === "playlist" && cid) navClickRow("/playlist/" + cid, function (rows) { if (tid) { for (var i = 0; i < rows.length; i++) if (rowMatchesId(rows[i], tid)) return rows[i]; } return matchRowByPos(rows, pos, title); });
+  // a row that can't be found plays the song you tapped (from its album), never the playlist's first track
+  if (kind === "playlist" && cid) navClickRow("/playlist/" + cid, function (rows) { if (tid) { for (var i = 0; i < rows.length; i++) if (rowMatchesId(rows[i], tid)) return rows[i]; } return matchRowByPos(rows, pos, title); },
+    pos, function () { playFromAlbum(album, title, num, tid); });
   else if (kind === "album" && cid) navClickRow("/album/" + cid, function (rows) { return matchRow(rows, title, num, tid) || rows[0]; });
   else playFromAlbum(album, title, num, tid);   // search / favorites / top-tracks: no native list-as-queue, album is the honest fallback
 }
@@ -1135,10 +1184,12 @@ function playlistDetailScreen(id) {
   return { title: "", mount: function (el) {
     loading(el);
     var host = null, editing = false, TR = [], owned = false, meta = {}, pendingMoves = {};   // M3 FIX: per-ptid reorder debounce timers
+    var TOTAL = 0, vl = null;   // TOTAL = the playlist's full length (rows past the first page load in behind it)
 
     Promise.all([ playlistGet(id), me() ]).then(function (r) {
       var o = r[0] || {}, uid = r[1];
       TR = (o.tracks && o.tracks.items) || [];
+      TOTAL = fullLength(o, TR);
       owned = !!(o.owner && uid && String(o.owner.id) === String(uid));
       var count = o.tracks_count || TR.length;
       var durSec = o.duration || TR.reduce(function (s, t) { return s + (t.duration || 0); }, 0);
@@ -1149,7 +1200,32 @@ function playlistDetailScreen(id) {
       el.appendChild(host);
       host.addEventListener("click", onEditTap);   // scoped to host (dies with the screen on next render -> no leak)
       redraw();
+      loadRest();
     }).catch(function () { el.innerHTML = '<p class="qz-empty">Couldn\'t load this playlist.</p>'; });
+
+    function fullLength(o, items) { return Math.min(PL_MAX, Math.max(items.length, (o.tracks && o.tracks.total) || o.tracks_count || 0)); }
+    // The rest of a long playlist, a page at a time. The list is sized to the full length from the start, with
+    // placeholder rows until each page lands, so the scrollbar doesn't jump as pages arrive. Offsets advance by the
+    // page size (not by rows received), and rows are de-duplicated, so a short page can't shift or repeat anything.
+    var restGen = 0;
+    function loadRest() {
+      var gen = ++restGen, off = PL_PAGE, seen = {};
+      TR.forEach(function (t) { seen[t.playlist_track_id || t.id] = 1; });
+      (function next() {
+        if (gen !== restGen) return;                                  // a reload started over
+        if (TR.length >= TOTAL || off >= PL_MAX) return settle();
+        playlistPage(id, off).then(function (p) {
+          if (gen !== restGen) return;
+          var more = ((p && p.tracks && p.tracks.items) || []).filter(function (t) { var k = t.playlist_track_id || t.id; if (seen[k]) return false; seen[k] = 1; return true; });
+          if (!more.length && !((p && p.tracks && p.tracks.items) || []).length) return settle();
+          TR = TR.concat(more); off += PL_PAGE;
+          if (vl) vl.setItems(TR, TOTAL);
+          next();
+        }).catch(function () { if (gen === restGen) settle(); });
+      })();
+    }
+    // Done (or a page failed): the list is exactly what arrived, no placeholder tail left behind.
+    function settle() { if (TOTAL !== TR.length) { TOTAL = TR.length; if (vl) vl.setItems(TR, TOTAL); } }
 
     function headerHTML() {
       var actions =
@@ -1182,8 +1258,10 @@ function playlistDetailScreen(id) {
     function redraw() {
       if (!host) return;
       var y = contentEl ? contentEl.scrollTop : 0;
-      host.innerHTML = headerHTML() + (editing ? editListHTML() : trackListHTML(TR, { kind: "playlist", id: id, owned: owned }));
+      host.innerHTML = headerHTML() + (editing ? editListHTML() : '<div class="qz-plvhost"></div>');
+      vl = editing ? null : trackListInto(host.querySelector(".qz-plvhost"), TR, { kind: "playlist", id: id, owned: owned }, TOTAL);
       if (contentEl) contentEl.scrollTop = y;
+      if (vl) vl.update(true);                      // draw the window where the restored scroll landed
       if (editing) attachDrag(host.querySelector(".qz-pltlist"));
     }
     function idxOf(ptid) { for (var i = 0; i < TR.length; i++) if (String(TR[i].playlist_track_id) === String(ptid)) return i; return -1; }
@@ -1200,9 +1278,9 @@ function playlistDetailScreen(id) {
     }
     function removeRow(ptid) {
       var i = idxOf(ptid); if (i < 0) return;
-      var removed = TR[i]; TR.splice(i, 1); redraw();                 // optimistic
+      var removed = TR[i]; TR.splice(i, 1); TOTAL = Math.max(TR.length, TOTAL - 1); redraw();   // optimistic
       deletePlaylistTrack(id, ptid).then(function () { invalidatePlaylistCache(); qToast("Removed"); })
-        .catch(function () { TR.splice(i, 0, removed); redraw(); qToast("Couldn't remove, try again"); });
+        .catch(function () { TR.splice(i, 0, removed); TOTAL = Math.max(TR.length, TOTAL + 1); redraw(); qToast("Couldn't remove, try again"); });
     }
     function moveRow(ptid, dir) {
       var i = idxOf(ptid); if (i < 0) return;
@@ -1226,7 +1304,7 @@ function playlistDetailScreen(id) {
     }
     function reload() {
       invalidatePlaylistCache();
-      playlistGet(id).then(function (o) { TR = (o.tracks && o.tracks.items) || []; redraw(); }).catch(function () {});
+      playlistGet(id).then(function (o) { TR = (o.tracks && o.tracks.items) || []; TOTAL = fullLength(o, TR); redraw(); loadRest(); }).catch(function () {});
     }
     // pointer-drag reorder (touch + mouse). Live-moves the row; commits the single move on drop.
     function attachDrag(listEl) {
@@ -1321,6 +1399,135 @@ function trackRowHTML(t, ctx, pos) {
 function trackListHTML(items, ctx) {
   if (!items || !items.length) return '<p class="qz-empty">No tracks.</p>';
   return '<div class="qz-tlist">' + items.map(function (t, i) { return trackRowHTML(t, ctx, i + 1); }).join("") + "</div>";
+}
+
+// ---- windowed track list, for long lists ----------------------------------------------------------------------
+// Only the rows around the viewport exist in the DOM. A long playlist used to put every row on the page at once
+// (500 rows = 8,600 elements) and the WebView held on to every cover it had decoded, so scrolling stalled a few
+// hundred songs in until the app was restarted (user report, 2026-09-28). Rows are one fixed height, so the window
+// is arithmetic: a box sized to the whole list and one translated block of rows around the viewport. It is driven
+// by the single scroll listener on contentEl (onContentScroll), which finds it through the page's __qzVirt, so no
+// per-list listener is left behind when a screen is thrown away.
+var VL_MIN = 120;   // shorter lists render in full: nothing to gain
+var VL_BUF = 20;    // rows kept rendered beyond each edge of the viewport
+var SKEL_ROW = '<div class="qz-trow qz-trow--skel" aria-hidden="true"><span class="qz-trow__art"></span>' +
+  '<span class="qz-trow__meta"><span class="qz-sk"></span><span class="qz-sk qz-sk--s"></span></span></div>';
+// Render items into host: in full when short, windowed when long. `total` sizes the list up front for rows that
+// have not arrived yet (they draw as placeholders). Returns the window controller, or null for a full render.
+function trackListInto(host, items, ctx, total) {
+  var page = host.closest ? host.closest(".qz-page") : null;
+  var n = Math.max(items.length, total || 0);
+  if (n < VL_MIN) { host.innerHTML = trackListHTML(items, ctx); return null; }
+  host.innerHTML = '<div class="qz-vlist"><div class="qz-tlist qz-vwin"></div></div>';
+  var box = host.firstChild, win = box.firstChild;
+  var v = { items: items, n: n, stride: 0, first: -1, last: -1 };
+  function row(i) { var t = v.items[i]; return t ? trackRowHTML(t, ctx, i + 1) : SKEL_ROW; }
+  // Row pitch (height plus any gap), read off two real rows once the list is on screen.
+  function measure() {
+    if (v.stride) return true;
+    win.innerHTML = row(0) + row(1);
+    var a = win.children[0], b = win.children[1];
+    v.stride = (a && b && (b.offsetTop - a.offsetTop)) || (a && a.offsetHeight) || 0;
+    if (!v.stride) return false;                 // not laid out yet: try again on the next update
+    box.style.height = (v.n * v.stride) + "px";
+    return true;
+  }
+  v.alive = function () { return box.isConnected; };
+  v.update = function (force) {
+    if (!contentEl || !box.isConnected || !measure()) return;
+    var top = box.getBoundingClientRect().top - contentEl.getBoundingClientRect().top;
+    var vf = Math.max(0, Math.floor(-top / v.stride)), vl = Math.min(v.n, Math.ceil((contentEl.clientHeight - top) / v.stride));
+    if (vl < vf) vl = vf;
+    var covered = v.first >= 0 && (vf >= v.first + 3 || v.first === 0) && (vl <= v.last - 3 || v.last === v.n);
+    if (covered && !force) return;
+    var f = Math.max(0, vf - VL_BUF), l = Math.min(v.n, vl + VL_BUF), html = "";
+    for (var i = f; i < l; i++) html += row(i);
+    win.innerHTML = html;
+    win.style.transform = "translateY(" + (f * v.stride) + "px)";
+    v.first = f; v.last = l;
+  };
+  // More rows arrived (the rest of a long playlist): same box, new length, redraw the window in place.
+  v.setItems = function (items2, total2) {
+    v.items = items2; v.n = Math.max(items2.length, total2 || 0);
+    if (v.stride) box.style.height = (v.n * v.stride) + "px";
+    v.update(true);
+  };
+  // 1-based position of the row at the top of the viewport (the fast scroller's label)
+  v.topPos = function () {
+    if (!v.stride || !contentEl) return 0;
+    var top = box.getBoundingClientRect().top - contentEl.getBoundingClientRect().top;
+    return Math.min(v.n, Math.max(1, Math.floor(-top / v.stride) + 1));
+  };
+  if (page) page.__qzVirt = v;
+  v.update(true);
+  return v;
+}
+
+// ---- one scroll listener for every screen: drives the windowed list and the fast scroller ----
+var _scrollRaf = 0;
+function curVirt() { var pg = contentEl && contentEl.firstElementChild, v = pg && pg.__qzVirt; return v && v.alive() ? v : null; }
+function onContentScroll() {
+  if (_scrollRaf) return;
+  _scrollRaf = requestAnimationFrame(function () {
+    _scrollRaf = 0;
+    if (!contentEl) return;
+    var v = curVirt();
+    if (v) v.update();
+    fsSync(v);
+  });
+}
+
+// ---- fast scroller: a thumb you can grab on long lists ---------------------------------------------------------
+// Asked for in the same report ("add a scroll bar for when in playlists"). Shows while scrolling, fades after a
+// moment, and dragging it jumps anywhere in a list of thousands. Only on screens with a windowed list, and only
+// touchable while it is visible, so it never sits on top of a row's menu button the rest of the time.
+var fsEl = null, fsThumb = null, fsLabel = null, fsHideT = 0, fsDrag = null, FS_THUMB = 52;
+function fsBuild() {
+  fsEl = h('<div class="qz-fs" aria-hidden="true"><div class="qz-fs__thumb"><i></i></div><div class="qz-fs__label"></div></div>');
+  fsThumb = fsEl.firstChild; fsLabel = fsEl.lastChild;
+  fsThumb.addEventListener("pointerdown", function (e) {
+    if (!fsEl.classList.contains("is-on")) return;
+    e.preventDefault(); e.stopPropagation();
+    try { fsThumb.setPointerCapture(e.pointerId); } catch (x) {}
+    fsDrag = { dy: e.clientY - fsThumb.getBoundingClientRect().top };
+    fsEl.classList.add("is-drag");
+    clearTimeout(fsHideT);
+  });
+  fsThumb.addEventListener("pointermove", function (e) {
+    if (!fsDrag || !contentEl) return;
+    e.preventDefault();
+    var g = fsGeom(), frac = Math.max(0, Math.min(1, (e.clientY - fsDrag.dy - g.top) / Math.max(1, g.h - FS_THUMB)));
+    contentEl.scrollTop = frac * (contentEl.scrollHeight - contentEl.clientHeight);
+  });
+  function end() { if (!fsDrag) return; fsDrag = null; if (fsEl) fsEl.classList.remove("is-drag"); fsSync(curVirt()); }
+  fsThumb.addEventListener("pointerup", end);
+  fsThumb.addEventListener("pointercancel", end);
+  return fsEl;
+}
+// The strip the thumb travels: the scroller's visible box, minus the mini player and nav bar that float over it.
+function fsGeom() {
+  var r = contentEl.getBoundingClientRect(), bottom = r.bottom;
+  [miniEl, navEl].forEach(function (x) {
+    if (!x || !x.isConnected) return;
+    var xr = x.getBoundingClientRect();
+    if (xr.height && xr.top > r.top && xr.top < bottom) bottom = xr.top;
+  });
+  var top = r.top + 12;
+  return { top: top, h: Math.max(FS_THUMB * 2, bottom - 12 - top) };
+}
+function fsSync(v) {
+  if (!fsEl) return;
+  if (!v || !contentEl || contentEl.scrollHeight <= contentEl.clientHeight * 3) {
+    clearTimeout(fsHideT); fsDrag = null; fsEl.classList.remove("is-on", "is-drag"); return;
+  }
+  var g = fsGeom(), max = contentEl.scrollHeight - contentEl.clientHeight;
+  var y = Math.round(g.top + (max > 0 ? contentEl.scrollTop / max : 0) * (g.h - FS_THUMB));
+  fsThumb.style.transform = "translateY(" + y + "px)";
+  fsLabel.style.transform = "translateY(" + (y + FS_THUMB / 2 - 16) + "px)";
+  fsLabel.textContent = v.topPos().toLocaleString() + " / " + v.n.toLocaleString();
+  fsEl.classList.add("is-on");
+  clearTimeout(fsHideT);
+  if (!fsDrag) fsHideT = setTimeout(function () { if (fsEl && !fsDrag) fsEl.classList.remove("is-on"); }, 1500);
 }
 
 // ------------------------------------------------------------------ screens (each: {title, mount(el)})
@@ -1549,7 +1756,7 @@ function libraryScreen() {
         .then(function (r) { return { tracks: r[0] || [], artists: r[1] || [], playlists: r[2] || [], albums: r[3] || [] }; });
     },
     albums:    function () { return favorites("albums", 200); },     // favorite/getUserFavorites?type=albums
-    tracks:    function () { return favorites("tracks", 200); },     // ?type=tracks
+    tracks:    function () { return allFavoriteTracks(); },           // ?type=tracks, every page (windowed list)
     artists:   function () { return favorites("artists", 200); },    // favorite/getUserFavorites?type=artists
     playlists: function () { return userPlaylists(); }               // playlist/getUserPlaylists
   };
@@ -1600,7 +1807,7 @@ function libraryScreen() {
       return;
     }
     if (!list.length) { body.innerHTML = '<p class="qz-empty">' + (term ? "No matches in your library." : "Nothing here yet.") + "</p>"; return; }
-    if (which === "tracks") body.innerHTML = trackListHTML(list, null);
+    if (which === "tracks") trackListInto(body, list, null);   // windowed when long (512 favourites = 512 rows)
     else body.innerHTML = gridHTML(list, which === "artists" ? "artist" : "album");
   }
   return { title: "Library", root: true, mount: function (el) {
@@ -2545,6 +2752,7 @@ function render(dir) {
       requestAnimationFrame(function () { pg.classList.remove("qz-page--in", "qz-page--out"); });
     });
   }
+  onContentScroll();   // draw a windowed list at the restored offset, and show/hide the fast scroller for this page
   return fresh;
 }
 // Force the CURRENT screen to rebuild. Callers that mutated the data behind the view (a playlist edit,
@@ -3562,6 +3770,7 @@ function buildShell() {
 
   contentEl = h('<main class="qz-content"></main>');
   contentEl.addEventListener("click", onContentTap);
+  contentEl.addEventListener("scroll", onContentScroll, { passive: true });   // windowed lists + fast scroller
   bindEdgeBack(contentEl);   // left-edge swipe -> back
 
   miniEl = h(
@@ -3695,6 +3904,7 @@ function buildShell() {
   root.appendChild(contentEl);
   root.appendChild(miniEl);
   root.appendChild(navEl);
+  root.appendChild(fsBuild());   // fast scroller: above the list, below Now Playing
   root.appendChild(npEl);
   sleepTimer.paint();   // restore the armed countdown label if a timer is already running on (re)build
   return root;
@@ -4447,6 +4657,22 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 .qz-stg-thn{ flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .qz-stg-throw.is-on .qz-stg-thn{ color:#3DA8FE; }
 .qz-stg-thc{ flex:0 0 auto; width:20px; text-align:center; color:#3DA8FE; }
+/* windowed track list (long playlists, library songs): a box sized to the whole list, one translated block of rows */
+.qz-vlist{ position:relative; }
+.qz-vwin{ position:absolute; left:0; right:0; top:0; will-change:transform; }
+.qz-trow--skel{ pointer-events:none; }
+.qz-trow--skel .qz-trow__meta{ flex:1 1 auto; }
+.qz-sk{ display:block; height:11px; width:62%; border-radius:6px; background:var(--qz-fill-1); }
+.qz-sk--s{ width:38%; margin-top:8px; opacity:.7; }
+/* fast scroller: shows while scrolling, grab and drag to jump; the label says where you are */
+.qz-fs{ position:fixed; top:0; right:0; width:0; height:0; z-index:7; pointer-events:none; opacity:0; transition:opacity .25s ease; }
+.qz-fs.is-on{ opacity:1; }
+.qz-fs__thumb{ position:fixed; top:0; right:0; width:36px; height:52px; display:flex; align-items:center; justify-content:flex-end; padding-right:4px; box-sizing:border-box; touch-action:none; pointer-events:none; }
+.qz-fs.is-on .qz-fs__thumb{ pointer-events:auto; }
+.qz-fs__thumb i{ display:block; width:5px; height:44px; border-radius:3px; background:var(--qz-c2); transition:width .15s ease, background-color .15s ease; }
+.qz-fs.is-drag .qz-fs__thumb i{ width:8px; background:#3DA8FE; }
+.qz-fs__label{ position:fixed; top:0; right:46px; padding:6px 12px; border-radius:16px; background:rgba(18,18,22,.94); color:#fff; font-size:13px; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; opacity:0; transition:opacity .15s ease; pointer-events:none; }
+.qz-fs.is-drag .qz-fs__label{ opacity:1; }
 `;
 
 // ------------------------------------------------------------------ lifecycle
@@ -4500,6 +4726,8 @@ function unmount() {
   } catch (e) {}
   stacks = {}; dismissers = [];
   stack = []; root = headerEl = contentEl = miniEl = navEl = npEl = lyBody = qBody = null;
+  clearTimeout(fsHideT); if (_scrollRaf) cancelAnimationFrame(_scrollRaf);
+  _scrollRaf = 0; fsEl = fsThumb = fsLabel = fsDrag = null;
 }
 function evaluate() {
   if (want()) {
@@ -4517,7 +4745,7 @@ function evaluate() {
   else unmount();
 }
 
-function onResize() { clearTimeout(rzT); rzT = setTimeout(evaluate, 150); }
+function onResize() { clearTimeout(rzT); rzT = setTimeout(function () { evaluate(); onContentScroll(); }, 150); }   // rotation: more or fewer rows fit
 window.addEventListener("resize", onResize);
 obs = Q.observe(function () { evaluate(); }, { debounce: 350 });
 evaluate();
