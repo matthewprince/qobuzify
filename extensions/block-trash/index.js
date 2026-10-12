@@ -282,7 +282,7 @@ function mgrList(kind) {
   var map = (kind === "a") ? blocked : trashed;
   var ks = Object.keys(map).sort(function (a, b) { var x = (map[a] || "").toLowerCase(), y = (map[b] || "").toLowerCase(); return x < y ? -1 : x > y ? 1 : 0; });
   if (!ks.length) return '<div class="qz-btm-empty">' + (kind === "a" ? "No blocked artists yet." : "No trashed songs yet.") + "</div>";
-  return ks.map(function (k) { return '<div class="qz-btm-item"><span class="qz-btm-itxt" title="' + esc(map[k]) + '">' + esc(map[k]) + '</span><button class="qz-btm-x" data-kind="' + kind + '" data-key="' + esc(k) + '" title="' + (kind === "a" ? "Unblock" : "Restore") + '">&#215;</button></div>'; }).join("");
+  return ks.map(function (k) { return '<div class="qz-btm-item"><span class="qz-btm-itxt" title="' + esc(map[k]) + '">' + esc(map[k]) + '</span><button class="qz-btm-x" data-kind="' + kind + '" data-key="' + esc(k) + '" title="' + (kind === "a" ? "Unblock" : "Restore") + '" aria-label="' + (kind === "a" ? "Unblock " : "Restore ") + esc(map[k]) + '">&#215;</button></div>'; }).join("");
 }
 function renderManager() {
   var m = document.getElementById("qz-btm-modal"); if (!m) return;
@@ -296,23 +296,30 @@ function openManager() {
   closeManager();
   var on = cloudOn(), sid = getSyncId();
   var m = document.createElement("div"); m.id = "qz-btm-modal"; m.className = "qz-btm-modal";
-  m.innerHTML = '<div class="qz-btm-box"><div class="qz-btm-h">' + IC_MGR + ' Blocked &amp; Trashed<button class="qz-btm-close" data-act="close" aria-label="Close">&#215;</button></div>' +
+  Q.ui.follow(m);
+  m.innerHTML = '<div class="qz-btm-box"><div class="qz-btm-h">' + IC_MGR + ' Blocked &amp; Trashed<button type="button" class="qz-btm-close" data-act="close" aria-label="Close">&#215;</button></div>' +
     '<div class="qz-btm-cols">' +
       '<div class="qz-btm-col"><div class="qz-btm-lbl">Blocked artists <span class="qz-btm-n" data-count="a">0</span></div><div class="qz-btm-list" data-list="a"></div></div>' +
       '<div class="qz-btm-col"><div class="qz-btm-lbl">Trashed songs <span class="qz-btm-n" data-count="s">0</span></div><div class="qz-btm-list" data-list="s"></div></div>' +
     '</div>' +
     '<div class="qz-btm-sync"><div class="qz-btm-synh">' + IC_CLOUD + ' Cloud sync</div>' +
       '<p class="qz-btm-p">Off by default - your lists stay only on this device. Turn it on to back them up and sync across devices. <b>Stored:</b> the artist names you block and the song titles you trash, plus a random sync code. No account, no name, nothing else about you.</p>' +
-      '<div class="qz-btm-row"><span>Enable cloud sync</span><button class="qz-btm-sw' + (on ? " on" : "") + '" data-act="toggle"><span></span></button></div>' +
+      '<div class="qz-btm-row"><span>Enable cloud sync</span><span data-sw></span></div>' +
       '<div class="qz-btm-details" style="display:' + (on ? "block" : "none") + '"><div class="qz-btm-dlbl">Your sync code - paste it on another device to sync the same lists</div>' +
         '<div class="qz-btm-idrow"><code class="qz-btm-id">' + esc(sid) + '</code><button class="qz-btm-btn" data-act="copy">Copy</button></div>' +
         '<div class="qz-btm-status" data-status>&nbsp;</div>' +
         '<div class="qz-btm-actrow"><button class="qz-btm-btn" data-act="syncnow">Sync now</button><button class="qz-btm-btn ghost" data-act="usecode">Use a code</button><button class="qz-btm-btn ghost" data-act="wipe">Wipe cloud</button></div>' +
         '<div class="qz-btm-import" style="display:none"><input class="qz-btm-input" placeholder="paste a sync code"><button class="qz-btm-btn" data-act="loadcode">Load</button></div></div>' +
     '</div></div>';
+  var setSt = function (t) { var s = m.querySelector("[data-status]"); if (s) s.textContent = t || " "; };
+  // the switch follows the real state: whatever cloudOn() says decides which way a click goes, as before
+  var sw = Q.ui.switch({ checked: on, label: "Enable cloud sync", onChange: function () {
+    if (cloudOn()) { disableCloud(); sw.checked = false; m.querySelector(".qz-btm-details").style.display = "none"; }
+    else { sw.checked = true; m.querySelector(".qz-btm-details").style.display = "block"; setSt("Uploading your lists…"); enableCloud().then(function () { setSt("Backed up. Changes sync automatically."); }); }
+  } });
+  m.querySelector("[data-sw]").replaceWith(sw);
   document.body.appendChild(m);
   renderManager();
-  var setSt = function (t) { var s = m.querySelector("[data-status]"); if (s) s.textContent = t || " "; };
   m.addEventListener("mousedown", function (e) { if (e.target === m) closeManager(); });
   m.addEventListener("click", function (e) {
     var t = e.target, x = t.closest ? t.closest(".qz-btm-x") : null;
@@ -320,10 +327,6 @@ function openManager() {
     var act = t.closest ? t.closest("[data-act]") : null; if (!act) return;
     switch (act.getAttribute("data-act")) {
       case "close": closeManager(); break;
-      case "toggle":
-        if (cloudOn()) { disableCloud(); act.classList.remove("on"); m.querySelector(".qz-btm-details").style.display = "none"; }
-        else { act.classList.add("on"); m.querySelector(".qz-btm-details").style.display = "block"; setSt("Uploading your lists…"); enableCloud().then(function () { setSt("Backed up. Changes sync automatically."); }); }
-        break;
       case "copy": try { navigator.clipboard.writeText(sid); } catch (e2) {} setSt("Copied sync code."); break;
       case "syncnow": setSt("Syncing…"); Promise.all([pushAll(), pullMerge()]).then(function (r) { setSt("Synced. " + r[1] + " entries from cloud."); }); break;
       case "usecode": { var im = m.querySelector(".qz-btm-import"); im.style.display = im.style.display === "none" ? "flex" : "none"; break; }
@@ -361,7 +364,7 @@ function handleRow(row) {
     }
     else { row.classList.add("qz-bt-row"); btn.classList.add("qz-bt-abs"); row.appendChild(btn); } // fallback: absolute
   }
-  btn.classList.toggle("on", isT); btn.title = isT ? "Restore this song" : "Trash this song";
+  btn.classList.toggle("on", isT); btn.title = isT ? "Restore this song" : "Trash this song"; btn.setAttribute("aria-label", btn.title);
 }
 function decorate() {
   var li = document.querySelectorAll(".ListItem");
@@ -393,6 +396,7 @@ function syncArtistBtn(btn, id) {
   var name = artistName[id], on = name ? artistBlocked(name) : false;
   btn.classList.toggle("on", on);
   btn.title = name ? (on ? ("Unblock " + name) : ("Block " + name)) : "Block this artist";
+  btn.setAttribute("aria-label", btn.title);
 }
 function ensureArtistBtn() {
   var id = curArtistId();
@@ -490,28 +494,32 @@ var watchdog = setInterval(function () {
 }, 350);
 
 // --- toast ---
-var toastEl = null, toastT = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  if (!toastEl) { toastEl = document.createElement("div"); toastEl.className = "qz-bt-toast"; document.body.appendChild(toastEl); }
-  toastEl.textContent = msg; toastEl.classList.add("show");
-  clearTimeout(toastT); toastT = setTimeout(function () { if (toastEl) toastEl.classList.remove("show"); }, 1700);
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 1700);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 Q.css(CSS_ID, [
   // row trash: revealed on row hover (and pinned on trashed rows), sized to match the native row icons.
   "#qz-sl-root .qz-bt-rowtrash{display:none;}",
-  ".qz-bt-b{border:0;appearance:none;cursor:pointer;background:transparent;color:#aeb4be;display:inline-flex;align-items:center;justify-content:center;transition:color .12s,transform .1s,opacity .12s;}",
+  ".qz-bt-b{border:0;appearance:none;cursor:pointer;background:transparent;color:color-mix(in srgb,currentColor 70%,transparent);display:inline-flex;align-items:center;justify-content:center;transition:color .12s,transform .1s,opacity .12s;}",
   ".qz-bt-rowtrash{width:26px;height:26px;border-radius:50%;opacity:0;flex:0 0 auto;margin-right:2px;}",
   ".ListItem:hover .qz-bt-rowtrash,.ui-module-track-row:hover .qz-bt-rowtrash,.qz-bt-rowtrash.on{opacity:1;}",
-  ".qz-bt-rowtrash:hover{color:#fff;transform:scale(1.1);}",
+  ".qz-bt-rowtrash:hover{color:inherit;transform:scale(1.1);}",
   ".qz-bt-rowtrash.on{color:#e8892b;}",
   ".qz-bt-rowtrash.qz-bt-abs{position:absolute;right:88px;top:50%;transform:translateY(-50%);z-index:3;opacity:0;}",
   ".qz-bt-row{position:relative;} .ListItem.qz-bt-row:hover .qz-bt-abs{opacity:1;}",
   // artist-profile block button: matches the header icon buttons.
-  // match the native header icon buttons (shuffle/follow/menu): borderless, icon-only, light grey.
-  ".qz-bt-artistblock{border:0;appearance:none;background:transparent;color:#eef0f3;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;transition:color .12s,transform .1s;}",
+  // match the native header icon buttons (shuffle/follow/menu): borderless, icon-only, in the page's text colour.
+  ".qz-bt-artistblock{border:0;appearance:none;background:transparent;color:inherit;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;transition:color .12s,transform .1s;}",
   ".qz-bt-artistblock svg{width:24px;height:24px;}",
-  ".qz-bt-artistblock:hover{color:#fff;transform:scale(1.1);}",
+  ".qz-bt-artistblock:hover{transform:scale(1.1);}",
   ".qz-bt-artistblock.on{color:#e5484d;} .qz-bt-artistblock.on:hover{color:#f2575c;}",
   // player-bar trash active tint
   ".qz-bt-slot.on{color:#e8892b!important;}",
@@ -519,46 +527,39 @@ Q.css(CSS_ID, [
   ".qz-bt-slot.arm{color:#ff4d4d!important;animation:qz-bt-armpulse 1s ease-in-out infinite;}",
   "@keyframes qz-bt-armpulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.55;transform:scale(1.12);}}",
   // greyed state - dim/strike the title + fade the cover, buttons stay clickable
-  ".qz-bt-hit .ListItem__title,.qz-bt-hit .cell-group-title span.ui-link{text-decoration:line-through;color:#868b95!important;}",
+  ".qz-bt-hit .ListItem__title,.qz-bt-hit .cell-group-title span.ui-link{text-decoration:line-through;opacity:.55;}",
   ".qz-bt-hit img{opacity:.4;filter:grayscale(.4);}",
   ".qz-bt-hit .ListItem__player{opacity:.5;}",
-  // toast
-  ".qz-bt-toast{position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(8px);background:rgba(20,22,28,.97);color:#fff;",
-  "padding:8px 16px;border-radius:11px;font:600 13px/1 system-ui,sans-serif;z-index:2147483600;opacity:0;pointer-events:none;",
-  "transition:opacity .2s,transform .2s;box-shadow:0 10px 34px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);}",
-  ".qz-bt-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}",
-  // manager + cloud-sync modal (the qz-bt-mgr player-bar button inherits .qz-pbtn from the runtime)
-  ".qz-btm-modal{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,6,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);-webkit-app-region:no-drag;}",
-  ".qz-btm-box{width:min(560px,94vw);max-height:86vh;overflow:auto;background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:18px 20px;box-shadow:0 30px 80px rgba(0,0,0,.6);color:#e7ebf2;}",
-  ".qz-btm-h{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:800;color:#eef2f7;}",
+  // manager + cloud-sync modal: appended to <body> and following Qobuz's appearance (Q.ui.follow), so the
+  // kit's tokens apply (the qz-bt-mgr player-bar button inherits .qz-pbtn from the runtime)
+  ".qz-btm-modal{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);-webkit-app-region:no-drag;}",
+  ".qz-btm-box{width:min(560px,94vw);max-height:86vh;overflow:auto;box-sizing:border-box;background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:16px;padding:18px 20px;box-shadow:0 24px 64px rgba(0,0,0,.45);color:var(--qzu-fg);}",
+  ".qz-btm-h{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700;}",
   ".qz-btm-h svg{color:var(--qz-accent,#3DA8FE);}",
-  ".qz-btm-close{margin-left:auto;appearance:none;border:0;background:transparent;color:#98a2b3;font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}.qz-btm-close:hover{color:#fff;}",
+  ".qz-btm-close{margin-left:auto;appearance:none;border:0;background:transparent;color:var(--qzu-fg2);font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}.qz-btm-close:hover{color:var(--qzu-fg);}",
   ".qz-btm-cols{display:flex;gap:14px;margin:14px 0 4px;}",
   ".qz-btm-col{flex:1 1 0;min-width:0;}",
-  ".qz-btm-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#8b93a2;margin-bottom:7px;display:flex;align-items:center;gap:6px;}",
-  ".qz-btm-n{background:rgba(255,255,255,.08);color:#c9d2df;border-radius:20px;padding:1px 7px;font-size:11px;font-weight:700;}",
-  ".qz-btm-list{max-height:230px;overflow:auto;border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:5px;}",
+  ".qz-btm-lbl{font-size:13px;font-weight:600;color:var(--qzu-fg2);margin-bottom:7px;display:flex;align-items:center;gap:6px;}",
+  ".qz-btm-n{background:var(--qzu-fill-hover);color:var(--qzu-fg);border-radius:20px;padding:1px 7px;font-size:11px;font-weight:700;}",
+  ".qz-btm-list{max-height:230px;overflow:auto;border:1px solid var(--qzu-line);border-radius:10px;padding:5px;}",
   ".qz-btm-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:7px;font-size:12.5px;}",
-  ".qz-btm-item:hover{background:rgba(255,255,255,.05);}",
-  ".qz-btm-itxt{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dbe1ea;}",
-  ".qz-btm-x{flex:0 0 auto;appearance:none;border:0;background:transparent;color:#7f8794;font-size:16px;line-height:1;cursor:pointer;width:22px;height:22px;border-radius:50%;}",
-  ".qz-btm-x:hover{color:#fff;background:rgba(255,255,255,.1);}",
-  ".qz-btm-empty{color:#6d7583;font-size:12px;padding:14px 8px;text-align:center;}",
-  ".qz-btm-sync{margin-top:16px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px;}",
-  ".qz-btm-synh{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;color:#eef2f7;}.qz-btm-synh svg{color:var(--qz-accent,#3DA8FE);}",
-  ".qz-btm-p{font-size:12px;color:#9aa3b2;line-height:1.55;margin:9px 0 11px;}.qz-btm-p b{color:#cbd3df;}",
+  ".qz-btm-item:hover{background:var(--qzu-fill);}",
+  ".qz-btm-itxt{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".qz-btm-x{flex:0 0 auto;appearance:none;border:0;background:transparent;color:var(--qzu-fg2);font-size:16px;line-height:1;cursor:pointer;width:22px;height:22px;border-radius:50%;}",
+  ".qz-btm-x:hover{color:var(--qzu-fg);background:var(--qzu-fill-hover);}",
+  ".qz-btm-empty{color:var(--qzu-fg2);font-size:12px;padding:14px 8px;text-align:center;}",
+  ".qz-btm-sync{margin-top:16px;border-top:1px solid var(--qzu-line);padding-top:14px;}",
+  ".qz-btm-synh{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;}.qz-btm-synh svg{color:var(--qz-accent,#3DA8FE);}",
+  ".qz-btm-p{font-size:12px;color:var(--qzu-fg2);line-height:1.55;margin:9px 0 11px;}.qz-btm-p b{color:var(--qzu-fg);}",
   ".qz-btm-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:13px;}",
-  ".qz-btm-sw{position:relative;width:42px;height:24px;border-radius:20px;border:0;background:rgba(255,255,255,.14);cursor:pointer;transition:background .16s;flex:0 0 auto;}",
-  ".qz-btm-sw span{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .16s;}",
-  ".qz-btm-sw.on{background:var(--qz-accent,#3DA8FE);}.qz-btm-sw.on span{left:21px;}",
-  ".qz-btm-dlbl{font-size:11px;color:#8b93a2;margin:6px 0 5px;}",
+  ".qz-btm-dlbl{font-size:11px;color:var(--qzu-fg2);margin:6px 0 5px;}",
   ".qz-btm-idrow{display:flex;gap:8px;align-items:center;}",
-  ".qz-btm-id{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.09);border-radius:8px;padding:7px 9px;font:600 12px/1.2 ui-monospace,monospace;color:#cdd5e0;}",
-  ".qz-btm-btn{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#dbe1ea;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;-webkit-app-region:no-drag;}.qz-btm-btn:hover{background:rgba(255,255,255,.13);}.qz-btm-btn.ghost{background:transparent;}",
+  ".qz-btm-id{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--qzu-fill);border:1px solid var(--qzu-line);border-radius:8px;padding:7px 9px;font:600 12px/1.2 ui-monospace,monospace;color:inherit;}",
+  ".qz-btm-btn{appearance:none;border:1px solid var(--qzu-line);background:var(--qzu-fill);color:inherit;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;-webkit-app-region:no-drag;}.qz-btm-btn:hover{background:var(--qzu-fill-hover);}.qz-btm-btn.ghost{background:transparent;}",
   ".qz-btm-status{font-size:11.5px;color:var(--qz-accent,#3DA8FE);min-height:16px;margin:8px 0 2px;}",
   ".qz-btm-actrow{display:flex;gap:8px;flex-wrap:wrap;}",
   ".qz-btm-import{margin-top:9px;gap:8px;}",
-  ".qz-btm-input{flex:1 1 auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:7px 9px;color:#e7ebf2;font-size:12px;}"
+  ".qz-btm-input{flex:1 1 auto;background:var(--qzu-fill);border:1px solid var(--qzu-line);border-radius:8px;padding:7px 9px;color:inherit;font-size:12px;}"
 ].join(""));
 
 var stopObs = Q.observe(function () { decorate(); ensureArtistBtn(); }, { debounce: 180 });
@@ -575,6 +576,6 @@ return function cleanup() {
   if (stopObs) stopObs(); if (offChange) offChange(); if (slot) slot.remove(); if (unregSettings) unregSettings();
   [].slice.call(document.querySelectorAll(".qz-bt-rowtrash,.qz-bt-artistblock")).forEach(function (n) { n.remove(); });
   [].slice.call(document.querySelectorAll(".qz-bt-hit,.qz-bt-row")).forEach(function (n) { n.classList.remove("qz-bt-hit", "qz-bt-row", "qz-bt-blocked", "qz-bt-trashed"); });
-  if (toastEl) { toastEl.remove(); toastEl = null; }
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
