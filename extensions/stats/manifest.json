@@ -3,6 +3,8 @@
   "name": "Listening Stats",
   "description": "Privately tracks your Qobuz listening on-device (IndexedDB) and powers a stats.fm-style dashboard: top artists & songs, minutes, streaks, and more. Local-only by default; optional cloud sync is off until you explicitly turn it on.",
   "icon": "icon-wave",
+  "category": "Library",
+  "platforms": ["desktop", "android"],
   "version": "0.1.0",
   "author": "matthewprince"
 }

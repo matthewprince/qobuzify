@@ -1,8 +1,10 @@
 {
   "id": "copy-share",
   "name": "Copy & Share",
-  "description": "Right-click any track (in a list or the player bar) to copy \"Artist - Title\" or a shareable Qobuz link. Quick, no digging through menus. With Smart Radio enabled, the same menu can start a song radio.",
-  "icon": "icon-label",
+  "description": "Right-click any track (in a list or the player bar) to copy \"Artist - Title\" or a shareable Qobuz link. Quick, no digging through menus. With Song radio on, the same menu can start a radio from that track.",
+  "icon": "pct-copy",
+  "category": "Interface",
+  "platforms": ["desktop", "android"],
   "version": "1.1.0",
   "author": "matthewprince"
 }

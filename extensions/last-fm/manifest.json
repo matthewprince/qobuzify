@@ -2,7 +2,9 @@
   "id": "last-fm",
   "name": "Last.fm Scrobbling",
   "description": "Scrobbles the tracks you play in Qobuz to Last.fm (Now Playing + scrobble at 50% / 4 min), and can bulk-import your recorded Qobuzify listening history. Connect from the Qobuzify settings panel.",
-  "icon": "icon-radio",
+  "icon": "icon-music-double-note",
+  "category": "Integrations",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "matthewprince"
 }

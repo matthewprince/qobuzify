@@ -3,6 +3,8 @@
   "name": "Seek Controls",
   "description": "Adds -10s / +10s skip buttons and an A-B loop to the player bar. Jump around a track fast, or loop a section on repeat - handy for learning a solo, a verse or a language line.",
   "icon": "icon-history-left",
+  "category": "Playback",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "matthewprince"
 }

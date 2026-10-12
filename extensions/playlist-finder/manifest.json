@@ -2,7 +2,9 @@
   "id": "playlist-finder",
   "name": "Playlist Finder",
   "description": "Answers two questions your library cannot: which playlists is this song already on, and which songs have I never filed anywhere. Adds a Playlists chip to your library that lists every favourite with the playlists it belongs to, and a filter for the ones in none. Builds the index once from your own playlists and caches it.",
-  "icon": "icon-bars",
+  "icon": "icon-format-list-bulleted",
+  "category": "Library",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "matthewprince"
 }
