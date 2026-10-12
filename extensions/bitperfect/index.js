@@ -655,7 +655,8 @@ function renderBadge() {
     badge.title = TIP_WAIT;
   }
 }
-var slot = Q.playerSlot ? Q.playerSlot({ id: "qz-bp", zone: "right", order: 12, el: badge }) : null;
+// label: the overflow menu names it "Bit-perfect", not the badge's whole status sentence
+var slot = Q.playerSlot ? Q.playerSlot({ id: "qz-bp", zone: "right", order: 12, el: badge, label: "Bit-perfect" }) : null;
 
 var offBP = BP.on(function (m) {
   if (disposed || !m) return;
@@ -866,6 +867,8 @@ var offChange = Q.player.onChange ? Q.player.onChange(function () {
 
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
+badge.setAttribute("role", "button"); badge.tabIndex = 0;
+badge.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
 // The panel renders `button` off THIS object every time it opens, so keeping the object in a variable and
 // updating the label is what keeps the two controls agreeing. It used to be an inline literal whose label
 // was computed once, at registration: clicking the badge changed the real state but left the row reading
@@ -901,29 +904,31 @@ var directEntry = {
 };
 var unregDirect = Q.registerSettings ? Q.registerSettings(directEntry) : null;
 
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  var t = document.getElementById("qz-bp-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-bp-toast"; t.className = "qz-bp-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("show");
-  clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove("show"); }, 1600);
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 1600);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 Q.css(CSS_ID, [
-  ".qz-bp-badge{font:700 10.5px/1 system-ui,sans-serif;letter-spacing:.02em;padding:4px 9px;border-radius:999px;cursor:pointer;user-select:none;",
+  ".qz-bp-badge{font:700 10.5px/1 system-ui,sans-serif;padding:4px 9px;border-radius:999px;cursor:pointer;user-select:none;",
   "display:inline-flex;align-items:center;white-space:nowrap;transition:background .15s,color .15s;}",
   // Hidden via the class, not inline style: playerSlot re-creates the node and carries className over,
   // but drops inline styles. `.qz-bp-badge.off` also outranks the base rule's display.
   ".qz-bp-badge.off{display:none !important;}",
-  ".qz-bp-badge.wait{background:rgba(255,255,255,.08);color:#aeb4be;}",
+  ".qz-bp-badge.wait{background:color-mix(in srgb,currentColor 8%,transparent);color:color-mix(in srgb,currentColor 70%,transparent);}",
   // Fixed-output DAC: the slider drives nothing, so it must look like it drives nothing.
   ".qz-bp-fixedvol{opacity:.45;}",
-  ".qz-bp-badge.bp{background:linear-gradient(90deg,var(--qz-accent,#3DA8FE),#7bc8ff);color:#04121f;box-shadow:0 0 0 1px rgba(61,168,254,.35);}",
-  ".qz-bp-badge.shared{background:rgba(245,158,11,.16);color:#f0b34a;box-shadow:0 0 0 1px rgba(245,158,11,.3);}",
-  ".qz-bp-badge:hover{filter:brightness(1.08);}",
-  ".qz-bp-toast{position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(8px);background:rgba(20,22,28,.97);color:#fff;",
-  "padding:8px 16px;border-radius:11px;font:600 13px/1 system-ui,sans-serif;z-index:2147483600;opacity:0;pointer-events:none;",
-  "transition:opacity .2s,transform .2s;box-shadow:0 10px 34px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);}",
-  ".qz-bp-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}"
+  ".qz-bp-badge.bp{background:var(--qz-accent,#3DA8FE);color:#04121f;}",
+  // amber mixed toward the text colour: lighter on dark, darker (readable) on Qobuz's light appearance
+  ".qz-bp-badge.shared{background:rgba(245,158,11,.16);color:color-mix(in srgb,#f0a020 72%,currentColor);border:1px solid rgba(245,158,11,.3);padding:3px 8px;}",
+  ".qz-bp-badge:focus-visible{outline:2px solid color-mix(in srgb,currentColor 75%,transparent);outline-offset:2px;}",
+  ".qz-bp-badge:hover{filter:brightness(1.08);}"
 ].join(""));
 
 // restore last state
@@ -1011,6 +1016,6 @@ return function cleanup() {
   if (slot) slot.remove();
   if (unregSettings) unregSettings();
   if (unregDirect) unregDirect();
-  var t = document.getElementById("qz-bp-toast"); if (t) t.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
