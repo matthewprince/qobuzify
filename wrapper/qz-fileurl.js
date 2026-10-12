@@ -51,6 +51,12 @@ function get(url, headers, cap) {
         var buf = "", n = 0, lim = cap || 24 * 1024 * 1024;
         res.on("data", function (d) { n += d.length; if (n > lim) { req.destroy(); return; } buf += d; });
         res.on("end", function () { resolve({ status: res.statusCode, body: buf }); });
+        // A body cut off mid-way (the cap above, a reset connection) emits no 'end', and the request's own
+        // 'error' does not reliably fire once a response exists, so without these the promise never settled
+        // and that track's resolve hung forever. A second resolve() is a no-op.
+        res.on("aborted", function () { resolve({ status: 0, body: "", err: "aborted" }); });
+        res.on("error", function (e) { resolve({ status: 0, body: "", err: String(e && e.message || e) }); });
+        res.on("close", function () { resolve({ status: res.complete ? res.statusCode : 0, body: res.complete ? buf : "", err: res.complete ? undefined : "closed" }); });
       });
       req.on("error", function (e) { resolve({ status: 0, body: "", err: String(e && e.message || e) }); });
       req.setTimeout(15000, function () { req.destroy(); resolve({ status: 0, body: "", err: "timeout" }); });
@@ -120,7 +126,10 @@ async function resolve(opts, _retried) {
     if (!mem.candidates) {
       var d = await loadCandidates(opts.bundleUrl);
       if (d.appId) mem.appId = d.appId;
-      mem.candidates = d.candidates;
+      // Only cache a list that has something in it. An empty one (the bundle fetch failed: offline at
+      // launch, a timeout) used to be cached as-is, and since [] is truthy the bundle was never fetched
+      // again, so every later track in the session failed "nosecret" even after the network came back.
+      mem.candidates = (d.candidates && d.candidates.length) ? d.candidates : null;
     }
   }
   // try the known-good secret first, then the rest.
@@ -134,7 +143,14 @@ async function resolve(opts, _retried) {
     var r = await callWith(list[i], appId, token, trackId, formatId);
     if (r.status === 200 && r.j && r.j.url) {
       if (mem.secret !== list[i]) { mem.secret = list[i]; saveCache(); }
-      return { ok: true, url: r.j.url, formatId: r.j.format_id, bitDepth: r.j.bit_depth, rate: r.j.sampling_rate, mime: r.j.mime_type, duration: r.j.duration };
+      var restr = Array.isArray(r.j.restrictions) ? r.j.restrictions.map(function (x) { return x && x.code; }).filter(Boolean) : [];
+      // A 200 with a URL is not always the track. When the account cannot stream it (lapsed plan, a
+      // rights-holder or region restriction) Qobuz answers with a ~30s PREVIEW and `sample: true`. mpv
+      // played that preview, hit EOF ~30s in, the early-EOF rescue seeked past the end of the preview, and
+      // the rest of the track was silence with the web element muted. Refuse it: the web player handles a
+      // non-streamable track its own way, and the renderer says why.
+      if (r.j.sample === true) return { ok: false, reason: "sample", detail: restr.join(",") };
+      return { ok: true, url: r.j.url, formatId: r.j.format_id, bitDepth: r.j.bit_depth, rate: r.j.sampling_rate, mime: r.j.mime_type, duration: r.j.duration, restrictions: restr };
     }
     if (r.status === 0) return { ok: false, reason: "network", detail: r.err };
     var msg = (r.j && r.j.message) || "";
