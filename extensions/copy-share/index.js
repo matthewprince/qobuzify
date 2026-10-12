@@ -53,6 +53,7 @@ function showMenu(x, y, info, radioSeed) {
   if (link) opts.push({ label: "Copy Qobuz link", text: link, t: "link" });
   if (!opts.length) return;
   var m = document.createElement("div"); m.id = "qz-copy-menu"; m.className = "qz-copy-menu";
+  Q.ui.follow(m);
   opts.forEach(function (o) {
     var b = document.createElement("button"); b.className = "qz-copy-item"; b.textContent = o.label;
     b.addEventListener("click", function (e) {
@@ -91,31 +92,31 @@ function onContext(e) {
 }
 
 Q.css(CSS_ID, [
-  ".qz-copy-menu{position:fixed;z-index:2147483600;min-width:186px;padding:6px;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-copy-item{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:#e7ecf3;",
+  // the menu is appended to <body> and follows Qobuz's appearance (Q.ui.follow)
+  ".qz-copy-menu{position:fixed;z-index:2147483600;min-width:186px;padding:6px;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-copy-item{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:inherit;",
   "font:inherit;font-size:13px;font-weight:550;padding:9px 11px;border-radius:8px;cursor:pointer;transition:background .12s,color .12s;}",
-  ".qz-copy-item:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 18%,transparent);color:var(--qz-accent,#3DA8FE);}",
-  "#qz-copy-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);z-index:2147483600;",
-  "padding:10px 17px;border-radius:24px;font-size:13px;font-weight:600;color:#06090a;background:var(--qz-accent,#3DA8FE);",
-  "box-shadow:0 16px 44px -12px rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;white-space:nowrap;}",
-  "#qz-copy-toast.qz-show{opacity:1;transform:translateX(-50%) translateY(0);}"
+  ".qz-copy-item:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 18%,transparent);color:var(--qz-accent,#3DA8FE);}"
 ].join(""));
 
-var toastT = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  var t = document.getElementById("qz-copy-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-copy-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 1600);
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 1600);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 document.addEventListener("contextmenu", onContext, true);
 
 return function cleanup() {
   document.removeEventListener("contextmenu", onContext, true);
   removeMenu();
-  var t = document.getElementById("qz-copy-toast"); if (t) t.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
