@@ -174,9 +174,33 @@ function rowHTML(t, i) {
     "</div>";
 }
 
+// The library cache finishes loading after the panel may already be open; repaint when it lands so an
+// open filter fills in instead of sitting on "Loading your library...".
+//
+// Subscribed lazily from render(), not at boot: extensions load alphabetically, so hires-filter runs
+// before library-load and Q.library doesn't exist yet at boot. One handle, tied to the Q.library object
+// it came from, so a library-load off/on (new object) re-subscribes instead of listening to a dead one.
+var offProgress = null, progLib = null, libFailed = false;
+function ensureProgress() {
+  var lib = Q.library;
+  if (lib === progLib) return;
+  if (offProgress) { try { offProgress(); } catch (e) {} }
+  offProgress = null; progLib = null;
+  if (lib && typeof lib.onProgress === "function") {
+    offProgress = lib.onProgress(function (p) {
+      if (!p) return;
+      if (!p.done) { libFailed = false; return; } // a new load is under way
+      libFailed = !!p.failed;
+      if (on) render();
+    });
+    progLib = lib;
+  }
+}
+
 var rendered = [];
 function render() {
   if (!panel) return;
+  ensureProgress();
   var body = panel.querySelector(".qz-hrf-body");
   var head = panel.querySelector(".qz-hrf-count");
   var list = hiresTracks();
@@ -189,8 +213,15 @@ function render() {
   }
   if (!Q.library.ready("tracks")) {
     head.textContent = "";
-    body.innerHTML = '<p class="qz-hrf-empty">Loading your library… this happens once, then it is cached.</p>';
-    try { Q.library.load("tracks"); } catch (e) {}
+    body.innerHTML = libFailed
+      ? '<p class="qz-hrf-empty">Couldn\'t load your library. It will try again the next time you open this.</p>'
+      : '<p class="qz-hrf-empty">Loading your library… this happens once, then it is cached.</p>';
+    // repaint when the load settles with a usable list (also covers a stale cache served after a
+    // failure, which resolves after the failed progress event has already fired)
+    try {
+      var lib = Q.library;
+      Promise.resolve(lib.load("tracks")).then(function () { if (on && Q.library === lib && lib.ready("tracks")) render(); }, function () {});
+    } catch (e) {}
     return;
   }
   rendered = list;
@@ -349,17 +380,12 @@ var offRoute = Q.onRoute(sync);
 var offObs = (typeof Q.observe === "function") ? Q.observe(sync, { debounce: 250 }) : function () {};
 window.addEventListener("resize", onResize);
 document.addEventListener("keydown", onEsc, true);
-// The library cache finishes loading after the panel may already be open; repaint when it lands so an
-// open filter fills in instead of sitting on "Loading your library...".
-var offProgress = (Q.library && typeof Q.library.onProgress === "function")
-  ? Q.library.onProgress(function (p) { if (on && p && p.done) render(); })
-  : function () {};
 sync();
 
 return function cleanup() {
   if (offRoute) offRoute();
   if (offObs) offObs();
-  if (offProgress) offProgress();
+  if (offProgress) { try { offProgress(); } catch (e) {} offProgress = null; progLib = null; }
   window.removeEventListener("resize", onResize);
   document.removeEventListener("keydown", onEsc, true);
   if (playIv) { clearInterval(playIv); playIv = null; }
