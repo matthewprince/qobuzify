@@ -371,9 +371,53 @@ function artistTopTracks(id) {
     return api("artist/get?artist_id=" + id + "&extra=tracks&limit=12").then(function (j) { var t = j.tracks; return (t && (t.items || t)) || []; }).catch(function () { return []; });
   });
 }
-function createPlaylist(name, desc) { return api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false&description=" + encodeURIComponent(desc || "")).then(function (c) { return String(c.id); }); }
-function fillPlaylist(pid, ids) { return api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + ids.join(",")); }
-function deletePlaylist(pid) { return api("playlist/delete?playlist_id=" + pid).catch(function () {}); }
+// --- generated-playlist guard (identical copy in smart-playback, recommended, bulk-actions, multi-select) ---
+// A playlist we generated is only ever deleted while it is still exactly what we made. genCapture() runs right
+// after the create + fill and records Qobuz's own view of it (name, description, track count), falling back to
+// what we sent if that read fails. genDelete() re-reads the playlist and deletes it only on a full match. A
+// rename, an edited description, added or removed tracks, or a record without that fingerprint (an older
+// version stored only the id) all mean the user may have kept it: the id is forgotten and the playlist stays.
+// genDelete resolves "deleted" | "kept" | "gone" and rejects only on a transient failure (network, 5xx), so a
+// caller with a retry list knows to try again later.
+// genStore/genLoad keep the id key itself a bare playlist id (playlist-finder reads those keys to exclude our
+// playlists) and put the fingerprint beside it under "gen:<key>". genLoad returns null unless both agree.
+function genStore(key, rec) { Q.storage.set("gen:" + key, JSON.stringify(rec)); Q.storage.set(key, String(rec.pid)); }
+function genLoad(key) {
+  var pid = Q.storage.get(key, null), rec = genParse(Q.storage.get("gen:" + key, null));
+  return pid != null && rec && rec.pid === String(pid) ? rec : null;
+}
+function genCapture(pid, name, desc, count) {
+  var fb = { pid: String(pid), name: String(name || ""), desc: String(desc || ""), count: count };
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== String(pid)) return fb;
+    var n = Number(p.tracks_count);
+    return { pid: String(pid), name: String(p.name || ""), desc: String(p.description || ""), count: isFinite(n) ? n : count };
+  }, function () { return fb; });
+}
+function genParse(raw) {
+  try {
+    var r = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (r && r.pid != null && typeof r.name === "string" && typeof r.desc === "string" && typeof r.count === "number") return { pid: String(r.pid), name: r.name, desc: r.desc, count: r.count };
+  } catch (e) {}
+  return null;
+}
+function genDelete(raw) {
+  var rec = genParse(raw);
+  if (!rec) return Promise.resolve("kept");
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(rec.pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== rec.pid) return "gone";
+    if (String(p.name || "") !== rec.name || String(p.description || "") !== rec.desc || Number(p.tracks_count) !== rec.count) return "kept";
+    return Q.api("playlist/delete?playlist_id=" + encodeURIComponent(rec.pid)).then(function () { return "deleted"; });
+  }, function (e) {
+    if (/-> (400|403|404)$/.test(String(e && e.message))) return "gone";
+    throw e;
+  });
+}
+
+// Writes go straight to Q.api, never through the session cache above: a cached playlist/create handed the
+// same playlist id back for a second build of the same mix, which then got 40 more tracks appended.
+function createPlaylist(name, desc) { return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false&description=" + encodeURIComponent(desc || "")).then(function (c) { return String(c.id); }); }
+function fillPlaylist(pid, ids) { return Q.api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + ids.join(",")); }
 // recent top artists come from the Stats logger (real recency); fall back to favorites if it's not loaded
 function statsTopArtists() {
   try { if (window.__QZ_STATS && window.__QZ_STATS.stats) return window.__QZ_STATS.stats("1M").then(function (a) { return (a.topArtists || []).filter(function (x) { return x.artistId; }).slice(0, 8); }).catch(function () { return favFallback(); }); } catch (e) {}
@@ -392,10 +436,13 @@ function buildMix(seedIds, name, themeKey) {
       var seen = {}, ids = []; all.forEach(function (t) { if (t && t.id && !seen[t.id] && !exclude[t.id] && t.streamable !== false) { seen[t.id] = 1; ids.push(t.id); } });
       for (var i = ids.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var tmp = ids[i]; ids[i] = ids[j]; ids[j] = tmp; }
       ids = ids.slice(0, 40); if (!ids.length) return null;
-      return createPlaylist(name, "Made for you by Qobuzify").then(function (pid) {
-        return fillPlaylist(pid, ids).then(function () {
-          var oldPid = Q.storage.get("mix:" + themeKey, null); Q.storage.set("mix:" + themeKey, pid);
-          if (oldPid && oldPid !== pid) setTimeout(function () { deletePlaylist(oldPid); }, 8000);
+      var desc = "Made for you by Qobuzify";
+      return createPlaylist(name, desc).then(function (pid) {
+        return fillPlaylist(pid, ids).then(function () { return genCapture(pid, name, desc, ids.length); }).then(function (rec) {
+          var key = "mix:" + themeKey;
+          var old = genLoad(key); genStore(key, rec);
+          // the previous build of this mix goes once the new one is playing, and only if nobody has touched it
+          if (old && old.pid !== String(pid)) setTimeout(function () { genDelete(old).catch(function () {}); }, 8000);
           return pid;
         });
       });
@@ -691,10 +738,28 @@ function setActive(on) {
   var natives = document.querySelectorAll(".NavBar__items .ui-block-nav-item:not([data-qz-nav])");
   for (var i = 0; i < natives.length; i++) natives[i].classList.toggle("qz-fy-suppress", on);
 }
-// make the Qobuz logo (home) open For You instead of Discover
+// content-filters can hide the For You tab (key "/foryou" in its cfilters:hidden list). Only honoured while
+// content-filters is actually running (its #qz-cf-hide style exists), since a disabled filter leaves its
+// stored list behind but hides nothing. While hidden, For You neither opens on launch nor from the logo.
+function fyHidden() {
+  if (!document.getElementById("qz-cf-hide")) return false;
+  try { var a = JSON.parse(Q.storage.get("cfilters:hidden", "[]")); return Array.isArray(a) && a.indexOf("/foryou") >= 0; } catch (e) { return false; }
+}
+// make the Qobuz logo (home) open For You instead of Discover. One named capture-phase handler, tracked by
+// element, so cleanup can remove it and clear the flag (a leftover handler opened an overlay nothing closed).
+var hookedLogo = null;
+function onLogoClick(e) { if (fyHidden()) return; e.preventDefault(); e.stopPropagation(); open(); }
+function unhookLogo() {
+  if (!hookedLogo) return;
+  hookedLogo.removeEventListener("click", onLogoClick, true);
+  try { delete hookedLogo.__qzForYou; } catch (e) {}
+  hookedLogo = null;
+}
 function hookLogo() {
   var b = document.querySelector(".NavBar__brand");
-  if (b && !b.__qzForYou) { b.__qzForYou = 1; b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); open(); }, true); }
+  if (!b || b === hookedLogo || b.__qzForYou) return;
+  unhookLogo();
+  b.__qzForYou = 1; b.addEventListener("click", onLogoClick, true); hookedLogo = b;
 }
 // For You sits over whatever route is underneath (usually /discover on launch), so clicking the
 // Discover tab is a same-route nav that fires no onRoute, and the overlay would just stay up. So we
@@ -703,7 +768,8 @@ function hookLogo() {
 function onDocClick(e) {
   if (!active) return;
   var t = e.target; if (!t || !t.closest) return;
-  if (t.closest('[data-qz-nav="' + NAV_ID + '"]') || t.closest(".NavBar__brand")) return;
+  if (t.closest('[data-qz-nav="' + NAV_ID + '"]')) return;
+  if (t.closest(".NavBar__brand")) { if (fyHidden()) close(); return; }   // the logo opens For You unless it's hidden
   if (t.closest(".NavBar__items") || t.closest(".SearchBar")) close();
 }
 // on app launch, land on For You
@@ -712,7 +778,7 @@ function bootOpen() {
   if (!document.querySelector(".NavBar__items")) return;
   booted = true;
   injectNav(); hookLogo();
-  open();
+  if (!fyHidden()) open();
 }
 
 Q.css(CSS_ID, [
@@ -791,6 +857,7 @@ return function cleanup() {
   if (offTrack) offTrack();
   if (reassertObs) { reassertObs(); reassertObs = null; }
   window.removeEventListener("resize", placePage);
+  unhookLogo();
   active = false;
   var nav = document.querySelector('[data-qz-nav="' + NAV_ID + '"]'); if (nav) nav.remove();
   if (page) { page.remove(); page = null; }
