@@ -132,8 +132,9 @@ function toggleHelp(force) {
   helpOpen = true;
   var ov = document.createElement("div");
   ov.id = "qz-kbd-help"; ov.className = "qz-kbd-overlay";
+  Q.ui.follow(ov);
   ov.innerHTML = '<div class="qz-kbd-modal"><div class="qz-kbd-head"><span class="icon-keyboard qz-kbd-headico"></span>' +
-    '<span class="qz-kbd-title">Keyboard Shortcuts</span><button class="qz-kbd-close" aria-label="Close">&#215;</button></div>' +
+    '<span class="qz-kbd-title">Keyboard shortcuts</span><button type="button" class="qz-kbd-close" aria-label="Close">&#215;</button></div>' +
     '<div class="qz-kbd-list">' + MAP.filter(function (m) { return m.keys[0] !== "?"; }).map(function (m) {
       return '<div class="qz-kbd-item"><kbd>' + m.label + "</kbd><span>" + m.desc + "</span></div>";
     }).join("") + "</div></div>";
@@ -143,40 +144,40 @@ function toggleHelp(force) {
 }
 
 Q.css(CSS_ID, [
+  // the overlay is appended to <body> and follows Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
   ".qz-kbd-overlay{position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;",
-  "background:rgba(4,6,10,.62);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}",
-  ".qz-kbd-modal{width:min(520px,92vw);max-height:82vh;overflow:auto;color:#eef2f7;",
-  "background:linear-gradient(180deg,rgba(20,23,31,.98),rgba(12,14,20,.99));border:1px solid rgba(255,255,255,.1);",
-  "border-radius:16px;box-shadow:0 30px 90px rgba(0,0,0,.6),0 0 60px -20px var(--qz-accent,#3DA8FE);}",
-  ".qz-kbd-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.07);}",
+  "background:rgba(0,0,0,.55);}",
+  ".qz-kbd-modal{width:min(520px,92vw);max-height:82vh;overflow:auto;color:var(--qzu-fg);",
+  "background:var(--qzu-surface);border:1px solid var(--qzu-line);",
+  "border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.45);}",
+  ".qz-kbd-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--qzu-line);}",
   ".qz-kbd-headico{color:var(--qz-accent,#3DA8FE);font-size:20px;}",
   ".qz-kbd-title{font-weight:700;font-size:16px;flex:1;}",
-  ".qz-kbd-close{appearance:none;border:0;background:rgba(255,255,255,.06);color:#cbd3df;width:30px;height:30px;border-radius:8px;font-size:19px;cursor:pointer;}",
-  ".qz-kbd-close:hover{background:rgba(255,255,255,.13);color:#fff;}",
+  ".qz-kbd-close{appearance:none;border:0;background:var(--qzu-fill);color:inherit;width:30px;height:30px;border-radius:8px;font-size:19px;cursor:pointer;}",
+  ".qz-kbd-close:hover{background:var(--qzu-fill-hover);}",
   ".qz-kbd-list{padding:12px 18px 18px;display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;}",
   ".qz-kbd-item{display:flex;align-items:center;gap:12px;padding:6px 0;}",
-  ".qz-kbd-item kbd{flex:0 0 auto;min-width:58px;text-align:center;font:inherit;font-size:12px;font-weight:700;color:#e7ecf3;",
-  "background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-bottom-width:2px;border-radius:7px;padding:5px 8px;}",
-  ".qz-kbd-item span{font-size:13px;color:#c2cad6;}",
-  "#qz-kbd-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);z-index:2147483600;",
-  "padding:10px 17px;border-radius:24px;font-size:13px;font-weight:600;color:#06090a;background:var(--qz-accent,#3DA8FE);",
-  "box-shadow:0 16px 44px -12px rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;white-space:nowrap;}",
-  "#qz-kbd-toast.qz-show{opacity:1;transform:translateX(-50%) translateY(0);}"
+  ".qz-kbd-item kbd{flex:0 0 auto;min-width:58px;text-align:center;font:inherit;font-size:12px;font-weight:700;color:inherit;",
+  "background:var(--qzu-fill);border:1px solid var(--qzu-line);border-bottom-width:2px;border-radius:7px;padding:5px 8px;}",
+  ".qz-kbd-item span{font-size:13px;color:var(--qzu-fg2);}"
 ].join(""));
 
-var toastT = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  var t = document.getElementById("qz-kbd-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-kbd-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 1500);
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 1500);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 document.addEventListener("keydown", onKey, false);
 
 return function cleanup() {
   document.removeEventListener("keydown", onKey, false);
   toggleHelp(false);
-  var t = document.getElementById("qz-kbd-toast"); if (t) t.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
