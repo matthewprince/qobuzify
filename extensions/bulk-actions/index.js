@@ -62,7 +62,7 @@ function loadTrackIds(c) {
   }
   var all = [];
   function page(off) {
-    return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
+    return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off, { timeout: 45000 }).then(function (j) {
       var t = (j.tracks && j.tracks.items) || []; t.forEach(noteMeta); all = all.concat(t.map(function (x) { return x.id; }).filter(Boolean));
       var total = (j.tracks && j.tracks.total) || all.length;
       if (all.length < total && t.length) return page(all.length);

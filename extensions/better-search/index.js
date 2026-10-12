@@ -67,7 +67,7 @@ function loadKnown() {
   if (known) return Promise.resolve(known);
   known = { fav: {}, recent: {} };
   refreshRecent();
-  return Q.api("favorite/getUserFavorites?type=tracks&limit=500").then(function (j) {
+  return Q.api("favorite/getUserFavorites?type=tracks&limit=500", { timeout: 45000 }).then(function (j) {
     var items = (j.tracks && j.tracks.items) || []; items.forEach(function (t) { known.fav[t.id] = 1; }); return known;
   }).catch(function () { return known; });
 }

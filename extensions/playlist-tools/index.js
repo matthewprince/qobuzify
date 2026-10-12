@@ -44,7 +44,7 @@ function normTrack(t) {
 function loadAll(id) {
   var all = [];
   function page(offset) {
-    return Q.api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500&offset=" + offset).then(function (j) {
+    return Q.api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500&offset=" + offset, { timeout: 45000 }).then(function (j) {
       var t = (j.tracks && j.tracks.items) || []; all = all.concat(t);
       var total = (j.tracks && j.tracks.total) || all.length;
       if (all.length < total && t.length) return page(all.length);
