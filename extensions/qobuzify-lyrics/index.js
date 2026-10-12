@@ -308,32 +308,58 @@ function ownRefetch() {
   if (t.album) u += "&album=" + encodeURIComponent(t.album);
   if (t.durationMs) u += "&durationMs=" + t.durationMs;
   var isrc = t.isrc; if (isrc) u += "&isrc=" + encodeURIComponent(isrc);
-  return _origFetch(u).then(function (r) {
-    if (r.status === 429) return "Try again in a moment";
+  // Supersede-safe, exactly like ownRenderCurrent: take a token now; if a track change (or any newer
+  // render) bumps _ownReq while this is in flight, the reply is for a song that is no longer up and must
+  // not be drawn. It used to render unconditionally, onto whatever track was playing by then.
+  var myReq = ++_ownReq, key = lyrKey(t);
+  function stale() { return myReq !== _ownReq || !curMeta || lyrKey(curMeta) !== key; }
+  // Capped like the lyric resolve, so a hung request can't leave the pill on "Fetching…" forever.
+  return withTimeout(_origFetch(u).then(function (r) {
+    if (r.status === 429) return stale() ? null : "Try again in a moment";
     return r.json().then(function (pr) {
       if (pr && pr.ok && pr.alternative && pr.lyrics) {
-        curLyricSource = pr.source || curLyricSource;
-        var key = lyrKey(t);
-        // mirror resolveLyrics' cache policy: persist word-by-word, drop line-level so it stays re-resolvable
-        if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: curLyricSource, isrc: (t && t.isrc) || null, t: Date.now() }; }
+        // mirror resolveLyrics' cache policy: persist word-by-word, drop line-level so it stays re-resolvable.
+        // Keyed on the snapshot t, so this is correct for that song even if the view has moved on.
+        if (pr.lyrics.Type === "Syllable") { lsCache[key] = { ly: pr.lyrics, src: pr.source || curLyricSource, isrc: (t && t.isrc) || null, t: Date.now() }; }
         else { delete lsCache[key]; }
         _cacheDirty = true;
-        if (_own && _own.render) _own.render(pr.lyrics);   // r.load() the replacement
+        if (stale()) return null; // superseded: say nothing, draw nothing
+        curLyricSource = pr.source || curLyricSource;
+        var r2 = _own;
+        if (r2 && r2.render) {
+          // Clear first: Lyra's load() appends to what is mounted, so rendering straight over the old
+          // version stacked the two (the "appends instead of replacing" bug).
+          try { r2.render({ lines: [] }); } catch (x) {}
+          r2.render(pr.lyrics);
+          r2.start();
+        }
+        _ownKey = key; curLyrics = pr.lyrics;
+        ownDecorate();
         return "Switched to a different version";
       }
+      if (stale()) return null;
       if (pr && pr.alternative === false) return "That's the only version available";
       return "Couldn't check for another version";
     });
-  }).catch(function () { return "Couldn't check for another version"; });
+  }).catch(function () { return stale() ? null : "Couldn't check for another version"; }), 15000)
+    .then(function (msg) { return msg === null && !stale() ? "Couldn't check for another version" : msg; });
 }
 var USE_PROXY = true; // __QZ_SL_DEBUG.setProxy(false) to force local-only for testing
+// Resolves to the parsed body, or a { _qzFail } marker: "net" (fetch rejected: offline, DNS, blocked),
+// "http" (non-200 or unparseable body), "timeout". Never rejects.
 function _proxyFetchOnce(u, ms) {
-  return withTimeout(_origFetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }), ms);
+  return withTimeout(_origFetch(u).then(function (r) {
+    return r.ok ? r.json().catch(function () { return { _qzFail: "http" }; }) : { _qzFail: "http", status: r.status };
+  }).catch(function () { return { _qzFail: "net" }; }), ms).then(function (pr) { return pr || { _qzFail: "timeout" }; });
 }
-// null = timed out / network error / non-200 (NOT a real "no lyrics" - that comes back as {ok:true,hasLyrics:false}).
-// recheck/errored = the server told us the result is transient (SL warming / an upstream blipped). Either way, retry.
-function _proxyRetriable(pr) { return !pr || pr.recheck || pr.errored; }
+// _qzFail = we never got an answer from the server (NOT a real "no lyrics" - that comes back as {ok:true,hasLyrics:false}).
+// recheck/errored = the server answered that the result is transient (SL warming / an upstream blipped). Either way, retry.
+function _proxyFailed(pr) { return !pr || !!pr._qzFail; }
+function _proxyRetriable(pr) { return _proxyFailed(pr) || pr.recheck || pr.errored; }
 function _wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+// What resolveLyrics hands back when the lyrics server could not be reached at all, as opposed to a
+// genuine miss (null). Never cached.
+var LYR_UNREACHABLE = { error: true };
 function proxyLyrics(track) {
   if (!USE_PROXY || !track || !track.name || !track.artist) return Promise.resolve(null);
   try {
@@ -351,13 +377,22 @@ function proxyLyrics(track) {
     // so skipping away + back (a second request) hit the warm cache. Automate that: on a timeout / transient
     // response, retry - the retry usually lands on the cache the first attempt just populated. A genuine
     // no-lyrics ({hasLyrics:false}) is truthy with no recheck/errored, so it returns immediately (no retry).
-    return _proxyFetchOnce(u, 11000).then(function (pr) {
-      if (!_proxyRetriable(pr)) return pr;
-      return _wait(1800).then(function () { return _proxyFetchOnce(u, 12000); }).then(function (pr2) {
-        if (!_proxyRetriable(pr2)) return pr2;
-        return _wait(2500).then(function () { return _proxyFetchOnce(u, 12000); });   // last try; cache is almost certainly warm by now
+    //
+    // Budget. It used to be 11s + 1.8s + 12s + 2.5s + 12s, so with the server down the user sat on
+    // "Loading lyrics…" for ~40s and was then told "no lyrics". Now: a server that ANSWERED transient
+    // (recheck/errored) is warming its cache and gets up to two more tries; a server we could not reach
+    // at all gets ONE quick retry and is then reported as unreachable. Worst case ~20s on a hung server,
+    // ~1.5s when the network fails outright.
+    var unreachable = 0;
+    function attempt(n) {
+      return _proxyFetchOnce(u, n === 0 ? 10000 : 8000).then(function (pr) {
+        if (!_proxyRetriable(pr)) return pr;
+        if (_proxyFailed(pr) && ++unreachable >= 2) return LYR_UNREACHABLE;
+        if (n >= 2) return _proxyFailed(pr) ? LYR_UNREACHABLE : pr;
+        return _wait(n === 0 ? 1500 : 2500).then(function () { return attempt(n + 1); });
       });
-    });
+    }
+    return attempt(0);
   } catch (e) { return Promise.resolve(null); }
 }
 // Proxy-only resolve: the client asks the proxy and renders whatever it returns; a miss / no-lyrics
@@ -380,6 +415,7 @@ function resolveLyrics(track) {
   if (ownViewOpen()) pushAnalysis(track); // fire-and-forget: audio-reactive background data, never gates the lyric render
   if (hit && hit.ly) { hit.t = Date.now(); if (hit.src) curLyricSource = hit.src; return Promise.resolve(hit.ly); }
   return proxyLyrics(track).then(function (pr) {
+    if (pr === LYR_UNREACHABLE) return LYR_UNREACHABLE; // distinct from a miss: the caller offers a retry
     if (pr && pr.ok && pr.hasLyrics && pr.lyrics) {
       curLyricSource = pr.source || curLyricSource; // codename from the proxy (never the raw source)
       // persist only high-confidence lyrics (the proxy sets pr.cacheable for word-by-word / syllable).
@@ -823,6 +859,8 @@ function ownEnsure() {
   // Same hazard as the cover below: this song's analysis was fetched on the songchange, when _own did not
   // exist yet, so the audio-reactive background would stay inert until the NEXT track. Re-apply it here.
   applyAnalysis();
+  // the user's saved lyrics timing + text size (see the lyrics controls below)
+  lycApplyOffset(); lycApplySize(false);
   // Prime the just-created renderer with the CURRENT cover. setCoverBg only pushes setCover on a
   // songchange, but _own didn't exist when this song's songchange fired, so without this the album
   // background stays empty until the next track. The renderer queues it (pendingCover) if it's still
@@ -841,9 +879,9 @@ function ownRenderCurrent() {
   // empty load() the PREVIOUS track's lyric wall keeps rendering (and karaoke-filling against the
   // new clock) under every status below. load({lines:[]}) clears content + resets lineCount to 0
   // (which also un-arms the key===_ownKey early return for the no-lyrics case).
-  if (!curMeta) { if (r.lineCount) { try { r.render({ lines: [] }); } catch (e) {} } r.status("Waiting for track…"); return; }
+  if (!curMeta) { if (r.lineCount) { try { r.render({ lines: [] }); } catch (e) {} } curLyrics = null; r.status("Waiting for track…"); ownDecorate(); return; }
   var key = lyrKey(curMeta); // feat-aware, so same-name/artist versions re-render instead of replaying
-  if (key === _ownKey && r.lineCount) { r.start(); return; } // already rendered this track
+  if (key === _ownKey && r.lineCount) { r.start(); ownDecorate(); return; } // already rendered this track
   // Supersede-safe: each call takes a monotonic token; a resolve that finishes after a NEWER call is
   // dropped. Replaces the old _ownBusy gate, which dropped the incoming track's render while a previous
   // resolve was still in flight - so a fast switch (or the stale-name remap firing a second resolve)
@@ -852,10 +890,21 @@ function ownRenderCurrent() {
   var myReq = ++_ownReq, snap = curMeta;
   // clear the previous track's lyric wall so only the loading status shows (status() overlays, never clears)
   if (r.lineCount) { try { r.render({ lines: [] }); } catch (e) {} }
+  curLyrics = null;
   r.status("Loading lyrics…");
+  ownDecorate();
   resolveLyrics(snap).then(function (ly) {
     if (myReq !== _ownReq) return; // a newer track superseded this resolve
     if (!ownViewOpen()) return;    // route closed while resolving
+    if (ly === LYR_UNREACHABLE) {
+      // Not a miss: we never heard back from the lyrics server. Say so and offer a retry, and leave
+      // _ownKey unset so the next open (or the button) resolves again instead of short-circuiting.
+      ownDiag({ step: "unreachable", curMeta: snap.name + " / " + snap.artist });
+      _ownKey = null; curLyrics = null;
+      try { r.render({ lines: [] }); } catch (x) {}
+      ownStatusRetry(r, "Lyrics server unreachable");
+      return;
+    }
     var n = ly && ly.Content ? ly.Content.length : 0;
     ownDiag({ step: "resolved", curMeta: snap.name + " / " + snap.artist, type: ly && ly.Type, lines: n, viewOpen: ownViewOpen() });
     _ownKey = key; curLyrics = ly;
@@ -864,10 +913,184 @@ function ownRenderCurrent() {
     // what CDP caught: 39 distinct lines rendered ~2.5x, the doubled/garbled wall the user saw. An
     // explicit empty render first guarantees each pass starts from a clean list. (The no-lyrics branch
     // below already does this; the success branch was the one path that skipped it.)
-    if (n) { try { r.render({ lines: [] }); } catch (x) {} r.render(ly); r.start(); } else { try { r.render({ lines: [] }); } catch (x) {} r.status("No word-by-word lyrics for this track"); }
+    // (The miss copy used to say "No word-by-word lyrics", which read as "line lyrics exist" when there
+    // were none at all; line-synced lyrics render through the branch above.)
+    if (n) { try { r.render({ lines: [] }); } catch (x) {} r.render(ly); r.start(); } else { curLyrics = null; try { r.render({ lines: [] }); } catch (x) {} r.status("No lyrics for this track"); }
+    ownDecorate();
     try { setLyricServerTag(); } catch (e) {}
-  }).catch(function (e) { if (myReq !== _ownReq) return; ownDiag({ step: "error", err: String((e && e.message) || e) }); try { r.render({ lines: [] }); r.status("Lyrics failed to load"); } catch (x) {} });
+  }).catch(function (e) {
+    if (myReq !== _ownReq) return;
+    ownDiag({ step: "error", err: String((e && e.message) || e) });
+    _ownKey = null; curLyrics = null;
+    try { r.render({ lines: [] }); ownStatusRetry(r, "Lyrics failed to load"); } catch (x) {}
+  });
 }
+// Status line with a Try again button under it. Lyra's status() is text only, so the button is appended
+// into its status element: status() rewrites that element's text on the next message and removes it on
+// load, which takes the button with it, so there is nothing to clean up.
+function ownStatusRetry(r, msg) {
+  r.status(msg);
+  ownDecorate();
+  try {
+    var st = document.querySelector("#qz-sl-root .lyra-status");
+    if (!st) return;
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "qz-lyc-retry"; b.textContent = "Try again";
+    b.addEventListener("click", function (e) { e.stopPropagation(); _ownKey = null; ownRenderCurrent(); });
+    st.appendChild(b);
+  } catch (e) {}
+}
+
+// ---- lyrics controls: timing offset, text size, sync type ----------------------------------------------
+// Static host DOM inside Lyra's root but OUTSIDE its viewport/canvas, beside Lyra's own pills, so nothing
+// here is touched by (or touches) the per-frame loop. The offset goes through Lyra's own timingOffsetMs
+// (setOffset), added to its built-in perceptual lead rather than replacing it; text size is a host CSS
+// override plus Lyra's public remeasure(), the same path a window resize takes. Colours come from
+// currentColor, which inside .lyra-root is Lyra's --lyra-text, so the controls follow however the lyric
+// text itself is themed.
+var LS_LYR_OFFSET = "qz-lyr-user-offset", LS_LYR_SIZE = "qz-lyr-size";
+var LYR_OFFSET_STEP = 50, LYR_OFFSET_MAX = 3000;
+var LYR_SIZES = [ // scale on the band's own clamp(); "m" is the untouched default
+  { k: "s", scale: 0.85, label: "Small" }, { k: "m", scale: 1, label: "Default" },
+  { k: "l", scale: 1.15, label: "Large" }, { k: "xl", scale: 1.3, label: "Extra large" }
+];
+var _lycOffset = 0, _lycSize = "m", _lycEl = null, _lycOpen = false;
+try { var _lo = parseInt(localStorage.getItem(LS_LYR_OFFSET), 10); if (!isNaN(_lo)) _lycOffset = Math.max(-LYR_OFFSET_MAX, Math.min(LYR_OFFSET_MAX, _lo)); } catch (e) {}
+try { var _ls = localStorage.getItem(LS_LYR_SIZE); if (_ls && LYR_SIZES.some(function (s) { return s.k === _ls; })) _lycSize = _ls; } catch (e) {}
+function lycApplyOffset() { try { if (_own && _own.setUserOffset) _own.setUserOffset(_lycOffset); } catch (e) {} }
+function lycApplySize(remeasure) {
+  var root = document.getElementById("qz-sl-root"); if (!root) return;
+  var s = LYR_SIZES.filter(function (x) { return x.k === _lycSize; })[0] || LYR_SIZES[1];
+  if (s.scale === 1) { root.removeAttribute("data-qz-size"); root.style.removeProperty("--qz-ly-scale"); }
+  else { root.setAttribute("data-qz-size", s.k); root.style.setProperty("--qz-ly-scale", String(s.scale)); }
+  if (remeasure) { try { if (_own && _own.remeasure) _own.remeasure(); } catch (e) {} }
+}
+function lycOffsetText(ms) {
+  if (!ms) return "In sync";
+  var s = (Math.abs(ms) / 1000).toFixed(2).replace(/0$/, "");
+  return s + "s " + (ms > 0 ? "earlier" : "later");
+}
+function lycSourceText() {
+  var ly = curLyrics; if (!ly || !ly.Content || !ly.Content.length) return "";
+  return ly.Type === "Syllable" ? "Word-by-word" : ly.Type === "Static" ? "Not synced" : "Line-synced";
+}
+var LYC_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">' +
+  '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>';
+function lycBuild() {
+  var w = document.createElement("div");
+  w.className = "qz-lyc";
+  var sizes = LYR_SIZES.map(function (s, i) {
+    return '<button type="button" class="qz-lyc-size" data-k="' + s.k + '" role="radio" aria-label="' + s.label + '" title="' + s.label + '" style="font-size:' + (11 + i * 2) + 'px">A</button>';
+  }).join("");
+  w.innerHTML =
+    '<button type="button" class="qz-lyc-btn" aria-label="Lyrics settings" title="Lyrics settings" aria-haspopup="dialog" aria-expanded="false">' + LYC_ICON + '</button>' +
+    '<div class="qz-lyc-pop" role="dialog" aria-label="Lyrics settings" hidden>' +
+      '<div class="qz-lyc-row"><span class="qz-lyc-lbl">Timing</span>' +
+        '<span class="qz-lyc-ctl"><button type="button" class="qz-lyc-step" data-d="-1" aria-label="Show lyrics later" title="Later">&minus;</button>' +
+        '<button type="button" class="qz-lyc-val" title="Reset timing"></button>' +
+        '<button type="button" class="qz-lyc-step" data-d="1" aria-label="Show lyrics earlier" title="Earlier">+</button></span></div>' +
+      '<div class="qz-lyc-row"><span class="qz-lyc-lbl">Text size</span><span class="qz-lyc-ctl" role="radiogroup" aria-label="Text size">' + sizes + '</span></div>' +
+      '<div class="qz-lyc-src"></div>' +
+    '</div>';
+  // Lyra's root scrolls the lyrics on wheel and captures touch drags; neither should start from here.
+  ["wheel", "pointerdown"].forEach(function (t) { w.addEventListener(t, function (e) { e.stopPropagation(); }, { passive: true }); });
+  w.querySelector(".qz-lyc-btn").addEventListener("click", function (e) { e.stopPropagation(); lycToggle(); });
+  w.querySelector(".qz-lyc-val").addEventListener("click", function (e) { e.stopPropagation(); lycSetOffset(0); });
+  [].forEach.call(w.querySelectorAll(".qz-lyc-step"), function (b) {
+    b.addEventListener("click", function (e) { e.stopPropagation(); lycSetOffset(_lycOffset + (+b.getAttribute("data-d")) * LYR_OFFSET_STEP); });
+  });
+  [].forEach.call(w.querySelectorAll(".qz-lyc-size"), function (b) {
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      _lycSize = b.getAttribute("data-k");
+      try { localStorage.setItem(LS_LYR_SIZE, _lycSize); } catch (x) {}
+      lycApplySize(true); lycSync();
+    });
+  });
+  return w;
+}
+function lycSetOffset(ms) {
+  _lycOffset = Math.max(-LYR_OFFSET_MAX, Math.min(LYR_OFFSET_MAX, Math.round(ms / LYR_OFFSET_STEP) * LYR_OFFSET_STEP));
+  try { _lycOffset ? localStorage.setItem(LS_LYR_OFFSET, String(_lycOffset)) : localStorage.removeItem(LS_LYR_OFFSET); } catch (e) {}
+  lycApplyOffset(); lycSync();
+}
+function lycSync() {
+  if (!_lycEl) return;
+  var v = _lycEl.querySelector(".qz-lyc-val"); if (v) v.textContent = lycOffsetText(_lycOffset);
+  [].forEach.call(_lycEl.querySelectorAll(".qz-lyc-size"), function (b) { b.setAttribute("aria-checked", b.getAttribute("data-k") === _lycSize ? "true" : "false"); });
+  var src = _lycEl.querySelector(".qz-lyc-src"), t = lycSourceText();
+  if (src) { src.textContent = t; src.hidden = !t; }
+}
+function _lycOutside(e) { if (_lycEl && !_lycEl.contains(e.target)) lycToggle(false); }
+function _lycKey(e) { if (e.key === "Escape" && _lycOpen) { e.stopPropagation(); e.preventDefault(); lycToggle(false); } }
+function lycToggle(force) {
+  if (!_lycEl) return;
+  var want = force === undefined ? !_lycOpen : !!force;
+  if (want === _lycOpen) return;
+  _lycOpen = want;
+  var pop = _lycEl.querySelector(".qz-lyc-pop"), btn = _lycEl.querySelector(".qz-lyc-btn");
+  if (pop) pop.hidden = !want;
+  if (btn) btn.setAttribute("aria-expanded", want ? "true" : "false");
+  _lycEl.classList.toggle("qz-lyc-open", want);
+  if (want) {
+    lycSync();
+    document.addEventListener("pointerdown", _lycOutside, true);
+    document.addEventListener("keydown", _lycKey, true);
+  } else {
+    document.removeEventListener("pointerdown", _lycOutside, true);
+    document.removeEventListener("keydown", _lycKey, true);
+  }
+}
+// Idempotent, cheap (a couple of querySelector calls), never per-frame: run after anything that may have
+// created Lyra's root. Mounts the controls, keeps offset/size applied, relabels Lyra's resume pill.
+function ownDecorate() {
+  try {
+    var mount = document.getElementById("qz-sl-root"); if (!mount) return;
+    var lr = mount.querySelector(".lyra-root"); if (!lr) return;
+    if (!_lycEl) _lycEl = lycBuild();
+    if (_lycEl.parentNode !== lr) lr.appendChild(_lycEl);
+    // Lyra writes "Resume" once at scaffold and never again; the label is set from here so lyra.js stays
+    // verbatim. The pill re-attaches auto-follow, which "Follow lyrics" says plainly.
+    var rs = lr.querySelector(".lyra-resume");
+    if (rs && rs.textContent !== "Follow lyrics") rs.textContent = "Follow lyrics";
+    lycSync();
+  } catch (e) {}
+}
+Q.css("qz-lyc-css", [
+  // trigger: same footprint and quietness as the fullscreen button on the opposite corner
+  ".qz-lyc{position:absolute;top:16px;right:16px;z-index:7;color:inherit;font-family:inherit;}",
+  ".qz-lyc-btn{width:40px;height:40px;border:0;border-radius:50%;padding:0;cursor:pointer;color:inherit;",
+  "display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,currentColor 8%,transparent);",
+  "opacity:.5;transition:opacity .15s ease,background .15s ease;}",
+  ".qz-lyc-btn:hover,.qz-lyc-open .qz-lyc-btn{opacity:1;background:color-mix(in srgb,currentColor 16%,transparent);}",
+  ".qz-lyc-btn:focus-visible,.qz-lyc-pop button:focus-visible,.qz-lyc-retry:focus-visible{outline:2px solid color-mix(in srgb,currentColor 70%,transparent);outline-offset:2px;}",
+  ".qz-lyc-pop{position:absolute;top:48px;right:0;min-width:248px;padding:12px 14px 10px;border-radius:12px;box-sizing:border-box;",
+  "background:color-mix(in srgb,currentColor 7%,rgb(14 14 18 / .86));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);",
+  "border:1px solid color-mix(in srgb,currentColor 13%,transparent);font-size:13px;font-weight:500;line-height:1.3;}",
+  ".qz-lyc-pop[hidden]{display:none;}",
+  ".qz-lyc-row{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:34px;}",
+  ".qz-lyc-row+.qz-lyc-row{margin-top:6px;}",
+  ".qz-lyc-lbl{opacity:.72;white-space:nowrap;}",
+  ".qz-lyc-ctl{display:inline-flex;align-items:center;gap:4px;}",
+  ".qz-lyc-pop button{border:0;cursor:pointer;color:inherit;font-family:inherit;background:transparent;border-radius:8px;}",
+  ".qz-lyc-pop .qz-lyc-step{width:30px;height:30px;font-size:17px;line-height:1;background:color-mix(in srgb,currentColor 9%,transparent);}",
+  ".qz-lyc-pop .qz-lyc-step:hover{background:color-mix(in srgb,currentColor 17%,transparent);}",
+  ".qz-lyc-pop .qz-lyc-val{min-width:96px;height:30px;padding:0 6px;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;}",
+  ".qz-lyc-pop .qz-lyc-val:hover{background:color-mix(in srgb,currentColor 8%,transparent);}",
+  ".qz-lyc-pop .qz-lyc-size{width:30px;height:30px;font-weight:600;line-height:1;opacity:.6;}",
+  ".qz-lyc-pop .qz-lyc-size:hover{opacity:1;background:color-mix(in srgb,currentColor 8%,transparent);}",
+  ".qz-lyc-pop .qz-lyc-size[aria-checked=true]{opacity:1;background:color-mix(in srgb,currentColor 16%,transparent);}",
+  ".qz-lyc-src{margin-top:10px;padding-top:9px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent);font-size:12px;opacity:.5;}",
+  ".qz-lyc-src[hidden]{display:none;}",
+  // Try again, under Lyra's status text: a quiet pill like Lyra's own
+  ".qz-lyc-retry{display:block;margin:14px auto 0;padding:8px 16px;border:0;border-radius:999px;cursor:pointer;",
+  "font:inherit;font-size:14px;font-weight:600;color:inherit;background:color-mix(in srgb,currentColor 12%,transparent);}",
+  ".qz-lyc-retry:hover{background:color-mix(in srgb,currentColor 20%,transparent);}",
+  // text size: a multiplier on the band's own clamp (and on Lyra's 52px one in fullscreen, whose rule is
+  // !important). Only present when a non-default size is picked, so the default path is untouched.
+  "#qz-sl-root[data-qz-size] .lyra-line,#qz-sl-root[data-qz-size] .lyra-dot{font-size:calc(clamp(26px,3vw,46px) * var(--qz-ly-scale,1));}",
+  "#qz-sl-root.qz-sl-fullscreen[data-qz-size] .lyra-line,#qz-sl-root.qz-sl-fullscreen[data-qz-size] .lyra-dot{font-size:calc(clamp(26px,3.3vw,52px) * var(--qz-ly-scale,1))!important;}"
+].join(""));
 var _ownDiagOn = false; try { _ownDiagOn = !!localStorage.getItem("qz-own-diag-on"); } catch (e) {} // dev-only breadcrumb, off unless armed
 function ownDiag(o) { if (!_ownDiagOn) return; try { localStorage.setItem("qz-own-diag", JSON.stringify(Object.assign({ t: Date.now() }, o))); } catch (e) {} }
 // Qobuz's visual-effects mode ("Baixo/Alto/Automático") lives as `appCapabilities` in the Redux
@@ -1589,7 +1812,11 @@ return function cleanup() {
   // Lyra's teardown contract: destroy() (not just stop) releases its rAF loop, the document-level
   // visibilitychange listener, the ResizeObserver, the background layers and the DOM. A re-init without this
   // would leak an orphan renderer still ticking against a dead instance.
+  try { lycToggle(false); } catch (e) {} // drops the popover's document listeners
   if (_own) { try { _own.destroy(); } catch (e) {} _own = null; }
+  _lycEl = null; // lived inside Lyra's root, gone with destroy()
+  try { var _lycRoot = document.getElementById("qz-sl-root"); if (_lycRoot) { _lycRoot.removeAttribute("data-qz-size"); _lycRoot.style.removeProperty("--qz-ly-scale"); } } catch (e) {}
+  var _lyccss = document.getElementById("qz-lyc-css"); if (_lyccss) _lyccss.remove();
   if (offBridge) offBridge();
   if (tickIv) clearTimeout(tickIv);
   if (tokenIv) clearInterval(tokenIv);
