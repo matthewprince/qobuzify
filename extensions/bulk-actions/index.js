@@ -32,8 +32,23 @@ function ctx() {
 var meId = null;
 function me() { if (meId != null) return Promise.resolve(meId); return Q.api("user/get").then(function (u) { meId = (u && (u.id || (u.user && u.user.id))) || 0; return meId; }).catch(function () { meId = 0; return 0; }); }
 
+// id -> { t: title, a: [artist names] } for every track loadTrackIds has seen, so the shuffle can check
+// block-trash's rules without another round-trip (see blockedFilter).
+var trackMeta = {};
+function noteMeta(t) {
+  if (!t || t.id == null || !t.title) return;
+  var names = [];
+  if (t.performer && t.performer.name) names.push(t.performer.name);
+  if (t.album && t.album.artist && t.album.artist.name) names.push(t.album.artist.name);
+  if (t.artist && t.artist.name) names.push(t.artist.name);
+  try {
+    var it = t.interpreters; if (typeof it === "string") it = JSON.parse(it);
+    (it || []).forEach(function (x) { var nm = x && x.name; nm = nm && (nm.display || nm); if (typeof nm === "string") names.push(nm); });
+  } catch (e) {}
+  trackMeta[String(t.id)] = { t: t.title, a: names };
+}
 function loadTrackIds(c) {
-  if (c.kind === "album") return Q.api("album/get?album_id=" + c.id).then(function (j) { return ((j.tracks && j.tracks.items) || []).map(function (t) { return t.id; }).filter(Boolean); });
+  if (c.kind === "album") return Q.api("album/get?album_id=" + c.id).then(function (j) { var items = (j.tracks && j.tracks.items) || []; items.forEach(noteMeta); return items.map(function (t) { return t.id; }).filter(Boolean); });
   if (c.kind === "library") {
     // whole favorites library. Prefer library-load's warm set (bound lazily at click time: extensions
     // load alphabetically, so Q.library doesn't exist yet when we boot), else the one-request id call.
@@ -48,7 +63,7 @@ function loadTrackIds(c) {
   var all = [];
   function page(off) {
     return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
-      var t = (j.tracks && j.tracks.items) || []; all = all.concat(t.map(function (x) { return x.id; }).filter(Boolean));
+      var t = (j.tracks && j.tracks.items) || []; t.forEach(noteMeta); all = all.concat(t.map(function (x) { return x.id; }).filter(Boolean));
       var total = (j.tracks && j.tracks.total) || all.length;
       if (all.length < total && t.length) return page(all.length);
       return all;
@@ -60,6 +75,78 @@ function favAll(ids) { return chunk(ids, 50).reduce(function (p, c) { return p.t
 function addTracks(pid, ids) { return chunk(ids, 50).reduce(function (p, c) { return p.then(function () { return Q.api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + c.join(",")); }); }, Promise.resolve()); }
 function userPlaylists() { return Q.api("playlist/getUserPlaylists?limit=200").then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function createPlaylist(name) { return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false").then(function (c) { return String(c.id); }); }
+
+// --- generated-playlist guard (identical copy in smart-playback, recommended, bulk-actions, multi-select) ---
+// A playlist we generated is only ever deleted while it is still exactly what we made. genCapture() runs right
+// after the create + fill and records Qobuz's own view of it (name, description, track count), falling back to
+// what we sent if that read fails. genDelete() re-reads the playlist and deletes it only on a full match. A
+// rename, an edited description, added or removed tracks, or a record without that fingerprint (an older
+// version stored only the id) all mean the user may have kept it: the id is forgotten and the playlist stays.
+// genDelete resolves "deleted" | "kept" | "gone" and rejects only on a transient failure (network, 5xx), so a
+// caller with a retry list knows to try again later.
+// genStore/genLoad keep the id key itself a bare playlist id (playlist-finder reads those keys to exclude our
+// playlists) and put the fingerprint beside it under "gen:<key>". genLoad returns null unless both agree.
+function genStore(key, rec) { Q.storage.set("gen:" + key, JSON.stringify(rec)); Q.storage.set(key, String(rec.pid)); }
+function genLoad(key) {
+  var pid = Q.storage.get(key, null), rec = genParse(Q.storage.get("gen:" + key, null));
+  return pid != null && rec && rec.pid === String(pid) ? rec : null;
+}
+function genCapture(pid, name, desc, count) {
+  var fb = { pid: String(pid), name: String(name || ""), desc: String(desc || ""), count: count };
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== String(pid)) return fb;
+    var n = Number(p.tracks_count);
+    return { pid: String(pid), name: String(p.name || ""), desc: String(p.description || ""), count: isFinite(n) ? n : count };
+  }, function () { return fb; });
+}
+function genParse(raw) {
+  try {
+    var r = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (r && r.pid != null && typeof r.name === "string" && typeof r.desc === "string" && typeof r.count === "number") return { pid: String(r.pid), name: r.name, desc: r.desc, count: r.count };
+  } catch (e) {}
+  return null;
+}
+function genDelete(raw) {
+  var rec = genParse(raw);
+  if (!rec) return Promise.resolve("kept");
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(rec.pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== rec.pid) return "gone";
+    if (String(p.name || "") !== rec.name || String(p.description || "") !== rec.desc || Number(p.tracks_count) !== rec.count) return "kept";
+    return Q.api("playlist/delete?playlist_id=" + encodeURIComponent(rec.pid)).then(function () { return "deleted"; });
+  }, function (e) {
+    if (/-> (400|403|404)$/.test(String(e && e.message))) return "gone";
+    throw e;
+  });
+}
+
+// --- block-trash's deny list ---
+// block-trash keeps its rules in localStorage ("qz-block:artists" = { normArtist }, "qz-block:songs" =
+// { "normTitle|normArtist" }) and its per-id verdicts in a private map. Mirror its matching (same norm(), every
+// artist credit) on the metadata we already hold, so a full shuffle never queues or re-queues a track it
+// blocks. Only while block-trash is running (its #qz-bt-css style exists): a disabled one leaves its lists
+// behind but blocks nothing. Ids with no metadata pass through; block-trash's own resolve-and-prune still
+// catches those once they are near the front.
+function btNorm(s) { return String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\u2018\u2019'`]/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
+function btLoad(k) { try { var o = JSON.parse(localStorage.getItem(k) || "{}"); return (o && typeof o === "object") ? o : {}; } catch (e) { return {}; } }
+function metaOf(id) {
+  id = String(id);
+  if (trackMeta[id]) return trackMeta[id];
+  try { var d = Q.getState().dictionnary.tracks.data || {}; if (d[id]) { noteMeta(d[id]); if (trackMeta[id]) return trackMeta[id]; } } catch (e) {}
+  return null;
+}
+var libMetaNoted = false;
+function blockedFilter(ids) {
+  if (!document.getElementById("qz-bt-css")) return ids;
+  var arts = btLoad("qz-block:artists"), songs = btLoad("qz-block:songs");
+  if (!Object.keys(arts).length && !Object.keys(songs).length) return ids;
+  if (!libMetaNoted && Q.library && Q.library.get) { try { Q.library.get("tracks").forEach(noteMeta); libMetaNoted = true; } catch (e) {} }
+  return ids.filter(function (id) {
+    var m = metaOf(id); if (!m) return true;
+    var nt = btNorm(m.t);
+    for (var i = 0; i < m.a.length; i++) { var na = btNorm(m.a[i]); if (arts[na] || songs[nt + "|" + na]) return false; }
+    return true;
+  });
+}
 
 // --- toast ---
 function toast(msg, bad) {
@@ -184,6 +271,19 @@ function shuffleOff() {
   } catch (e) {}
 }
 function queueSig(pq) { var it = (pq && pq.items) || []; return it.length + "|" + (it[0] && it[0].trackId) + "|" + (it[it.length - 1] && it[it.length - 1].trackId); }
+// What still has to come after the playing item: the shuffled order minus everything already played or
+// playing in the governing array. In the normal flow that is exactly ids after the current track's position,
+// so a skip during the re-assert window can't queue the new current track (or the one skipped) twice.
+// null when the queue is no longer the one we built (the user started something else).
+function remainingAfterCurrent(ids) {
+  var pq = Q.getState().playqueue;
+  var items = (pq && pq.items) || [];
+  if (!items.length || String(items[0] && items[0].trackId) !== String(ids[0])) return null;
+  var gov = (pq.shuffled && Array.isArray(pq.shuffledItems) && pq.shuffledItems.length) ? pq.shuffledItems : items;
+  var ci = pq.currentIndex || 0, played = {};
+  for (var i = 0; i <= ci && i < gov.length; i++) if (gov[i]) played[String(gov[i].trackId)] = 1;
+  return blockedFilter(ids.filter(function (id) { return !played[String(id)]; }));
+}
 var extendIv = null, reassertT = null;
 // Wait for the native queue to actually swap to the temp head (poll the STORE, never the DOM), then
 // replace the upcoming items with the full shuffled remainder in one dispatch. Re-assert once ~2s
@@ -202,7 +302,8 @@ function armQueueExtend(ids, headLen) {
     if (swapped) {
       clearInterval(extendIv); extendIv = null;
       shuffleOff();
-      var n = setUpcoming(ids.slice(1));
+      var rest = null; try { rest = remainingAfterCurrent(ids); } catch (e) {}
+      var n = rest ? setUpcoming(rest) : 0;
       if (!n) { toast("Couldn't queue the full shuffle - playing the first " + headLen, true); return; }
       toast("All " + ids.length + " tracks queued");
       var postSig = "";
@@ -210,8 +311,10 @@ function armQueueExtend(ids, headLen) {
       reassertT = setTimeout(function () {
         try {
           if (queueSig(Q.getState().playqueue) !== postSig) {
+            var again = remainingAfterCurrent(ids);
+            if (!again) return;   // not our queue any more: leave whatever the user started alone
             console.info("[qobuzify] bulk-actions: queue diverged after full-shuffle write, re-asserting");
-            setUpcoming(ids.slice(1));
+            setUpcoming(again);
           }
         } catch (e) {}
       }, 2000);
@@ -225,7 +328,7 @@ function shufflePlay(btn, c) {
   if (btn.disabled) return;
   btn.disabled = true; btn.classList.add("qz-ba-busy");
   Promise.all([loadTrackIds(c), ctxName(c)]).then(function (r) {
-    var ids = (r[0] || []).slice(), name = r[1];
+    var ids = blockedFilter((r[0] || []).slice()), name = r[1];
     if (ids.length < 2) { toast("Nothing to shuffle", true); return; }
     for (var i = ids.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
     if (ids.length > QUEUE_CAP) ids = ids.slice(0, QUEUE_CAP);
@@ -235,11 +338,13 @@ function shufflePlay(btn, c) {
     var whole = ids.length <= 90;
     var head = whole ? ids : ids.slice(0, HEAD);
     // an emoji in the name makes Qobuz's playlist API save an empty name, so keep it to a plain prefix
-    return createPlaylist("Shuffle · " + name).then(function (pid) {
-      return addTracks(pid, head).then(function () {
-        var oldPid = Q.storage.get("ba:shuf", null); Q.storage.set("ba:shuf", pid);
-        // keep exactly one shuffle playlist: delete the previous one shortly after (never the one now playing)
-        if (oldPid && oldPid !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + oldPid).catch(function () {}); }, 8000);
+    var plName = "Shuffle · " + name;
+    return createPlaylist(plName).then(function (pid) {
+      return addTracks(pid, head).then(function () { return genCapture(pid, plName, "", head.length); }).then(function (rec) {
+        var old = genLoad("ba:shuf"); genStore("ba:shuf", rec);
+        // keep exactly one shuffle playlist: delete the previous one shortly after (never the one now playing),
+        // and only if it is still untouched
+        if (old && old.pid !== String(pid)) setTimeout(function () { genDelete(old).catch(function () {}); }, 8000);
         playPlaylist(pid);
         if (!whole) armQueueExtend(ids, head.length);
       });
