@@ -49,26 +49,21 @@ Q.css(CSS_ID, [
   // Lean control
   ".qz-lean-wrap{position:relative;display:inline-flex;margin-left:14px;vertical-align:middle;}",
   ".qz-lean-btn{display:inline-flex;align-items:center;gap:7px;appearance:none;border:1px solid var(--qz-accent,#3DA8FE);",
-  "background:transparent;color:var(--qz-accent,#3DA8FE);font:inherit;font-size:12px;font-weight:700;letter-spacing:.3px;",
+  "background:transparent;color:var(--qz-accent,#3DA8FE);font:inherit;font-size:12px;font-weight:700;",
   "padding:5px 11px;border-radius:20px;cursor:pointer;line-height:1;transition:background .15s,color .15s;}",
   ".qz-lean-btn:hover{background:var(--qz-accent,#3DA8FE);color:#06090a;}",
   ".qz-lean-btn .qz-lean-dot{width:7px;height:7px;border-radius:50%;background:currentColor;}",
-  ".qz-lean-pop{position:absolute;top:calc(100% + 9px);left:0;z-index:99999;min-width:248px;padding:10px;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-lean-pop h4{margin:4px 6px 9px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#8b94a3;}",
+  // the popover follows Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
+  ".qz-lean-pop{position:absolute;top:calc(100% + 9px);left:0;z-index:99999;min-width:248px;padding:10px;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-lean-pop h4{margin:4px 6px 9px;font-size:13px;font-weight:600;color:var(--qzu-fg2);}",
   ".qz-lean-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 8px;border-radius:9px;cursor:pointer;}",
-  ".qz-lean-row:hover{background:rgba(255,255,255,.05);}",
-  ".qz-lean-row span{font-size:13px;color:#e7ecf3;font-weight:550;}",
-  ".qz-lean-row.qz-on span{color:#7e8796;text-decoration:line-through;}",
-  ".qz-lean-chk{position:relative;width:38px;height:22px;border-radius:20px;background:rgba(255,255,255,.16);flex:0 0 auto;transition:background .15s;}",
-  ".qz-lean-chk i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .16s;}",
-  ".qz-lean-row.qz-on .qz-lean-chk{background:var(--qz-accent,#3DA8FE);}",
-  ".qz-lean-row.qz-on .qz-lean-chk i{left:19px;}",
+  ".qz-lean-row:hover{background:var(--qzu-fill);}",
+  ".qz-lean-row>span{font-size:13px;font-weight:550;}",
+  ".qz-lean-row.qz-on>span{color:var(--qzu-fg2);text-decoration:line-through;}",
   ".qz-lean-foot{display:flex;gap:8px;padding:9px 6px 3px;}",
-  ".qz-lean-foot button{flex:1;appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);",
-  "color:#cbd3df;font:inherit;font-size:12px;font-weight:600;padding:7px;border-radius:8px;cursor:pointer;}",
-  ".qz-lean-foot button:hover{background:rgba(255,255,255,.1);color:#fff;}"
+  ".qz-lean-foot .qzu-btn{flex:1;}"
 ].join(""));
 
 function onDiscover() { try { return /^\/discover\b/.test(Q.getState().router.location.pathname || ""); } catch (e) { return false; } }
@@ -102,24 +97,31 @@ function openPop(wrap) {
   if (wrap.querySelector(".qz-lean-pop")) { closePop(); return; }
   var pop = document.createElement("div");
   pop.className = "qz-lean-pop";
-  pop.innerHTML = "<h4>Show on Discover</h4>";
+  Q.ui.follow(pop);
+  // a switch that is on hides its section (struck through), so the heading says Hide
+  pop.innerHTML = "<h4>Hide on Discover</h4>";
   SECTIONS.forEach(function (s) {
     var row = document.createElement("div");
     var hidden = isHidden(s.key);
     row.className = "qz-lean-row" + (hidden ? " qz-on" : "");
-    row.innerHTML = "<span>" + s.label + "</span><span class='qz-lean-chk'><i></i></span>";
-    row.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var nowHidden = !row.classList.contains("qz-on");
+    row.innerHTML = "<span>" + s.label + "</span>";
+    var sw = Q.ui.switch({ checked: hidden, label: "Hide " + s.label, onChange: function (nowHidden) {
       row.classList.toggle("qz-on", nowHidden);
       toggleKey(s.key, nowHidden);
       applySections();
+    } });
+    row.appendChild(sw);
+    // the whole row toggles, as before; a click on the switch itself is handled by the switch
+    row.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (e.target.closest && e.target.closest(".qzu-switch")) return;
+      sw.click();
     });
     pop.appendChild(row);
   });
   var foot = document.createElement("div");
   foot.className = "qz-lean-foot";
-  foot.innerHTML = "<button data-act='all'>Show all</button><button data-act='lean'>Lean default</button>";
+  foot.innerHTML = "<button type='button' class='qzu-btn' data-act='all'>Show all</button><button type='button' class='qzu-btn' data-act='lean'>Lean default</button>";
   foot.querySelector("[data-act='all']").addEventListener("click", function (e) { e.stopPropagation(); setHidden([]); applySections(); closePop(); openPop(wrap); });
   foot.querySelector("[data-act='lean']").addEventListener("click", function (e) { e.stopPropagation(); setHidden(DEFAULT_HIDDEN.slice()); applySections(); closePop(); openPop(wrap); });
   pop.appendChild(foot);
