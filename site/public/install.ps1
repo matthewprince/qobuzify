@@ -13,7 +13,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 # irm|iex script) rather than fetched as a sibling file, so it is a real tamper anchor: an attacker who
 # swaps the zip on the origin cannot also swap this hash without breaking the signed TLS delivery.
 # tools/build-zip.py rewrites this line on every build.
-$ExpectedZipSha = "7779F79B1798A1BF4BBC7D4013EBDA1EB295A6E028EB0CC258A39F13CABCB372"
+$ExpectedZipSha = "D020075B98727AEEAFCE26CFC2FBAEEAAE1F108E144BB6F5C81AFC6862278419"
 
 Write-Host ""
 Write-Host "  Qobuzify " -ForegroundColor Cyan -NoNewline
@@ -214,5 +214,5 @@ if ($node -eq "node") {
 } else {
   Write-Host ("(or directly:  & `"" + $node + "`" `"" + (Join-Path $dir 'bin\qobuzify.js') + "`" restore)") -ForegroundColor DarkGray
 }
-Write-Host "Qobuz app updates are re-patched automatically (checked every 15 minutes). Turn that off with: qobuzify autopatch off" -ForegroundColor DarkGray
+Write-Host "Heads up: a Qobuz app update removes Qobuzify. Re-run this installer to restore it (your settings survive), or turn on automatic re-patching with: qobuzify autopatch on" -ForegroundColor DarkGray
 Write-Host ""
