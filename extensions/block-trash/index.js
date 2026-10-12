@@ -154,6 +154,7 @@ function checkQueueSwap() { try { var pq = Q.getState().playqueue; if (!pq) retu
 
 // the gate itself. Guarded by `disposed` so it goes inert on unload even if it can't be unwrapped.
 var origFetch = window.fetch;
+var GATE_MS = 1500; // longest we hold /file/url waiting for an unclassified track's verdict
 function denyResp() { return Promise.reject(new DOMException("qz-block", "AbortError")); }
 function hookedFetch(input, init) {
   var url = (typeof input === "string") ? input : (input && input.url);
@@ -168,8 +169,12 @@ function hookedFetch(input, init) {
           // ahead of its verdict. Buffering-before-deny is what leaks the first word at a gapless
           // transition. Costs ~1 API call the first time an id is seen; ids pre-resolved by resolveAhead
           // skip this and take the fast path above.
+          // The hold is capped at GATE_MS: a slow or hung track/get must never stop the track from
+          // starting. On timeout the stream goes through and the lookup keeps running; if it lands
+          // as blocked, classify() runs the late-deny path (enforce skips it if it's current).
           var self = this, args = arguments;
-          return resolveId(id).then(function () { return deny[id] ? denyResp() : origFetch.apply(self, args); });
+          var gate = new Promise(function (res) { setTimeout(res, GATE_MS); });
+          return Promise.race([resolveId(id), gate]).then(function () { return deny[id] ? denyResp() : origFetch.apply(self, args); });
         }
       }
     } catch (e) {}
