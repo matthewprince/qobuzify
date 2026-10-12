@@ -2,7 +2,9 @@
   "id": "multi-select",
   "name": "Multi-Select",
   "description": "Shift-click a range or Ctrl/Cmd-click to toggle tracks on any desktop track list, then Play, add to the queue, add to a playlist, or favourite every selected track at once (r/qobuz ZariantheMighty32).",
-  "icon": "icon-checkbox-checked",
+  "icon": "pct-checked",
+  "category": "Library",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "you"
 }

@@ -2,7 +2,9 @@
   "id": "sleep-timer",
   "name": "Sleep Timer",
   "description": "Stop the music after 15/30/45/60/90 minutes, a custom time, or at the end of the current track. A moon button in the player bar shows the live countdown.",
-  "icon": "icon-tonality",
+  "icon": "pct-clock",
+  "category": "Playback",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "matthewprince"
 }

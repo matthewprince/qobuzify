@@ -2,7 +2,9 @@
   "id": "feat-artists",
   "name": "Featured Artists",
   "description": "Shows the featured / collaborating artists on each track (Qobuz only shows the main artist unless you open the credits) - hip-hop and collabs finally read right in album and playlist track lists.",
-  "icon": "icon-users",
+  "icon": "pct-artist",
+  "category": "Interface",
+  "platforms": ["desktop", "android"],
   "version": "1.0.0",
   "author": "matthewprince"
 }
