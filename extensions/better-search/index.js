@@ -85,8 +85,24 @@ function knownOf(tr) { if (!known || !tr) return null; var rec = known.recent[tr
 // have. The server returns { artist, words }: `artist` is a high-confidence popular-artist correction;
 // `words` are LanguageTool word candidates for the client to validate.
 var CORRECT_URL = "https://api.qobuzify.app/v1/correct?q=";
+// Correction is a nice-to-have on top of results that are already showing, so nothing it waits on may
+// hang: the server call and each per-word validation search give up after CORRECT_TIMEOUT_MS.
+var CORRECT_TIMEOUT_MS = 1500;
+function withTimeout(p, ms, fallback) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var t = setTimeout(function () { if (!done) { done = true; resolve(fallback); } }, ms);
+    Promise.resolve(p).then(function (v) { if (!done) { done = true; clearTimeout(t); resolve(v); } },
+      function () { if (!done) { done = true; clearTimeout(t); resolve(fallback); } });
+  });
+}
 function fetchCorrection(q) {
-  return fetch(CORRECT_URL + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  var ac = typeof AbortController === "function" ? new AbortController() : null;
+  var t = ac ? setTimeout(function () { try { ac.abort(); } catch (e) {} }, CORRECT_TIMEOUT_MS) : null;
+  var req = fetch(CORRECT_URL + encodeURIComponent(q), ac ? { signal: ac.signal } : undefined)
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) { if (t) clearTimeout(t); return j; }, function () { if (t) clearTimeout(t); return null; });
+  return withTimeout(req, CORRECT_TIMEOUT_MS, null);
 }
 
 // A result is "weak" when nothing strong answered the query: no artist whose name really matches it, and
@@ -134,29 +150,31 @@ function doSearch(q) {
     // results for The Weeknd" over a "Wen and the Wknders" hero).
     if (state.corrected) return;
     state.data = j;
-    if (weakResult(j, norm(q))) { trySpellCorrect(q, id, correction); return; } // render after correction resolves
+    // The raw results always show right away. A weak result also starts the word-correction pass, which
+    // only re-renders if a correction actually wins.
     render();
+    if (weakResult(j, norm(q))) trySpellCorrect(q, id, correction);
   }).catch(function () { if (id === state.reqId) { state.data = { __err: 1 }; render(); } });
 }
 
 // Weak result -> take the server's word candidates, search Qobuz for each, adopt the strongest one that
 // clearly beats the original. Shows a "Showing results for X" banner (render reads state.corrected).
+// The raw results are already on screen, so this renders only when it swaps them.
 function trySpellCorrect(q, id, correction) {
   correction.then(function (cor) {
     var cands = (cor && cor.words) || [];
-    if (id !== state.reqId || !cands.length) { render(); return; }
+    if (id !== state.reqId || !cands.length) return;
     return Promise.all(cands.map(function (c) {
-      return Q.api("catalog/search?query=" + encodeURIComponent(c) + "&limit=30")
-        .then(function (d) { return { c: c, d: d, s: candStrength(d, c) }; })
-        .catch(function () { return { c: c, d: null, s: 0 }; });
+      var miss = { c: c, d: null, s: 0 };
+      return withTimeout(Q.api("catalog/search?query=" + encodeURIComponent(c) + "&limit=30")
+        .then(function (d) { return { c: c, d: d, s: candStrength(d, c) }; }), CORRECT_TIMEOUT_MS, miss);
     })).then(function (res) {
-      if (id !== state.reqId || state.corrected) return;      // an artist correction already won
+      if (id !== state.reqId || state.corrected) return;      // superseded, or an artist correction already won
       res.sort(function (a, b) { return b.s - a.s; });
       var win = res[0];
-      if (win && win.s >= 300) { state.data = win.d; state.q = win.c; state.corrected = win.c; state.original = q; }
-      render();
+      if (win && win.s >= 300) { state.data = win.d; state.q = win.c; state.corrected = win.c; state.original = q; render(); }
     });
-  }).catch(function () { if (id === state.reqId) render(); });
+  }).catch(function () {});
 }
 
 // Cover/karaoke/instrumental/tribute markers. These versions get demoted so the real recording wins
