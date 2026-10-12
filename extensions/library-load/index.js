@@ -240,6 +240,7 @@ function progEl() {
   if (!el) {
     el = document.createElement("div");
     el.id = PROG_ID;
+    Q.ui.follow(el);
     el.innerHTML =
       '<span class="qz-lib-spin"></span>' +
       '<span class="qz-lib-txt"><span class="qz-lib-title">Syncing your library</span>' +
@@ -349,18 +350,19 @@ var offRoute = Q.onRoute(function (path) { if (isLibraryRoute(path)) loadType("t
 Q.css(CSS_ID, [
   "#" + PROG_ID + "{position:fixed;right:20px;bottom:20px;z-index:2147482000;display:flex;align-items:center;gap:11px;",
   "min-width:210px;max-width:calc(100vw - 40px);padding:11px 15px;border-radius:13px;font-family:inherit;",
-  "background:linear-gradient(180deg,rgba(20,23,31,.98),rgba(12,14,20,.99));border:1px solid rgba(255,255,255,.12);",
-  "box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 34px -20px var(--qz-accent,#3DA8FE);color:#eef2f7;",
+  // follows Qobuz's appearance (Q.ui.follow), so the kit's surface and text tokens apply
+  "background:var(--qzu-surface);border:1px solid var(--qzu-line);",
+  "box-shadow:0 12px 32px rgba(0,0,0,.35);color:var(--qzu-fg);",
   "opacity:0;transform:translateY(12px);transition:opacity .2s ease,transform .2s ease;pointer-events:none;}",
   "#" + PROG_ID + ".qz-lib-in{opacity:1;transform:none;}",
-  ".qz-lib-spin{flex:0 0 auto;width:17px;height:17px;border-radius:50%;border:2px solid rgba(255,255,255,.18);",
+  ".qz-lib-spin{flex:0 0 auto;width:17px;height:17px;border-radius:50%;border:2px solid color-mix(in srgb,currentColor 18%,transparent);",
   "border-top-color:var(--qz-accent,#3DA8FE);animation:qz-lib-rot .7s linear infinite;}",
   "#" + PROG_ID + ".qz-lib-done .qz-lib-spin{border-color:var(--qz-accent,#3DA8FE);border-top-color:var(--qz-accent,#3DA8FE);animation:none;}",
   "@keyframes qz-lib-rot{to{transform:rotate(360deg);}}",
   ".qz-lib-txt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;}",
-  ".qz-lib-title{font-size:12.5px;font-weight:700;color:#eef2f7;white-space:nowrap;}",
-  ".qz-lib-count{font-size:11.5px;font-weight:600;color:#9aa3b2;white-space:nowrap;font-variant-numeric:tabular-nums;}",
-  ".qz-lib-bar{position:absolute;left:14px;right:14px;bottom:7px;height:2px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;}",
+  ".qz-lib-title{font-size:12.5px;font-weight:700;white-space:nowrap;}",
+  ".qz-lib-count{font-size:11.5px;font-weight:600;color:var(--qzu-fg2);white-space:nowrap;font-variant-numeric:tabular-nums;}",
+  ".qz-lib-bar{position:absolute;left:14px;right:14px;bottom:7px;height:2px;border-radius:2px;background:color-mix(in srgb,currentColor 10%,transparent);overflow:hidden;}",
   ".qz-lib-bar>i{display:block;height:100%;width:0;border-radius:2px;background:var(--qz-accent,#3DA8FE);transition:width .25s ease;}"
 ].join(""));
 
