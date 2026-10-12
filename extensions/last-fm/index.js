@@ -394,12 +394,11 @@ try {
   function setStatus(t) { var s = document.querySelector("#" + MODAL_ID + " [data-status]"); if (s) s.textContent = t || " "; }
 
   function modalInner() {
-    var head = '<div class="qz-lfm-box"><div class="qz-lfm-h">' + IC + ' Last.fm<button class="qz-lfm-close" data-act="close" aria-label="Close">&#215;</button></div>';
+    var head = '<div class="qz-lfm-box"><div class="qz-lfm-h">' + IC + ' Last.fm<button type="button" class="qz-lfm-close" data-act="close" aria-label="Close">&#215;</button></div>';
     if (connected()) {
-      var on = enabled();
       return head +
         '<div class="qz-lfm-conn"><span class="qz-lfm-dot"></span>Connected as <b>' + esc(username || "your account") + '</b></div>' +
-        '<div class="qz-lfm-row"><span>Scrobble what I play</span><button class="qz-lfm-sw' + (on ? " on" : "") + '" data-act="toggle"><span></span></button></div>' +
+        '<div class="qz-lfm-row"><span>Scrobble what I play</span><span data-sw></span></div>' +
         '<div class="qz-lfm-sec"><div class="qz-lfm-lbl">Import history</div>' +
           '<p class="qz-lfm-p">Send the plays the Listening Stats extension has recorded to Last.fm, oldest first, in batches of 50. Last.fm rejects anything older than ~2 weeks, so most historical plays will bounce.</p>' +
           '<button class="qz-lfm-btn" data-act="import">Import your Qobuzify history to Last.fm</button></div>' +
@@ -419,12 +418,23 @@ try {
       '<div class="qz-lfm-status" data-status>&nbsp;</div>' +
       '<div class="qz-lfm-foot"><button class="qz-lfm-btn ghost" data-act="close">Close</button><button class="qz-lfm-btn accent" data-act="connect">Connect Last.fm</button></div></div>';
   }
-  function renderModal() { var m = document.getElementById(MODAL_ID); if (m) m.innerHTML = modalInner(); }
+  // The scrobble switch is the shared one, mounted into its placeholder after every render. Whatever enabled()
+  // says decides which way a click goes, as before.
+  function mountSwitch(m) {
+    var ph = m.querySelector("[data-sw]"); if (!ph) return;
+    var sw = Q.ui.switch({ checked: enabled(), label: "Scrobble what I play", onChange: function () {
+      var now = !enabled(); Q.storage.set("lastfm:enabled", now ? "1" : "0"); sw.checked = now; if (now) flushQueue();
+    } });
+    ph.replaceWith(sw);
+  }
+  function renderModal() { var m = document.getElementById(MODAL_ID); if (m) { m.innerHTML = modalInner(); mountSwitch(m); } }
   function closeModal() { var m = document.getElementById(MODAL_ID); if (m) m.remove(); }
   function openModal() {
     closeModal();
     var m = document.createElement("div"); m.id = MODAL_ID; m.className = "qz-lfm-modal";
+    Q.ui.follow(m);
     m.innerHTML = modalInner();
+    mountSwitch(m);
     document.body.appendChild(m);
     m.addEventListener("mousedown", function (e) { if (e.target === m) closeModal(); });
     m.addEventListener("click", function (e) {
@@ -436,44 +446,43 @@ try {
         case "finish": if (pendingAuth) pollSession(pendingAuth.nonce).then(function (j) { if (pickupSession(j)) { stopAuthPoll(); pendingAuth = null; renderModal(); flushQueue(); } else setStatus("Not authorized yet. Approve access in the browser, then try again."); }); break;
         case "disconnect": disconnect(); toast("Disconnected from Last.fm"); break;
         case "import": runImport(); break;
-        case "toggle": { var now = !enabled(); Q.storage.set("lastfm:enabled", now ? "1" : "0"); act.classList.toggle("on", now); if (now) flushQueue(); break; }
         case "copy": try { navigator.clipboard.writeText((pendingAuth && pendingAuth.url) || ""); setStatus("Link copied."); } catch (e2) {} break;
       }
     });
   }
 
   // small transient toast for connect/disconnect/errors (not per-scrobble)
-  var toastEl = null, toastT = null;
+  // one toast at a time, as before: a new message updates the open one and restarts its timer
+  var curToast = null, toastT = null;
   function toast(msg) {
-    if (!toastEl) { toastEl = document.createElement("div"); toastEl.className = "qz-lfm-toast"; document.body.appendChild(toastEl); }
-    toastEl.textContent = msg; toastEl.classList.add("show");
-    clearTimeout(toastT); toastT = setTimeout(function () { if (toastEl) toastEl.classList.remove("show"); }, 2000);
+    clearTimeout(toastT);
+    if (curToast) curToast.update(msg);
+    else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+    var mine = curToast;
+    toastT = setTimeout(function () { mine.close(); }, 2000);
   }
+  function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
   Q.css(CSS_ID, [
-    ".qz-lfm-modal{position:fixed;inset:0;z-index:2147483601;display:flex;align-items:center;justify-content:center;background:rgba(4,6,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);-webkit-app-region:no-drag;}",
-    ".qz-lfm-box{width:min(470px,93vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:18px 20px;box-shadow:0 30px 80px rgba(0,0,0,.6);color:#e7ebf2;}",
-    ".qz-lfm-h{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:800;color:#eef2f7;}",
+    // appended to <body> and following Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
+    ".qz-lfm-modal{position:fixed;inset:0;z-index:2147483601;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);-webkit-app-region:no-drag;}",
+    ".qz-lfm-box{width:min(470px,93vw);max-height:88vh;overflow:auto;box-sizing:border-box;background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:16px;padding:18px 20px;box-shadow:0 24px 64px rgba(0,0,0,.45);color:var(--qzu-fg);}",
+    ".qz-lfm-h{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700;}",
     ".qz-lfm-h svg{color:var(--qz-accent,#3DA8FE);}",
-    ".qz-lfm-close{margin-left:auto;appearance:none;border:0;background:transparent;color:#98a2b3;font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}.qz-lfm-close:hover{color:#fff;}",
-    ".qz-lfm-p{font-size:12.5px;color:#9aa3b2;line-height:1.55;margin:12px 0;}.qz-lfm-p b{color:#cbd3df;}",
-    ".qz-lfm-conn{display:flex;align-items:center;gap:9px;font-size:13.5px;color:#dbe1ea;margin:14px 0 6px;}.qz-lfm-conn b{color:#fff;}",
-    ".qz-lfm-dot{width:9px;height:9px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 3px rgba(74,222,128,.18);flex:0 0 auto;}",
-    ".qz-lfm-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;font-size:13.5px;border-top:1px solid rgba(255,255,255,.07);}",
-    ".qz-lfm-sw{position:relative;width:44px;height:25px;border-radius:20px;border:0;background:rgba(255,255,255,.16);cursor:pointer;transition:background .16s;flex:0 0 auto;}",
-    ".qz-lfm-sw span{position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff;transition:left .16s;}",
-    ".qz-lfm-sw.on{background:var(--qz-accent,#3DA8FE);}.qz-lfm-sw.on span{left:22px;}",
-    ".qz-lfm-sec{margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:12px;}",
-    ".qz-lfm-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#8b93a2;margin-bottom:4px;}",
+    ".qz-lfm-close{margin-left:auto;appearance:none;border:0;background:transparent;color:var(--qzu-fg2);font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}.qz-lfm-close:hover{color:var(--qzu-fg);}",
+    ".qz-lfm-p{font-size:12.5px;color:var(--qzu-fg2);line-height:1.55;margin:12px 0;}.qz-lfm-p b{color:var(--qzu-fg);}",
+    ".qz-lfm-conn{display:flex;align-items:center;gap:9px;font-size:13.5px;margin:14px 0 6px;}.qz-lfm-conn b{font-weight:700;}",
+    ".qz-lfm-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;flex:0 0 auto;}",
+    ".qz-lfm-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;font-size:13.5px;border-top:1px solid var(--qzu-line);}",
+    ".qz-lfm-sec{margin-top:8px;border-top:1px solid var(--qzu-line);padding-top:12px;}",
+    ".qz-lfm-lbl{font-size:13px;font-weight:600;color:var(--qzu-fg2);margin-bottom:4px;}",
     ".qz-lfm-idrow{display:flex;gap:8px;align-items:center;margin:8px 0;}",
-    ".qz-lfm-id{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.09);border-radius:8px;padding:7px 9px;font:600 11.5px/1.3 ui-monospace,monospace;color:#cdd5e0;}",
+    ".qz-lfm-id{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--qzu-fill);border:1px solid var(--qzu-line);border-radius:8px;padding:7px 9px;font:600 11.5px/1.3 ui-monospace,monospace;color:inherit;}",
     ".qz-lfm-status{font-size:12px;color:var(--qz-accent,#3DA8FE);min-height:16px;margin:10px 0 2px;line-height:1.5;}",
     ".qz-lfm-foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap;}",
-    ".qz-lfm-btn{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e7ebf2;font:inherit;font-size:12.5px;font-weight:650;padding:9px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;-webkit-app-region:no-drag;}",
-    ".qz-lfm-btn:hover{background:rgba(255,255,255,.13);}.qz-lfm-btn.ghost{background:transparent;}",
-    ".qz-lfm-btn.accent{background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);color:#06090a;}",
-    ".qz-lfm-toast{position:fixed;left:50%;bottom:98px;transform:translateX(-50%) translateY(8px);background:rgba(20,22,28,.97);color:#fff;padding:9px 16px;border-radius:11px;font:600 13px/1 system-ui,sans-serif;z-index:2147483650;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;box-shadow:0 10px 34px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);}",
-    ".qz-lfm-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}"
+    ".qz-lfm-btn{appearance:none;border:1px solid var(--qzu-line);background:var(--qzu-fill);color:inherit;font:inherit;font-size:12.5px;font-weight:650;padding:9px 14px;border-radius:9px;cursor:pointer;white-space:nowrap;-webkit-app-region:no-drag;}",
+    ".qz-lfm-btn:hover{background:var(--qzu-fill-hover);}.qz-lfm-btn.ghost{background:transparent;}",
+    ".qz-lfm-btn.accent{background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);color:#06090a;}"
   ].join(""));
 
   // ---------------------------------------------------------------------------
@@ -504,7 +513,7 @@ try {
     try { if (typeof offChange === "function") offChange(); } catch (e) {}
     if (unregSettings) unregSettings();
     closeModal();
-    if (toastEl) { toastEl.remove(); toastEl = null; }
+    closeToast();
     var st = document.getElementById(CSS_ID); if (st) st.remove();
   };
 } catch (e) { return function () {}; }
