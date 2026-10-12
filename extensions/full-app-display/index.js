@@ -196,7 +196,7 @@ function open() {
   root.id = "qz-fad-root"; root.className = "qz-fad";
   root.innerHTML =
     '<div class="qz-fad-bg"></div><div class="qz-fad-scrim"></div>' +
-    '<button class="qz-fad-close" aria-label="Close">' + IC.close + "</button>" +
+    '<button type="button" class="qz-fad-close" aria-label="Close">' + IC.close + "</button>" +
     '<div class="qz-fad-queue" hidden>' + IC.clock + '<span class="qz-fad-q-txt"></span></div>' +
     '<div class="qz-fad-stage">' +
       '<div class="qz-fad-art"><img alt="" draggable="false"></div>' +
@@ -240,6 +240,8 @@ function toggle() { if (isOpen()) close(); else open(); }
 function onEsc(e) { if (e.key === "Escape") { e.stopPropagation(); close(); } }
 
 Q.css(CSS_ID, [
+  // Deliberately dark in both appearances: the view sits on the blurred, darkened cover art with a dark scrim
+  // (like any full-screen now playing), so the light text below always has the scrim behind it.
   ".qz-fad{position:fixed;inset:0;z-index:2147483100;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .25s ease;overflow:hidden;}",
   ".qz-fad.qz-fad-show{opacity:1;}",
   ".qz-fad-bg{position:absolute;inset:-8%;background-size:cover;background-position:center;filter:blur(60px) saturate(1.3) brightness(.55);transform:scale(1.12);}",
@@ -251,7 +253,7 @@ Q.css(CSS_ID, [
   ".qz-fad-art{width:min(400px,60vh);aspect-ratio:1/1;border-radius:18px;overflow:hidden;box-shadow:0 40px 120px -24px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.06);}",
   ".qz-fad-art img{width:100%;height:100%;object-fit:cover;display:block;}",
   ".qz-fad-meta{display:flex;flex-direction:column;gap:6px;max-width:100%;}",
-  ".qz-fad-title{font-size:30px;font-weight:800;letter-spacing:-.3px;color:#fff;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(560px,86vw);}",
+  ".qz-fad-title{font-size:30px;font-weight:800;color:#fff;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(560px,86vw);}",
   ".qz-fad-artist{font-size:18px;font-weight:600;color:var(--qz-accent,#3DA8FE);}",
   ".qz-fad-album{font-size:14px;color:#aeb6c2;}",
   ".qz-fad-seek{display:flex;align-items:center;gap:12px;width:100%;margin-top:4px;}",
@@ -259,18 +261,18 @@ Q.css(CSS_ID, [
   ".qz-fad-dur{text-align:left;}",
   ".qz-fad-bar{position:relative;flex:1;height:6px;border-radius:4px;background:rgba(255,255,255,.18);cursor:pointer;}",
   ".qz-fad-bar:hover{height:8px;}",
-  ".qz-fad-fill{position:absolute;left:0;top:0;height:100%;border-radius:4px;background:var(--qz-accent,#3DA8FE);box-shadow:0 0 12px -2px var(--qz-accent,#3DA8FE);transition:width .2s linear;}",
+  ".qz-fad-fill{position:absolute;left:0;top:0;height:100%;border-radius:4px;background:var(--qz-accent,#3DA8FE);transition:width .2s linear;}",
   ".qz-fad-controls{display:flex;align-items:center;gap:26px;margin-top:6px;}",
   ".qz-fad-ctl{appearance:none;border:0;background:transparent;color:#e7ecf3;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .12s,color .12s;}",
   ".qz-fad-ctl:hover{color:#fff;transform:scale(1.1);}",
-  ".qz-fad-pp{width:70px;height:70px;border-radius:50%;background:var(--qz-accent,#3DA8FE);color:#06090a;box-shadow:0 10px 34px -8px var(--qz-accent,#3DA8FE);}",
+  ".qz-fad-pp{width:70px;height:70px;border-radius:50%;background:var(--qz-accent,#3DA8FE);color:#06090a;}",
   ".qz-fad-pp:hover{color:#06090a;filter:brightness(1.07);}",
   ".qz-fad-like-ic{display:flex;align-items:center;justify-content:center;}",
   ".qz-fad-like.qz-fad-liked{color:var(--qz-accent,#3DA8FE);}",
   ".qz-fad-like[disabled]{opacity:.35;pointer-events:none;}",
   ".qz-fad-spacer{width:26px;height:26px;flex:0 0 auto;pointer-events:none;}",
   ".qz-fad-queue{position:absolute;top:22px;right:24px;z-index:2;display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:20px;",
-  "background:rgba(255,255,255,.08);color:#c8d0dc;font-size:13px;font-weight:600;letter-spacing:.2px;white-space:nowrap;}",
+  "background:rgba(255,255,255,.08);color:#c8d0dc;font-size:13px;font-weight:600;white-space:nowrap;}",
   ".qz-fad-queue[hidden]{display:none;}",
   ".qz-fad-queue svg{display:block;flex:0 0 auto;opacity:.85;}",
   // --- shared player-bar controls row: horizontal-scroll instead of dropping buttons at narrow widths ---
@@ -283,10 +285,10 @@ Q.css(CSS_ID, [
 ].join(""));
 
 var b = document.createElement("button");
-b.id = "qz-fad-btn"; b.className = "qz-pbtn"; b.title = "Full screen now playing (F)";
+b.id = "qz-fad-btn"; b.className = "qz-pbtn"; b.title = "Full screen now playing (F)"; b.setAttribute("aria-label", "Full screen now playing");
 b.innerHTML = IC.expand;
 b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); toggle(); });
-var slot = Q.playerSlot({ id: "full-app-display", zone: "right", order: 40, el: b });
+var slot = Q.playerSlot({ id: "full-app-display", zone: "right", order: 40, el: b, label: "Full screen now playing" });
 
 function onToggleEvt() { toggle(); }
 window.addEventListener("qz-fad-toggle", onToggleEvt);
