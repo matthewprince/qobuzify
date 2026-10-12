@@ -65,6 +65,7 @@ function openPop() {
   var btn = document.getElementById("qz-sleep-btn"); if (!btn) return;
   var pop = document.createElement("div");
   pop.id = "qz-sleep-pop"; pop.className = "qz-sleep-pop";
+  Q.ui.follow(pop);
   var mins = [15, 30, 45, 60, 90];
   pop.innerHTML = "<h4>Sleep timer</h4>" +
     '<div class="qz-sleep-grid">' + mins.map(function (m) { return '<button class="qz-sleep-opt" data-min="' + m + '">' + m + "m</button>"; }).join("") +
@@ -106,48 +107,44 @@ var MOON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d=
 Q.css(CSS_ID, [
   "#qz-sleep-wrap{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;margin-right:4px;}",
   "#qz-sleep-btn{display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 8px;appearance:none;border:0;border-radius:17px;",
-  "background:transparent;color:#cbd3df;cursor:pointer;transition:background .15s,color .12s;flex:0 0 auto;}",
+  "background:transparent;color:color-mix(in srgb,currentColor 82%,transparent);cursor:pointer;transition:background .15s,color .12s;flex:0 0 auto;}",
   "#qz-sleep-btn:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 20%,transparent);color:var(--qz-accent,#3DA8FE);}",
   "#qz-sleep-btn.qz-sleep-active{color:var(--qz-accent,#3DA8FE);}",
   "#qz-sleep-btn svg{pointer-events:none;display:block;}",
-  ".qz-sleep-label{font:inherit;font-size:11px;font-weight:800;letter-spacing:.3px;}",
-  ".qz-sleep-pop{position:fixed;z-index:2147483600;min-width:236px;padding:12px;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-sleep-pop h4{margin:2px 4px 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#8b94a3;}",
+  ".qz-sleep-label{font:inherit;font-size:11px;font-weight:700;}",
+  // the popover is appended to <body> and follows Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
+  ".qz-sleep-pop{position:fixed;z-index:2147483600;min-width:236px;padding:12px;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-sleep-pop h4{margin:2px 4px 10px;font-size:13px;font-weight:600;color:var(--qzu-fg2);}",
   ".qz-sleep-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:8px;}",
-  ".qz-sleep-opt{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#e7ecf3;font:inherit;",
+  ".qz-sleep-opt{appearance:none;border:1px solid var(--qzu-line);background:var(--qzu-fill);color:inherit;font:inherit;",
   "font-size:13px;font-weight:700;padding:9px 0;border-radius:9px;cursor:pointer;transition:all .13s;}",
   ".qz-sleep-opt:hover{border-color:var(--qz-accent,#3DA8FE);color:var(--qz-accent,#3DA8FE);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
   ".qz-sleep-custom{grid-column:span 3;font-size:12px;}",
   ".qz-sleep-custrow{display:flex;gap:7px;margin-bottom:8px;}",
-  ".qz-sleep-cinput{flex:1;min-width:0;appearance:none;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:#e7ecf3;font:inherit;font-size:13px;padding:8px 10px;border-radius:9px;}",
+  ".qz-sleep-cinput{flex:1;min-width:0;appearance:none;border:1px solid var(--qzu-line);background:var(--qzu-fill);color:inherit;font:inherit;font-size:13px;padding:8px 10px;border-radius:9px;}",
   ".qz-sleep-cinput:focus{outline:none;border-color:var(--qz-accent,#3DA8FE);}",
   ".qz-sleep-cgo{appearance:none;border:0;background:var(--qz-accent,#3DA8FE);color:#06090a;font:inherit;font-size:13px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;}",
-  ".qz-sleep-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;appearance:none;border:1px solid rgba(255,255,255,.10);",
-  "background:transparent;color:#e7ecf3;font:inherit;font-size:13px;font-weight:600;padding:10px;border-radius:9px;cursor:pointer;margin-top:2px;transition:all .13s;}",
-  ".qz-sleep-row:hover{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.2);}",
-  ".qz-sleep-cancel{color:#f0a3a3;border-color:rgba(240,120,120,.25);}",
-  ".qz-sleep-cancel span:last-child{font-size:11px;color:#9aa3b2;}",
-  ".qz-sleep-ico-eot{width:9px;height:9px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);opacity:.7;}",
-  "#qz-sleep-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);z-index:2147483600;max-width:min(440px,80vw);",
-  "padding:11px 18px;border-radius:24px;font-size:13.5px;font-weight:600;color:#06090a;background:var(--qz-accent,#3DA8FE);",
-  "box-shadow:0 16px 44px -12px rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;white-space:nowrap;}",
-  "#qz-sleep-toast.qz-show{opacity:1;transform:translateX(-50%) translateY(0);}"
+  ".qz-sleep-row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;appearance:none;border:1px solid var(--qzu-line);",
+  "background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:600;padding:10px;border-radius:9px;cursor:pointer;margin-top:2px;transition:all .13s;}",
+  ".qz-sleep-row:hover{background:var(--qzu-fill-hover);border-color:color-mix(in srgb,currentColor 24%,transparent);}",
+  ".qz-sleep-cancel{color:var(--qzu-error);border-color:color-mix(in srgb,var(--qzu-error) 35%,transparent);}",
+  ".qz-sleep-cancel span:last-child{font-size:11px;color:var(--qzu-fg2);}",
+  ".qz-sleep-ico-eot{width:9px;height:9px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);opacity:.7;}"
 ].join(""));
 
-var toastT = null;
+// one toast at a time: a new message replaces the last one
+var curToast = null;
 function toast(msg) {
-  var t = document.getElementById("qz-sleep-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-sleep-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 2400);
+  if (curToast) curToast.close();
+  curToast = Q.ui.toast(msg, { timeout: 2400 });
 }
 
 var wrap = document.createElement("span");
 wrap.id = "qz-sleep-wrap";
 var sb = document.createElement("button");
-sb.id = "qz-sleep-btn"; sb.title = "Sleep timer";
+sb.id = "qz-sleep-btn"; sb.title = "Sleep timer"; sb.setAttribute("aria-label", "Sleep timer");
 sb.innerHTML = MOON + '<span class="qz-sleep-label" style="display:none"></span>';
 sb.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPop(); });
 wrap.appendChild(sb);
@@ -158,6 +155,6 @@ return function cleanup() {
   if (slot) slot.remove();
   clearAll();
   closePop();
-  var t = document.getElementById("qz-sleep-toast"); if (t) t.remove();
+  if (curToast) curToast.close();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
