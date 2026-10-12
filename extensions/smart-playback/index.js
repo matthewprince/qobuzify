@@ -247,26 +247,21 @@ function smartRadio(opts) {
 function setBusy(on) { var b = document.getElementById("qz-radio-btn"); if (b) b.classList.toggle("qz-radio-busy", !!on); }
 
 // --- toast ---
-var toastT = null;
+// one toast at a time: a new message replaces the last one
+var curToast = null;
 function toast(msg) {
-  var t = document.getElementById("qz-radio-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-radio-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 2600);
+  if (curToast) curToast.close();
+  curToast = Q.ui.toast(msg, { timeout: 2600 });
 }
 
 Q.css(CSS_ID, [
   ".qz-radio-busy{pointer-events:none;animation:qz-radio-spin 1s linear infinite;opacity:.85;}",
   "@keyframes qz-radio-spin{to{transform:rotate(360deg)}}",
-  "#qz-radio-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);z-index:2147483600;",
-  "max-width:min(440px,80vw);padding:11px 18px;border-radius:24px;font-size:13.5px;font-weight:600;color:#06090a;",
-  "background:var(--qz-accent,#3DA8FE);box-shadow:0 16px 44px -12px rgba(0,0,0,.6),0 0 30px -10px var(--qz-accent,#3DA8FE);",
-  "opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  "#qz-radio-toast.qz-show{opacity:1;transform:translateX(-50%) translateY(0);}",
-  ".qz-radio-menu{position:fixed;z-index:2147483600;min-width:186px;padding:6px;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-radio-item{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:#e7ecf3;",
+  // the one-item box is appended to <body> and follows Qobuz's appearance (Q.ui.follow)
+  ".qz-radio-menu{position:fixed;z-index:2147483600;min-width:186px;padding:6px;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-radio-item{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:inherit;",
   "font:inherit;font-size:13px;font-weight:550;padding:9px 11px;border-radius:8px;cursor:pointer;transition:background .12s,color .12s;}",
   ".qz-radio-item:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 18%,transparent);color:var(--qz-accent,#3DA8FE);}",
   // make the song progress bar actually visible without clipping. Qobuz's default is
@@ -274,8 +269,8 @@ Q.css(CSS_ID, [
   // (don't set appearance:none on the <progress> or the fill pseudo stops rendering).
   // the grab zone and thumb hang downward from the bar so nothing pokes above the
   // player's top edge, which gets clipped. the thumb only shows on hover.
-  ".player__progressbar{height:6px !important;background:rgba(255,255,255,.17) !important;border-radius:3px;}",
-  ".player__progressbar .player__progressbar__buffer{height:100% !important;background:rgba(255,255,255,.13) !important;border-radius:3px;}",
+  ".player__progressbar{height:6px !important;background:color-mix(in srgb,currentColor 17%,transparent) !important;border-radius:3px;}",
+  ".player__progressbar .player__progressbar__buffer{height:100% !important;background:color-mix(in srgb,currentColor 13%,transparent) !important;border-radius:3px;}",
   ".player__progressbar > progress{height:100% !important;border:0 !important;border-radius:3px;background:transparent !important;}",
   ".player__progressbar > progress::-webkit-progress-bar{background:transparent !important;}",
   ".player__progressbar > progress::-webkit-progress-value{background:var(--qz-accent,#3DA8FE) !important;border-radius:3px;}",
@@ -288,9 +283,10 @@ Q.css(CSS_ID, [
 var b = document.createElement("button");
 b.id = "qz-radio-btn"; b.className = "qz-pbtn";
 b.title = "Smart Radio - play tracks like the current one";
+b.setAttribute("aria-label", "Smart Radio");
 b.innerHTML = '<span class="icon-magic-stars"></span>';
 b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); smartRadio(); });
-var slot = Q.playerSlot({ id: "smart-radio", zone: "left", order: 20, el: b });
+var slot = Q.playerSlot({ id: "smart-radio", zone: "left", order: 20, el: b, label: "Smart Radio" });
 
 // --- right-click a track row -> "Start song radio" -------------------------------------------------
 // Resolving a row to a track id is the same two-case problem multi-select solved: a dwp track row's DOM id
@@ -360,6 +356,7 @@ function onRadioEsc(e) { if (e.key === "Escape") removeRadioMenu(); }
 function showRadioBox(x, y, seed) {
   removeRadioMenu();
   var m = document.createElement("div"); m.id = "qz-radio-menu"; m.className = "qz-radio-menu";
+  Q.ui.follow(m);
   var b = document.createElement("button"); b.className = "qz-radio-item"; b.textContent = "Start song radio";
   b.addEventListener("click", function (ev) { ev.stopPropagation(); removeRadioMenu(); songRadio(seed); });
   m.appendChild(b);
@@ -443,6 +440,6 @@ return function cleanup() {
   document.removeEventListener("contextmenu", onRadioContext, false);
   removeRadioMenu();
   if (slot) slot.remove();
-  var t = document.getElementById("qz-radio-toast"); if (t) t.remove();
+  if (curToast) curToast.close();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
