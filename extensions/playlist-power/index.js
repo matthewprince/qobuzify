@@ -119,15 +119,15 @@ var modal = null, MTRACKS = null, mCurId = null, mCurName = "", mSort = "default
 function buildModal() {
   if (modal) return;
   modal = document.createElement("div"); modal.className = "qz-pp-overlay"; modal.style.display = "none";
+  Q.ui.follow(modal);
   modal.innerHTML =
     '<div class="qz-pp-modal" role="dialog" aria-modal="true">' +
       '<div class="qz-pp-head">' +
         '<div class="qz-pp-headl">' + SORT_ICON + '<div><div class="qz-pp-kicker">Sort playlist</div><div class="qz-pp-title"></div></div></div>' +
-        '<button class="qz-pp-x" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
+        '<button type="button" class="qz-pp-x" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
       '</div>' +
       '<div class="qz-pp-segrow"></div>' +
       '<div class="qz-pp-body"></div>' +
-      '<div class="qz-pp-toast"></div>' +
     '</div>';
   document.body.appendChild(modal);
   modal.addEventListener("mousedown", function (e) { if (e.target === modal) closeModal(); });
@@ -211,12 +211,9 @@ function playFromPlaylist(t) {
   }, 110);
 }
 
-var mToastT = null;
-function mtoast(msg, bad) {
-  var t = modal && modal.querySelector(".qz-pp-toast"); if (!t) return;
-  t.textContent = msg; t.className = "qz-pp-toast" + (bad ? " qz-pp-toast--bad" : "") + " qz-pp-toast--show";
-  clearTimeout(mToastT); mToastT = setTimeout(function () { t.classList.remove("qz-pp-toast--show"); }, 2400);
-}
+// the sort modal's messages and the pill's page messages both go through the one shared toast, which
+// stacks above the modal
+function mtoast(msg, bad) { if (!modal) return; toast(msg, bad, 2400); }
 
 // Inject the Sort button into the playlist page header (any playlist - it's read-only + native play).
 function injectSortBtn() {
@@ -285,6 +282,7 @@ function openPillMenu(e) {
   closePillMenu();
   var canRemove = ctx.kind === "playlist";
   var m = document.createElement("div"); m.className = "qz-pp-menu"; m.id = "qz-pp-menu";
+  Q.ui.follow(m);
   m.innerHTML = '<div class="qz-pp-mi" data-act="go">Go to ' + esc(ctx.name) + '</div>' +
     (canRemove ? '<div class="qz-pp-mi qz-pp-mi--danger" data-act="remove">Remove this track from the playlist</div>' : '');
   document.body.appendChild(m);
@@ -350,13 +348,18 @@ function removeCurrentFromPlaylist() {
 }
 
 // ---- page-level toast (for the pill actions, outside the modal) ----
-var pageToastT = null;
-function pageToast(msg, bad) {
-  var t = document.getElementById("qz-pp-pagetoast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-pp-pagetoast"; document.body.appendChild(t); }
-  t.textContent = msg; t.className = bad ? "qz-pp-bad" : ""; t.classList.add("qz-pp-show");
-  clearTimeout(pageToastT); pageToastT = setTimeout(function () { t.classList.remove("qz-pp-show"); }, 2600);
+function pageToast(msg, bad) { toast(msg, bad, 2600); }
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, curBad = false, toastT = null;
+function toast(msg, bad, ms) {
+  clearTimeout(toastT);
+  if (curToast && curBad !== !!bad) curToast.close();
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, tone: bad ? "error" : undefined, onClose: function () { if (curToast === t) curToast = null; } }); curBad = !!bad; }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, ms || 2600);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 // =====================================================================================
 // styles
@@ -366,68 +369,62 @@ Q.css(CSS_ID, [
   ".qz-pp-btn{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 16px;border:1px solid var(--qz-accent,#3DA8FE);border-radius:20px;background:transparent;color:var(--qz-accent,#3DA8FE);font:inherit;font-size:13.5px;font-weight:750;cursor:pointer;transition:all .15s;margin-left:4px;}",
   ".qz-pp-btn:hover{background:var(--qz-accent,#3DA8FE);color:#06090a;}",
   ".qz-pp-btn svg{width:17px;height:17px;}",
-  // --- modal ---
-  ".qz-pp-overlay{position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;background:rgba(4,6,10,.62);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);opacity:0;transition:opacity .18s;font-family:inherit;-webkit-app-region:no-drag;}",
+  // --- modal --- (the overlay and the pill menu are appended to <body> and follow Qobuz's appearance via
+  // Q.ui.follow, so the kit's tokens apply)
+  ".qz-pp-overlay{position:fixed;inset:0;z-index:2147483200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);opacity:0;transition:opacity .18s;font-family:inherit;-webkit-app-region:no-drag;}",
   ".qz-pp-overlay.qz-pp-in{opacity:1;}",
-  ".qz-pp-modal{width:min(680px,94vw);max-height:86vh;display:flex;flex-direction:column;color:#eef2f7;background:linear-gradient(180deg,#0e131c,#0a0e15);border:1px solid rgba(255,255,255,.09);border-radius:18px;box-shadow:0 30px 80px -20px rgba(0,0,0,.8);overflow:hidden;transform:translateY(8px) scale(.99);transition:transform .18s;}",
+  ".qz-pp-modal{width:min(680px,94vw);max-height:86vh;display:flex;flex-direction:column;color:var(--qzu-fg);background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:18px;box-shadow:0 24px 64px rgba(0,0,0,.45);overflow:hidden;transform:translateY(8px) scale(.99);transition:transform .18s;}",
   ".qz-pp-in .qz-pp-modal{transform:none;}",
-  ".qz-pp-head{display:flex;align-items:center;gap:12px;padding:18px 20px 14px;border-bottom:1px solid rgba(255,255,255,.06);}",
+  ".qz-pp-head{display:flex;align-items:center;gap:12px;padding:18px 20px 14px;border-bottom:1px solid var(--qzu-line);}",
   ".qz-pp-headl{display:flex;align-items:center;gap:12px;min-width:0;flex:1;}",
   ".qz-pp-headl>svg{width:24px;height:24px;color:var(--qz-accent,#3DA8FE);flex:0 0 auto;}",
-  ".qz-pp-kicker{font-size:11px;font-weight:750;letter-spacing:.7px;text-transform:uppercase;color:var(--qz-accent,#3DA8FE);}",
-  ".qz-pp-title{font-size:19px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px;}",
-  ".qz-pp-x{flex:0 0 auto;width:36px;height:36px;border:0;border-radius:50%;background:rgba(255,255,255,.06);color:#c7cfdb;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .14s;}",
-  ".qz-pp-x:hover{background:rgba(255,255,255,.14);color:#fff;}.qz-pp-x svg{width:18px;height:18px;}",
+  ".qz-pp-kicker{font-size:12.5px;font-weight:600;color:var(--qzu-fg2);}",
+  ".qz-pp-title{font-size:19px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:500px;}",
+  ".qz-pp-x{flex:0 0 auto;width:36px;height:36px;border:0;border-radius:50%;background:var(--qzu-fill);color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .14s;}",
+  ".qz-pp-x:hover{background:var(--qzu-fill-hover);}.qz-pp-x svg{width:18px;height:18px;}",
   ".qz-pp-segrow{display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px 4px;flex:0 0 auto;}",
-  ".qz-pp-seg{appearance:none;border:1px solid rgba(255,255,255,.14);background:transparent;color:#cbd3df;font:inherit;font-size:12.5px;font-weight:700;padding:7px 15px;border-radius:20px;cursor:pointer;transition:all .14s;}",
-  ".qz-pp-seg:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;}",
+  ".qz-pp-seg{appearance:none;border:1px solid var(--qzu-line);background:transparent;color:inherit;font:inherit;font-size:12.5px;font-weight:700;padding:7px 15px;border-radius:20px;cursor:pointer;transition:all .14s;}",
+  ".qz-pp-seg:hover{border-color:var(--qz-accent,#3DA8FE);}",
   ".qz-pp-seg--on{background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);color:#06090a;}",
   ".qz-pp-body{flex:1 1 auto;overflow:hidden;display:flex;min-height:280px;}",
-  ".qz-pp-scroll{flex:1;overflow:auto;padding:10px 14px 16px;scrollbar-color:rgba(255,255,255,.22) transparent;}",
-  ".qz-pp-scroll::-webkit-scrollbar{width:10px;}.qz-pp-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:6px;}",
-  ".qz-pp-hint{font-size:12px;color:#8b94a3;padding:6px 8px 10px;}",
-  ".qz-pp-loading,.qz-pp-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#8b94a3;font-size:15px;font-weight:600;padding:50px;}",
-  ".qz-pp-spin{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.16);border-top-color:var(--qz-accent,#3DA8FE);animation:qz-pp-spin .8s linear infinite;}",
+  ".qz-pp-scroll{flex:1;overflow:auto;padding:10px 14px 16px;scrollbar-color:color-mix(in srgb,currentColor 22%,transparent) transparent;}",
+  ".qz-pp-scroll::-webkit-scrollbar{width:10px;}.qz-pp-scroll::-webkit-scrollbar-thumb{background:color-mix(in srgb,currentColor 18%,transparent);border-radius:6px;}",
+  ".qz-pp-hint{font-size:12px;color:var(--qzu-fg2);padding:6px 8px 10px;}",
+  ".qz-pp-loading,.qz-pp-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--qzu-fg2);font-size:15px;font-weight:600;padding:50px;}",
+  ".qz-pp-spin{width:34px;height:34px;border-radius:50%;border:3px solid color-mix(in srgb,currentColor 16%,transparent);border-top-color:var(--qz-accent,#3DA8FE);animation:qz-pp-spin .8s linear infinite;}",
   "@keyframes qz-pp-spin{to{transform:rotate(360deg)}}",
   // --- track rows ---
   ".qz-pp-list{display:flex;flex-direction:column;gap:1px;}",
-  ".qz-pp-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:#e7ecf3;font:inherit;padding:9px 10px;border-radius:9px;cursor:pointer;transition:background .12s;}",
+  ".qz-pp-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:inherit;font:inherit;padding:9px 10px;border-radius:9px;cursor:pointer;transition:background .12s;}",
   ".qz-pp-row:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 13%,transparent);}",
   ".qz-pp-row--playing{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 9%,transparent);}",
-  ".qz-pp-idx{flex:0 0 auto;width:22px;text-align:center;font-size:12.5px;color:#8b94a3;font-weight:700;display:flex;align-items:center;justify-content:center;}",
+  ".qz-pp-idx{flex:0 0 auto;width:22px;text-align:center;font-size:12.5px;color:var(--qzu-fg2);font-weight:700;display:flex;align-items:center;justify-content:center;}",
   ".qz-pp-idx svg{width:15px;height:15px;color:var(--qz-accent,#3DA8FE);}",
   ".qz-pp-row--playing .qz-pp-idx{color:var(--qz-accent,#3DA8FE);}",
   ".qz-pp-rtxt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;line-height:1.25;}",
-  ".qz-pp-rt{font-size:13.5px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-pp-ver{color:#8b94a3;font-weight:500;font-size:12px;}",
-  ".qz-pp-ra{font-size:12px;color:#8b94a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-pp-hr{flex:0 0 auto;font-size:9px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--qz-accent,#3DA8FE);border:1px solid color-mix(in srgb,var(--qz-accent,#3DA8FE) 45%,transparent);border-radius:5px;padding:2px 5px;}",
-  ".qz-pp-dur{flex:0 0 auto;width:42px;text-align:right;font-size:12px;color:#9aa3b2;font-variant-numeric:tabular-nums;}",
+  ".qz-pp-rt{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-pp-ver{color:var(--qzu-fg2);font-weight:500;font-size:12px;}",
+  ".qz-pp-ra{font-size:12px;color:var(--qzu-fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-pp-hr{flex:0 0 auto;font-size:10px;font-weight:700;color:var(--qz-accent,#3DA8FE);border:1px solid color-mix(in srgb,var(--qz-accent,#3DA8FE) 45%,transparent);border-radius:5px;padding:2px 5px;}",
+  ".qz-pp-dur{flex:0 0 auto;width:42px;text-align:right;font-size:12px;color:var(--qzu-fg2);font-variant-numeric:tabular-nums;}",
   ".qz-pp-play{flex:0 0 auto;color:var(--qz-accent,#3DA8FE);opacity:0;transition:opacity .12s;display:flex;}",
   ".qz-pp-row:hover .qz-pp-play{opacity:1;}",
-  // --- modal toast ---
-  ".qz-pp-toast{position:absolute;left:50%;bottom:18px;transform:translate(-50%,20px);background:#06090d;border:1px solid var(--qz-accent,#3DA8FE);color:#fff;font-size:13px;font-weight:700;padding:9px 18px;border-radius:22px;opacity:0;pointer-events:none;transition:all .2s;box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-pp-toast--show{opacity:1;transform:translate(-50%,0);}",
-  ".qz-pp-toast--bad{border-color:#ff5c6c;}",
-  // --- context pill ---
-  ".qz-pp-pill{display:inline-flex;align-items:center;gap:7px;max-width:220px;height:32px;padding:0 12px;border-radius:18px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c2cad6;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 0 auto;}",
-  ".qz-pp-pill:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
+  // --- context pill (in the player bar: drawn from its text colour) ---
+  ".qz-pp-pill{display:inline-flex;align-items:center;gap:7px;max-width:220px;height:32px;padding:0 12px;border-radius:18px;border:1px solid color-mix(in srgb,currentColor 14%,transparent);background:color-mix(in srgb,currentColor 4%,transparent);color:inherit;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 0 auto;}",
+  ".qz-pp-pill:hover{border-color:var(--qz-accent,#3DA8FE);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
   ".qz-pp-pill svg{width:15px;height:15px;flex:0 0 auto;color:var(--qz-accent,#3DA8FE);}",
   ".qz-pp-pilltxt{display:inline-flex;align-items:baseline;gap:5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-pp-pos{font-weight:750;color:#fff;font-variant-numeric:tabular-nums;}",
-  ".qz-pp-in{overflow:hidden;text-overflow:ellipsis;max-width:150px;color:#9aa3b2;}",
+  ".qz-pp-pos{font-weight:700;font-variant-numeric:tabular-nums;}",
+  ".qz-pp-in{overflow:hidden;text-overflow:ellipsis;max-width:150px;opacity:.7;}",
   // --- pill menu ---
-  ".qz-pp-menu{position:fixed;z-index:2147483600;min-width:230px;padding:6px;background:linear-gradient(180deg,#0e131c,#0a0e15);border:1px solid rgba(255,255,255,.12);border-radius:12px;box-shadow:0 24px 60px -16px rgba(0,0,0,.8);color:#eef2f7;font-size:13px;}",
+  ".qz-pp-menu{position:fixed;z-index:2147483600;min-width:230px;padding:6px;box-sizing:border-box;background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.35);color:var(--qzu-fg);font-size:13px;}",
   ".qz-pp-mi{padding:9px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-pp-mi:hover{background:rgba(255,255,255,.06);}",
-  ".qz-pp-mi--danger{color:#ff6b78;}",
-  ".qz-pp-mi--danger:hover{background:rgba(255,90,100,.12);}",
-  // --- jump flash + page toast ---
+  ".qz-pp-mi:hover{background:var(--qzu-fill-hover);}",
+  ".qz-pp-mi--danger{color:var(--qzu-error);}",
+  ".qz-pp-mi--danger:hover{background:color-mix(in srgb,var(--qzu-error) 12%,transparent);}",
+  // --- jump flash ---
   ".qz-pp-flash{animation:qz-pp-flash 2.2s ease;}",
-  "@keyframes qz-pp-flash{0%,100%{background:transparent;}18%{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 30%,transparent);}}",
-  "#qz-pp-pagetoast{position:fixed;left:50%;bottom:96px;transform:translate(-50%,14px);z-index:2147483500;background:#06090d;border:1px solid var(--qz-accent,#3DA8FE);color:#fff;font-size:13px;font-weight:650;padding:10px 18px;border-radius:22px;opacity:0;pointer-events:none;transition:all .22s;box-shadow:0 12px 34px rgba(0,0,0,.55);}",
-  "#qz-pp-pagetoast.qz-pp-show{opacity:1;transform:translate(-50%,0);}",
-  "#qz-pp-pagetoast.qz-pp-bad{border-color:#ff5c6c;}"
+  "@keyframes qz-pp-flash{0%,100%{background:transparent;}18%{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 30%,transparent);}}"
 ].join(""));
 
 // =====================================================================================
@@ -461,6 +458,6 @@ return function cleanup() {
   if (pillSlot) pillSlot.remove();
   var sb = document.getElementById(BTN_ID); if (sb) sb.remove();
   if (modal) { modal.remove(); modal = null; }
-  var pt = document.getElementById("qz-pp-pagetoast"); if (pt) pt.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
