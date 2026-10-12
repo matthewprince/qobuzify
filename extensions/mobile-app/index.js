@@ -1241,9 +1241,11 @@ function playlistDetailScreen(id) {
     // The rest of a long playlist, a page at a time. The list is sized to the full length from the start, with
     // placeholder rows until each page lands, so the scrollbar doesn't jump as pages arrive. Offsets advance by the
     // page size (not by rows received), and rows are de-duplicated, so a short page can't shift or repeat anything.
+    // `from` restarts paging at a given server offset; removeRow uses TR.length, because once a row is deleted on
+    // the server every later row shifts up by one and the old page offsets would skip a track.
     var restGen = 0;
-    function loadRest() {
-      var gen = ++restGen, off = PL_PAGE, seen = {};
+    function loadRest(from) {
+      var gen = ++restGen, off = from != null ? from : PL_PAGE, seen = {};
       TR.forEach(function (t) { seen[t.playlist_track_id || t.id] = 1; });
       (function next() {
         if (gen !== restGen) return;                                  // a reload started over
@@ -1254,12 +1256,31 @@ function playlistDetailScreen(id) {
           if (!more.length && !((p && p.tracks && p.tracks.items) || []).length) return settle();
           TR = TR.concat(more); off += PL_PAGE;
           if (vl) vl.setItems(TR, TOTAL);
+          else editGrew();
           next();
         }).catch(function () { if (gen === restGen) settle(); });
       })();
     }
     // Done (or a page failed): the list is exactly what arrived, no placeholder tail left behind.
-    function settle() { if (TOTAL !== TR.length) { TOTAL = TR.length; if (vl) vl.setItems(TR, TOTAL); } }
+    function settle() { if (TOTAL !== TR.length) { TOTAL = TR.length; if (vl) vl.setItems(TR, TOTAL); else editGrew(); } }
+    // Edit mode isn't virtualised (drag-reorder needs real rows), so it shows EDIT_WIN rows at a time with a pager.
+    // When rows land behind an edit window that isn't full yet, redraw it, unless a drag is in progress.
+    var EDIT_WIN = 200, editStart = 0;
+    function editGrew() {
+      if (!editing || !host || host.querySelector(".is-dragging")) return;
+      var shown = host.querySelectorAll(".qz-plrow-e").length;
+      if (shown < EDIT_WIN && shown < TR.length - editStart) redraw();
+      else { var pg = host.querySelector(".qz-plpager"); if (pg) pg.outerHTML = pagerHTML(); }
+    }
+    function pagerHTML() {
+      var n = Math.max(TR.length, TOTAL);
+      if (n <= EDIT_WIN) return "";
+      var end = Math.min(editStart + EDIT_WIN, n);
+      return '<div class="qz-plpager">' +
+        '<button class="qz-plpager__b" data-e="pgprev" type="button"' + (editStart > 0 ? "" : " disabled") + '>Previous</button>' +
+        '<span class="qz-plpager__t">' + (editStart + 1) + "–" + end + " of " + n + (TR.length < TOTAL ? " (loading)" : "") + '</span>' +
+        '<button class="qz-plpager__b" data-e="pgnext" type="button"' + (end < n ? "" : " disabled") + '>Next</button></div>';
+    }
 
     function headerHTML() {
       var actions =
@@ -1276,7 +1297,8 @@ function playlistDetailScreen(id) {
     }
     function editListHTML() {
       if (!TR.length) return '<p class="qz-empty">No tracks yet. Add some from any album or search.</p>';
-      return '<div class="qz-tlist qz-pltlist">' + TR.map(function (t) {
+      if (editStart >= TR.length) editStart = Math.max(0, Math.floor((TR.length - 1) / EDIT_WIN) * EDIT_WIN);
+      return pagerHTML() + '<div class="qz-tlist qz-pltlist">' + TR.slice(editStart, editStart + EDIT_WIN).map(function (t) {
         var img = cover(t);
         return '<div class="qz-plrow-e" data-ptid="' + esc(t.playlist_track_id) + '">' +
             '<button class="qz-plgrip" aria-label="Drag to reorder" type="button">' + PL_GRIP + '</button>' +
@@ -1304,6 +1326,14 @@ function playlistDetailScreen(id) {
       var toggle = e.target.closest('[data-role="pledit"]');
       if (toggle) { editing = !editing; redraw(); return; }
       var ed = e.target.closest("[data-e]"); if (!ed) return;
+      var pg = ed.getAttribute("data-e");
+      if (pg === "pgprev" || pg === "pgnext") {
+        if (ed.disabled) return;
+        editStart = Math.max(0, editStart + (pg === "pgnext" ? EDIT_WIN : -EDIT_WIN));
+        redraw();
+        var L = host.querySelector(".qz-plpager"); if (L) try { L.scrollIntoView({ block: "start" }); } catch (_) {}
+        return;
+      }
       var row = ed.closest("[data-ptid]"); if (!row) return;
       var ptid = row.getAttribute("data-ptid"), a = ed.getAttribute("data-e");
       if (a === "rm") removeRow(ptid);
@@ -1312,9 +1342,12 @@ function playlistDetailScreen(id) {
     }
     function removeRow(ptid) {
       var i = idxOf(ptid); if (i < 0) return;
+      // Stop background paging first: a page requested now could be answered before or after the server drops
+      // the row, so its offset can't be trusted. Paging resumes from TR.length once the delete settles.
+      restGen++;
       var removed = TR[i]; TR.splice(i, 1); TOTAL = Math.max(TR.length, TOTAL - 1); redraw();   // optimistic
-      deletePlaylistTrack(id, ptid).then(function () { invalidatePlaylistCache(); qToast("Removed"); })
-        .catch(function () { TR.splice(i, 0, removed); TOTAL = Math.max(TR.length, TOTAL + 1); redraw(); qToast("Couldn't remove, try again"); });
+      deletePlaylistTrack(id, ptid).then(function () { invalidatePlaylistCache(); qToast("Removed"); loadRest(TR.length); })
+        .catch(function () { TR.splice(i, 0, removed); TOTAL = Math.max(TR.length, TOTAL + 1); redraw(); qToast("Couldn't remove, try again"); loadRest(TR.length); });
     }
     function moveRow(ptid, dir) {
       var i = idxOf(ptid); if (i < 0) return;
@@ -1380,7 +1413,9 @@ function playlistDetailScreen(id) {
         var movedPtid = dragging.getAttribute("data-ptid"); dragging = null;
         var ptids = [].slice.call(listEl.querySelectorAll(".qz-plrow-e")).map(function (r) { return r.getAttribute("data-ptid"); });
         var map = {}; TR.forEach(function (t) { map[String(t.playlist_track_id)] = t; });
-        TR = ptids.map(function (p) { return map[String(p)]; }).filter(Boolean);   // sync model to DOM
+        // sync model to DOM: the DOM holds only the edit window, so splice it back in place of that window
+        var win = ptids.map(function (p) { return map[String(p)]; }).filter(Boolean);
+        TR = TR.slice(0, editStart).concat(win, TR.slice(editStart + win.length));
         commitMove(movedPtid);
       }
     }
@@ -4545,6 +4580,13 @@ html.qz-hide-quality .qz-np__q{ display:none !important; }
 #qz-app-root .qz-newpl{ display:flex; align-items:center; gap:12px; width:calc(100% - 40px); margin:2px 20px 16px; padding:14px 16px; border-radius:var(--qz-r-card); color:var(--qz-c1); font-size:15px; font-weight:600; text-align:left; background:var(--qz-fill-1); border:1px dashed var(--qz-fill-2); }
 #qz-app-root .qz-newpl:active{ background:var(--qz-fill-2); }
 .qz-newpl svg{ width:22px; height:22px; flex:0 0 auto; color:var(--qz-brand); }
+
+/* playlist edit-mode pager (edit rows are shown a window at a time) */
+.qz-plpager{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:4px 14px 10px; }
+.qz-plpager__t{ color:var(--qz-c2); font-size:13px; font-variant-numeric:tabular-nums; }
+#qz-app-root .qz-plpager__b{ min-width:48px; height:40px; padding:0 14px; border-radius:var(--qz-r-chip); background:var(--qz-fill-1); color:var(--qz-c1); font-size:13.5px; font-weight:600; }
+#qz-app-root .qz-plpager__b:disabled{ opacity:.35; }
+#qz-app-root .qz-plpager__b:active{ background:var(--qz-fill-2); }
 
 /* playlist edit-mode rows (reorder + remove) */
 .qz-plrow-e{ display:flex; align-items:center; gap:10px; padding:6px; border-radius:12px; background:transparent; }
