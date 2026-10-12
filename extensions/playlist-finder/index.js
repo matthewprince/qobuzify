@@ -58,13 +58,13 @@ function pool(items, n, fn) {
 // library by construction, so with it indexed the orphan count collapsed to 2 of 512 and the feature was
 // useless - measured on the first live run. Excluded by ID, read from the storage keys the extensions that
 // create them already keep (mobile-app mob:shuffle / mob:radio, smart-playback smart:pid, multi-select
-// ms:tmp, recommended mix:<theme>), which is exact and survives renaming. A name pattern is kept only as a
+// ms:tmp, bulk-actions ba:shuf, recommended mix:<theme>), which is exact and survives renaming. A name pattern is kept only as a
 // fallback for a playlist whose creating extension has since been disabled, taking its stored id with it.
 var GEN_NAME_RE = /^(Qobuzify Radio|Shuffle\s*[\u00b7.-]\s*My Tracks|Radio\s*[\u00b7.-]\s|Song radio\b)/i;
 function generatedIds() {
   var out = {};
   function add(v) { if (v != null && v !== "") out[String(v)] = 1; }
-  ["mob:shuffle", "mob:radio", "smart:pid", "ms:tmp"].forEach(function (k) {
+  ["mob:shuffle", "mob:radio", "smart:pid", "ms:tmp", "ba:shuf"].forEach(function (k) {
     try { add(Q.storage.get(k, null)); } catch (e) {}
   });
   // recommended writes one per mix theme: qobuzify:x:mix:<themeKey>
@@ -92,6 +92,24 @@ function readCache(fp) {
     return { map: j.map, names: j.names || {} };
   } catch (e) { return null; }
 }
+// Every track id on one playlist. playlist/get caps limit at 500 (a larger limit still returns 500), so
+// page by offset until we have tracks.total or a page comes back empty - the same 500 page mobile-app uses.
+// Any failed page rejects, so a half-read playlist is treated as unread rather than as complete.
+var PL_PAGE = 500, PL_MAX_PAGES = 40;
+function playlistTrackIds(pid) {
+  var ids = [];
+  function page(offset, n) {
+    return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset)
+      .then(function (j) {
+        var tr = (j && j.tracks) || {}, items = tr.items || [];
+        items.forEach(function (t) { if (t && t.id != null) ids.push(t.id); });
+        var total = typeof tr.total === "number" ? tr.total : (j && typeof j.tracks_count === "number" ? j.tracks_count : null);
+        var more = items.length > 0 && (total != null ? offset + items.length < total : items.length >= PL_PAGE);
+        return more && n + 1 < PL_MAX_PAGES ? page(offset + items.length, n + 1) : ids;
+      });
+  }
+  return page(0, 0);
+}
 function writeCache(fp, data) {
   try { Q.storage.set(K_IDX, JSON.stringify({ fp: fp, at: Date.now(), map: data.map, names: data.names })); } catch (e) {}
 }
@@ -107,17 +125,18 @@ function buildIndex(force) {
     var names = {};
     keep.forEach(function (p) { names[String(p.id)] = p.name || "Untitled"; });
     return pool(keep, CONC, function (p) {
-      return Q.api("playlist/get?playlist_id=" + encodeURIComponent(p.id) + "&extra=tracks&limit=1000")
-        .then(function (j) { return { id: String(p.id), ids: ((j.tracks && j.tracks.items) || []).map(function (t) { return t && t.id; }).filter(function (x) { return x != null; }) }; })
+      return playlistTrackIds(p.id).then(function (ids) { return { id: String(p.id), ids: ids }; })
         .catch(function () { return null; });
     }).then(function (res) {
-      var map = {};
+      var map = {}, failed = 0;
       (res || []).forEach(function (r) {
-        if (!r) return;
+        if (!r) { failed++; return; }
         r.ids.forEach(function (tid) { var k = String(tid); (map[k] = map[k] || []).push(r.id); });
       });
-      idx = { map: map, names: names };
-      writeCache(fp, idx);
+      idx = { map: map, names: names, failed: failed };
+      // An incomplete index must not be cached: its fingerprint would match next time and the songs
+      // on the unread playlists would read as orphans until a playlist changed.
+      if (!failed) writeCache(fp, idx);
       return null;
     });
   }).catch(function (e) { buildErr = String((e && e.message) || e); })
@@ -179,7 +198,8 @@ function render() {
   rows = list;
   var orphanTotal = all.filter(function (t) { return t && t.id != null && !playlistsOf(t.id).length; }).length;
   count.textContent = list.length + " shown \u00b7 " + orphanTotal + " of " + all.length + " favourites are in no playlist"
-    + (genSkipped ? " \u00b7 " + genSkipped + " auto-generated skipped" : "");
+    + (genSkipped ? " \u00b7 " + genSkipped + " auto-generated skipped" : "")
+    + (idx.failed ? " \u00b7 " + idx.failed + (idx.failed === 1 ? " playlist" : " playlists") + " couldn't be read" : "");
   if (!list.length) { body.innerHTML = '<p class="qz-plf-empty">Nothing matches.</p>'; return; }
   var html = "";
   for (var i = 0; i < list.length; i++) html += rowHTML(list[i], i);
