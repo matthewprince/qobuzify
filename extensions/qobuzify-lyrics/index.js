@@ -722,7 +722,7 @@ function ensureContainer() {
     "#qz-sl-root.qz-lowfx .lyra-bg-grp{scale:1!important;}" +
     "#qz-sl-root.qz-lowfx .lyra-bg-energy{opacity:0!important;}" +
     "#qz-sl-root .qz-dynamic-bg,#qz-sl-root .ColorBackground{display:none!important;}" +
-    "#qz-lyric-server{font:600 11px/1.4 system-ui,sans-serif;opacity:.5;text-align:center;letter-spacing:.04em;margin-top:3px;}" +
+    "#qz-lyric-server{font:600 11px/1.4 system-ui,sans-serif;opacity:.5;text-align:center;margin-top:3px;}" +
     "#qz-lyric-server b{color:var(--qz-accent,#e8eaed);font-weight:700;}" +
     "#qz-sl-root .line.bg-line{font-size:.58em!important;opacity:.5!important;font-weight:600!important;margin:-4px 0 2px!important;letter-spacing:.01em;}");
   // isolate the lyrics subtree's layout from Qobuz's document. on focus (alt-tab back) Chromium marks
@@ -1284,12 +1284,13 @@ function ensureButton() {
     if (!h) return;
     if (h.location.pathname === "/QzLyrics") h.push({ pathname: "/" }); else h.push({ pathname: "/QzLyrics" });
   });
-  // Match native transport controls: bare icon, #e6e6e6 default, opacity hover fade, Qobuz blue
+  // Match native transport controls: bare icon in the player bar's own colour (inherit: #e6e6e6 on Qobuz's dark
+  // appearance, #333 on light, measured), opacity hover fade, Qobuz blue
   // active (orange under .player.hires). Scoped to .qz-sl-btn so shared qz-pbtn styles are untouched.
   Q.css("qz-sl-btn-css",
-    ".qz-pbtn.qz-sl-btn{width:36px;height:36px;color:#e6e6e6;transition:background .15s,color .12s,transform .08s,opacity .15s;}" +
+    ".qz-pbtn.qz-sl-btn{width:36px;height:36px;color:inherit;transition:background .15s,color .12s,transform .08s,opacity .15s;}" +
     ".qz-pbtn.qz-sl-btn svg{width:24px;height:24px;}" +
-    ".qz-pbtn.qz-sl-btn:hover{background:transparent;color:#e6e6e6;opacity:.7;}" +
+    ".qz-pbtn.qz-sl-btn:hover{background:transparent;color:inherit;opacity:.7;}" +
     ".qz-pbtn.qz-sl-btn.qz-sl-btn--active{color:#0070EF !important;}" +
     ".hires .qz-pbtn.qz-sl-btn.qz-sl-btn--active{color:#F5A623 !important;}" +
     ".qz-slot-right:has(#qz-sl-btn){margin-right:-9px;}");
