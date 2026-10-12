@@ -964,7 +964,7 @@ function playlistTrackIdSet(pid) {
 
 // ---- create/edit form sheet (reuses the shared _sheet + .qz-sheet chrome) ----
 function formToggleHTML(f, title, sub, on) {
-  return '<button class="qz-pf__tog' + (on ? " is-on" : "") + '" data-f="' + f + '" type="button">' +
+  return '<button class="qz-pf__tog' + (on ? " is-on" : "") + '" data-f="' + f + '" type="button" role="switch" aria-checked="' + (on ? "true" : "false") + '">' +
     '<span class="qz-pf__togl"><span class="qz-pf__togt">' + esc(title) + '</span>' +
     '<span class="qz-pf__togs">' + esc(sub) + '</span></span><span class="qz-pf__sw"></span></button>';
 }
@@ -994,6 +994,7 @@ function openPlaylistFormSheet(mode, opts) {
     if (tog) {
       if (tog.getAttribute("data-f") === "public") { pub = !pub; tog.classList.toggle("is-on", pub); }
       else { collab = !collab; tog.classList.toggle("is-on", collab); }
+      tog.setAttribute("aria-checked", tog.classList.contains("is-on") ? "true" : "false");
       return;
     }
     var b = e.target.closest("[data-s]"); if (!b) return;
@@ -2101,7 +2102,7 @@ function stgTogOn(key) { try { return Q.storage.get(key, "1") !== "0"; } catch (
 function stgToggleRowHTML(key, title, sub) {
   var on = stgTogOn(key);
   return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") +
-    '" data-act="apptoggle" data-tog="' + key + '" type="button">' +
+    '" data-act="apptoggle" data-tog="' + key + '" type="button" role="switch" aria-checked="' + (on ? "true" : "false") + '">' +
     '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(title) + '</span>' +
     '<span class="qz-stg-rs">' + esc(sub) + '</span></span><span class="qz-pf__sw"></span></button>';
 }
@@ -2206,7 +2207,7 @@ function stgPanelTap(row) {
 }
 function stgExtToggleRowHTML(ext) {
   var on = extTogOn(ext.id);
-  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") + '" data-act="exttoggle" data-ext="' + esc(ext.id) + '" type="button">' +
+  return '<button class="qz-stg-row qz-stg-tog' + (on ? " is-on" : "") + '" data-act="exttoggle" data-ext="' + esc(ext.id) + '" type="button" role="switch" aria-checked="' + (on ? "true" : "false") + '">' +
     '<span class="qz-stg-rl"><span class="qz-stg-rt">' + esc(ext.name || ext.id) + '</span>' +
     (ext.description ? '<span class="qz-stg-rs">' + esc(ext.description) + '</span>' : "") +
     '</span><span class="qz-pf__sw"></span></button>';
@@ -2265,6 +2266,7 @@ function stgExtToggleTap(row) {
   var on = extTogOn(id);
   try { localStorage.setItem("qobuzify:ext:" + id, on ? "0" : "1"); } catch (e) {}
   row.classList.toggle("is-on", !on);
+  row.setAttribute("aria-checked", !on ? "true" : "false");
   // debounce so toggling several in a row triggers a single reload
   if (_extReloadT) clearTimeout(_extReloadT);
   qToast("Applying…");
@@ -2361,6 +2363,7 @@ function stgToggleTap(el) {
   var key = el.getAttribute("data-tog"); if (!key) return;
   var on = !el.classList.contains("is-on");
   el.classList.toggle("is-on", on);
+  el.setAttribute("aria-checked", on ? "true" : "false");
   try { Q.storage.set(key, on ? "1" : "0"); } catch (e) {}
   stgApplyToggleEffect(key, on);
 }
