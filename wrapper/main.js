@@ -354,8 +354,9 @@ async function qzbpFeedStart() {
   qzbp.curUrl = "http://127.0.0.1:" + port + "/s/" + qzbp.token;
   qzbp.lastPos = { url: qzbp.curUrl, ms: 0 };
   qzbp.eofReached = false; qzbp.aoReloads = 0;
+  qzbp.resolving = 0; qzbp.curFormatId = null; // a tap track supersedes any direct resolve still in flight
   bpTrace("feedStart: loadfile issued", { url: qzbp.curUrl });
-  mpvSend(["loadfile", qzbp.curUrl, "replace"]);
+  mpvLoad(qzbp.curUrl);
   mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
 }
 function qzbpFeedChunk(buf) {
@@ -930,11 +931,17 @@ function qzbpStallCheck() {
     if (!qzbp.coreIdle) { qzbp.directIdleAt = 0; return; }
     if (!qzbp.directIdleAt) { qzbp.directIdleAt = Date.now(); return; }
     const grace = Math.max(qzbp.directIdleAt, qzbp.directLoadedAt || 0, qzbp.enabledAt || 0, qzbp.resumedAt || 0);
-    if (Date.now() - grace < 6000) return; // startup buffering / seek rebuffer: give it room
+    // Startup buffering / seek rebuffer / a hung connection mid-download: give it room. 10s, not 6: a
+    // half-open connection (Wi-Fi hop, lid close) now times out after DIRECT_NET_TIMEOUT and mpv reconnects
+    // with a Range request (measured: idle 4.6s, then playback resumed), and 6s killed that recovery
+    // whenever the cache in front of the stall was thin.
+    if (Date.now() - grace < 10000) return;
     qzbp.stalled = true;
     bpTrace("STALLED (direct): mpv idle while playing", { url: (qzbp.curUrl || "").slice(0, 40) });
     try { mpvSend(["stop"]); } catch (_) {}
-    qzbp.srcParams = null; qzbp.outParams = null;
+    // Drop the URL with the stream: the renderer is about to unmute the browser for the rest of this track,
+    // and a later crash respawn replaying this URL would play the track a second time over it.
+    qzbp.srcParams = null; qzbp.outParams = null; qzbp.curUrl = null;
     qzbpEvt({ type: "stalled", why: "the direct stream stopped producing sound" });
     return;
   }
@@ -968,8 +975,9 @@ function qzbpStallCheck() {
   bpTrace("STALLED: mpv went live then sat idle", { device: qzbp.device, mode: qzbp.mode });
   try { mpvSend(["stop"]); } catch (_) {}
   // The stopped stream's params must not survive it: nothing is measured any more, and stale numbers
-  // are exactly what the re-verify's stall gate exists to keep away from the badge.
-  qzbp.srcParams = null; qzbp.outParams = null;
+  // are exactly what the re-verify's stall gate exists to keep away from the badge. The URL goes too, so a
+  // crash respawn cannot replay this feed over the browser the renderer is about to unmute.
+  qzbp.srcParams = null; qzbp.outParams = null; qzbp.curUrl = null;
   qzbpEvt({ type: "stalled", why: "audio reached the bit-perfect sidecar but it stopped producing sound" });
 }
 
@@ -993,7 +1001,11 @@ function qzbpStallCheck() {
 function mpvArgs(sockPath, mode) {
   const a = ["--idle=yes", "--no-video", "--no-terminal", "--no-config", "--keep-open=yes",
     "--input-ipc-server=" + sockPath, "--gapless-audio=weak", "--replaygain=no",
-    "--af=", "--volume=100", "--volume-max=100", "--audio-samplerate=0", "--audio-channels=stereo",
+    // --audio-channels=mono,stereo, NOT plain "stereo". Forcing stereo meant mpv upmixed every MONO track
+    // itself, and its upmix scales each sample by 0.7071 (measured with --ao=pcm against an ffmpeg decode:
+    // stereo sources bit-identical, a mono source L==R==0.7071*src). The list keeps a mono source mono and a
+    // stereo source stereo (both byte-identical in the same test) and still folds anything wider to stereo.
+    "--af=", "--volume=100", "--volume-max=100", "--audio-samplerate=0", "--audio-channels=mono,stereo",
     // The feed is a chunked HTTP body with no Content-Length, so the stream itself can't Range-seek.
     // A demuxer cache big enough for a whole hi-res track is what makes scrubbing work at all.
     // Plain byte counts, not "768MiB": the suffixed form is a FATAL parse error on mpv < 0.33 (Debian 11,
@@ -1073,6 +1085,19 @@ function mpvSend(cmd) {
   qzbp.reqId += 1;
   try { qzbp.sock.write(JSON.stringify({ command: cmd, request_id: qzbp.reqId }) + "\n"); } catch (_) {}
 }
+// Network read timeout per source, set just before each loadfile (it applies when the stream opens).
+// DIRECT (CDN URL): mpv's 60s default meant a half-open connection - a Wi-Fi hop, a lid close mid-download -
+// sat silent for a full minute before ffmpeg reconnected (measured: stall at 3.6s, resume at 62.3s). With 6s
+// the same hang reconnected with a Range request and resumed after 4.6s idle; a clean drop already
+// reconnects at once. TAP (loopback feed): keep the long default. Its bytes arrive only as fast as the page
+// appends them (10.8s gaps measured), and a timeout there would reconnect to a server that replays the
+// track from byte 0 into a stream expecting the middle.
+const DIRECT_NET_TIMEOUT = 6;
+function isDirectUrl(u) { return !!u && !/^http:\/\/127\.0\.0\.1/.test(u); }
+function mpvLoad(url) {
+  mpvSend(["set_property", "network-timeout", isDirectUrl(url) ? DIRECT_NET_TIMEOUT : 60]);
+  mpvSend(["loadfile", url, "replace"]);
+}
 // Decide, and report, whether the samples reaching the converter are the samples in the file. Every term
 // here exists because its absence produced a wrong badge: the predicate used to be `decodedRate == hwRate`
 // alone, which claims bit-perfect while the graph applies a gain, while mpv silently converts internally,
@@ -1116,11 +1141,22 @@ function qzbpReportParams() {
 
   // mpv converting between the decoder and the output is invisible in audio-params. If the rates differ,
   // mpv resampled; if the output carries fewer bits than the decode, mpv narrowed.
-  const converted = !!(src && out && (src.samplerate !== out.samplerate || fmtBits(out.format) < fmtBits(src.format)));
+  // Channels too, asymmetrically: fewer output channels is a downmix, and mono widened to stereo by mpv is a
+  // 0.7071 multiply on every sample (measured), so neither is the file's samples. mpv is now told to keep
+  // mono as mono, so this only fires if an output forces the layout anyway.
+  const sc = src ? (src["channel-count"] || 0) : 0, oc = out ? (out["channel-count"] || 0) : 0;
+  const chConv = !!(sc && oc && (oc < sc || (sc === 1 && oc !== 1)));
+  const converted = !!(src && out && (src.samplerate !== out.samplerate || fmtBits(out.format) < fmtBits(src.format) || chConv));
 
   const rateOk = !!(rate && hw && rate === hw);
   const gainOk = gain === 1;
-  const bitperfect = rateOk && gainOk && !converted;
+  // A lossy source can reach the DAC byte-exact and still not be the lossless file the badge implies.
+  // Never call that bit-perfect.
+  // Two independent signals: Qobuz SAID it granted MP3, or mpv MEASURED a float decode (FLAC only ever
+  // decodes to integer s16/s32; measured: 24-bit FLAC -> s32, 16-bit -> s16, MP3 320 -> floatp). The
+  // second one also catches the tap path, where the web player's own quality setting picks the stream.
+  const lossy = (qzbp.curFormatId === 5 && isDirectUrl(qzbp.curUrl)) || !!(src && /^(float|double)/.test(String(src.format || "")));
+  const bitperfect = rateOk && gainOk && !converted && !lossy;
 
   // ALL the reasons, not the first one. A single scalar with gain checked last meant a rate mismatch
   // masked a volume problem entirely - and a graph pinned to one rate while the sink sits below 100% is
@@ -1128,6 +1164,7 @@ function qzbpReportParams() {
   // their graph, restart the track, and only then discover volume was also breaking it.
   const why = [];
   if (!bitperfect) {
+    if (lossy) why.push("lossy");
     if (converted) why.push("convert");
     if (!rateOk) why.push(hw ? "rate" : "device-unknown");
     if (gain == null) why.push("gain-unknown"); else if (gain !== 1) why.push("gain");
@@ -1136,6 +1173,9 @@ function qzbpReportParams() {
     type: "params", rate, format: out.format, channels: out["channel-count"],
     mode: qzbp.mode, hwRate: hw, bitperfect, why, gain, pro: st.pro,
     srcRate: src ? src.samplerate : rate,
+    // What the decoder actually got, for "shown = delivered": s16 = a 16-bit file, s32 = 24-bit (FLAC never
+    // decodes deeper), float = a lossy codec. `format` above is the OUTPUT side, which is forced to s32.
+    srcFormat: src ? src.format : null, srcChannels: sc || null,
   });
 }
 // Wire an ALREADY-CONNECTED IPC socket into the relay. The caller (the connect poller in qzbpSpawn)
@@ -1206,7 +1246,21 @@ function qzbpConnect(s) {
   });
   s.on("error", () => {});
   // Only clear the live handle when it is still THIS socket: a respawn may already own qzbp.sock.
-  s.on("close", () => { if (qzbp.sock === s) qzbp.sock = null; });
+  // The socket dying while ITS mpv lives on (socket file removed, an IPC error) used to be a dead end:
+  // sock went null, every mpvSend became a silent no-op, the direct watchdog bails on a null sock, and
+  // nothing ever reconnected - mpv kept playing whatever it had, deaf to pause/seek/next, until the app
+  // restarted. Kill that mpv so the exit handler's crash ladder respawns it and replays the current URL at
+  // its last position. Not on an intentional stop (enabled is already false there) and not when a newer
+  // process already owns the slot.
+  const owner = qzbp.proc;
+  s.on("close", () => {
+    if (qzbp.sock !== s) return;
+    qzbp.sock = null;
+    if (qzbp.enabled && owner && qzbp.proc === owner) {
+      bpTrace("IPC socket closed under a live mpv - restarting it");
+      try { owner.kill(); } catch (_) {}
+    }
+  });
 }
 // Where to go when a mode turns out not to work. Never a dead end: the last stop always produces audio.
 function nextMode(mode) {
@@ -1280,6 +1334,17 @@ function qzbpSpawn(mode) {
   // Either way an exhausted budget must SAY so: giving up silently left mpv running with no
   // observe/loadfile relay and the renderer waiting on "Bit-perfect..." forever.
   let tries = 0, connecting = false;
+  // Out of connect budget. The renderer is told (it falls back to the browser for this track), but the
+  // mpv that never opened its socket used to be left running: an orphan nobody could command, still able
+  // to make sound, and the next track's commands all went nowhere. Drop the URL first so the respawn the
+  // kill triggers cannot replay this track over the now-unmuted browser, then let the crash ladder try a
+  // fresh process for the next track (or go fatal after its retries).
+  const ipcGaveUp = () => {
+    qzbpEvt({ type: "error", what: "ipc" });
+    if (qzbp.proc !== proc) return;
+    qzbp.curUrl = null; qzbp.srcParams = null; qzbp.outParams = null;
+    try { proc.kill(); } catch (_) {}
+  };
   const iv = setInterval(() => {
     if (qzbp.proc !== proc) { clearInterval(iv); return; } // this spawn is gone; stop probing its socket
     if (connecting) return;
@@ -1288,7 +1353,7 @@ function qzbpSpawn(mode) {
       let there = false;
       try { there = fs.existsSync(qzbp.socketPath); } catch (_) {}
       if (!there) {
-        if (tries > 50) { clearInterval(iv); qzbpEvt({ type: "error", what: "ipc" }); }
+        if (tries > 50) { clearInterval(iv); ipcGaveUp(); }
         return;
       }
     }
@@ -1299,7 +1364,7 @@ function qzbpSpawn(mode) {
       connecting = false;
       try { s.destroy(); } catch (_) {}
       if (qzbp.proc !== proc) { clearInterval(iv); return; }
-      if (tries > 50) { clearInterval(iv); qzbpEvt({ type: "error", what: "ipc" }); }
+      if (tries > 50) { clearInterval(iv); ipcGaveUp(); }
     };
     s.once("error", onErr);
     s.once("connect", () => {
@@ -1307,7 +1372,7 @@ function qzbpSpawn(mode) {
       clearInterval(iv);
       qzbpConnect(s);
       if (qzbp.curUrl) {
-        mpvSend(["loadfile", qzbp.curUrl, "replace"]);
+        mpvLoad(qzbp.curUrl);
         // Restore the position, URL-bound. A crash respawn / mode-change replay used to restart from
         // 0:00: in direct mode the song audibly restarted for seconds until the drift net caught it, and
         // in tap mode (which has NO drift net) the sound played the whole rest of the track offset from
@@ -1329,7 +1394,8 @@ function qzbpStop() {
   qzrfReset(); // hand the graph clock back to the user's own policy (only if WE forced it)
   if (qzbp.stallTimer) { clearInterval(qzbp.stallTimer); qzbp.stallTimer = null; }
   qzbp.stalled = false;
-  qzbp.eofReached = false; qzbp.directIdleAt = 0; qzbp.lastPos = null;
+  qzbp.eofReached = false; qzbp.directIdleAt = 0; qzbp.lastPos = null; qzbp.resolving = 0; qzbp.curFormatId = null;
+  qzbp.dseq = (qzbp.dseq || 0) + 1; // a direct resolve still in flight must not load into the next session
   try { if (qzbp.sock) qzbp.sock.end(); } catch (_) {}
   try { if (qzbp.proc) qzbp.proc.kill(); } catch (_) {}
   qzbp.sock = null; qzbp.proc = null; qzbp.mode = "off"; qzbp.curUrl = null;
@@ -1413,11 +1479,20 @@ function qzbpCommand(msg) {
       qzbp.wantPlaying = (typeof msg.playing === "boolean") ? msg.playing : true;
       qzbp.feed = null; // this stream is URL-driven; make sure no old feed lingers
       const dseq = (qzbp.dseq = (qzbp.dseq || 0) + 1);
-      const startMs = Number(msg.startMs) || 0;
+      let startMs = Number(msg.startMs) || 0;
       bpTrace("directtrack: resolving", { trackId: msg.trackId, playing: qzbp.wantPlaying });
+      // While the new URL resolves, mpv still holds the PREVIOUS track (--keep-open). On a manual skip it
+      // kept PLAYING it - over the new track's UI, with the browser muted - for as long as the resolve took:
+      // a few hundred ms normally, up to the 15s request timeout on a bad network. Hold it paused (a pause
+      // keeps the audio output open, unlike stop, so a same-format next track does not reopen the device)
+      // and drop curUrl so neither the watchdog nor a respawn treats the old track as current. `resolving`
+      // stops the renderer's periodic play re-assert from un-pausing it in the meantime.
+      qzbp.resolving = dseq; qzbp.curUrl = null; qzbp.curFormatId = null; qzbp.pendingSeekMs = null;
+      mpvSend(["set_property", "pause", true]);
       qzfu.resolve({ token: msg.token, trackId: msg.trackId, appId: msg.appId, bundleUrl: msg.bundleUrl, formatId: 27 })
         .then((r) => {
           if (dseq !== qzbp.dseq) return;                 // a newer track superseded this resolve
+          qzbp.resolving = 0;
           if (!r.ok) {
             bpTrace("directtrack: resolve failed", { reason: r.reason });
             // STOP mpv before giving up. It is still holding the PREVIOUS track's URL (--keep-open=yes keeps it
@@ -1431,26 +1506,43 @@ function qzbpCommand(msg) {
             qzbpEvt({ type: "directfail", reason: r.reason });
             return;
           }
-          qzbp.curUrl = r.url;
+          qzbp.curUrl = r.url; qzbp.curFormatId = Number(r.formatId) || null;
+          if (qzbp.pendingSeekMs != null) { startMs = qzbp.pendingSeekMs; qzbp.pendingSeekMs = null; } // scrubbed while resolving
           // Seed the URL-bound position with the load position: if the reconnect replay fires before the
           // first time-pos report, it restores the startMs instead of restarting from 0.
           qzbp.lastPos = { url: r.url, ms: startMs };
           qzbp.directLoadedAt = Date.now(); qzbp.directIdleAt = 0; qzbp.eofReached = false; qzbp.aoReloads = 0;
-          mpvSend(["loadfile", r.url, "replace"]);
+          // A direct stall latched `stalled` for the rest of the SESSION (only the tap feed's 'live' ever
+          // cleared it), which silently switched off this watchdog and the badge re-verify for every later
+          // track. Each newly loaded track gets a clean slate, exactly like a tap track going live.
+          qzbp.stalled = false;
+          mpvLoad(r.url);
           if (startMs > 250) mpvSend(["seek", startMs / 1000, "absolute"]);
           mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
           bpTrace("directtrack: loaded", { fmt: r.formatId, bit: r.bitDepth, rate: r.rate });
+          // What Qobuz actually granted, so the renderer can say so when it is less than asked for. The
+          // badge itself still reports what mpv measures; this is only the "why".
+          qzbpEvt({ type: "directinfo", trackId: msg.trackId, formatId: r.formatId, bitDepth: r.bitDepth, rate: r.rate, restrictions: r.restrictions || [] });
         })
         .catch((e) => {
           if (dseq !== qzbp.dseq) return;
+          qzbp.resolving = 0;
           if (qzbp.enabled) { mpvSend(["stop"]); qzbp.curUrl = null; qzbp.srcParams = null; qzbp.outParams = null; } // same reason as the !r.ok path above
           qzbpEvt({ type: "directfail", reason: "network", detail: String(e && e.message || e) });
         });
       break;
     }
-    case "play": qzbp.wantPlaying = true; qzbp.resumedAt = Date.now(); mpvSend(["set_property", "pause", false]); break;
+    // Not while a direct resolve is in flight: mpv still holds the previous track then (see directtrack),
+    // and the load that follows applies wantPlaying itself.
+    case "play": qzbp.wantPlaying = true; qzbp.resumedAt = Date.now(); if (!qzbp.resolving) mpvSend(["set_property", "pause", false]); break;
     case "pause": qzbp.wantPlaying = false; mpvSend(["set_property", "pause", true]); break;
-    case "seek": qzbp.resumedAt = Date.now(); mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]); break;
+    // A seek that lands while a direct resolve is in flight would only move the PREVIOUS track (still
+    // loaded, paused); keep it for the load instead, so a scrub during a slow resolve is not lost.
+    case "seek":
+      qzbp.resumedAt = Date.now();
+      if (qzbp.resolving) { qzbp.pendingSeekMs = Number(msg.ms) || 0; break; }
+      mpvSend(["seek", (Number(msg.ms) || 0) / 1000, "absolute"]);
+      break;
     // Fixed-output DACs (no hardware mixer) leave the Qobuz mute/slider-at-zero with nothing to drive.
     // mpv's mute is a stream flag, not a sample multiply, so it is the one control that can work there
     // without breaking bit-perfect while unmuted.
@@ -1758,6 +1850,24 @@ app.whenReady().then(async () => {
   ipcMain.on("qzbp:feed", (_e, bytes) => { try { qzbpFeedChunk(bytes); } catch (_) {} }); // decrypted FLAC from MSE
   // Synchronous by design: the preload decides whether to expose __QZBP__ at all before the page boots.
   ipcMain.on("qzbp:avail", (e) => { try { e.returnValue = mpvAvailable(); } catch (_) { e.returnValue = false; } });
+  // Sleep/wake (lid close). Every grace the watchdog measures is a Date.now() delta, so a buffering moment
+  // that straddled the suspend read as minutes of idle the instant the machine woke and killed bit-perfect
+  // for the track while the device and network were still coming back. Re-arm the graces on wake, and
+  // treat the audio graph as unknown: the sink may have re-enumerated or the daemon restarted, which can
+  // also drop the clock.force-rate we wrote, so put that back if (and only if) we had applied one.
+  try {
+    const { powerMonitor } = require("electron");
+    powerMonitor.on("resume", () => {
+      try {
+        if (!qzbp.enabled) return;
+        bpTrace("system resumed");
+        qzbp.resumedAt = Date.now(); qzbp.directIdleAt = 0;
+        qzbpProbe.dirtyAt = Date.now();
+        if (qzrf.applied && qzbp.srcParams && qzbp.srcParams.samplerate) { qzrf.rate = -1; qzrfFollow(qzbp.srcParams.samplerate); }
+        if (!qzbp.resolving) mpvSend(["set_property", "pause", !qzbp.wantPlaying]);
+      } catch (_) {}
+    });
+  } catch (_) {}
   // Lyrics-view fullscreen button. Same call F11 makes; it used to go over the loopback bridge, which the
   // https page can't reach, so it silently did nothing (see preload's __QZFS__ note).
   ipcMain.on("qz:fullscreen", (_e, on) => { try { if (win && !win.isDestroyed()) win.setFullScreen(!!on); } catch (_) {} });
