@@ -1722,8 +1722,9 @@
       "color:inherit;font:inherit;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s;}",
     ".qzu-chip:hover{background:var(--qzu-fill-hover);}",
     ".qzu-chip--on,.qzu-chip--on:hover{background:var(--qzu-invert-bg);color:var(--qzu-invert-fg);border-color:transparent;}",
-    // toasts: one stack, bottom-right, above the player bar
-    ".qzu-toasts{position:fixed;right:20px;bottom:104px;z-index:2147483003;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none;}",
+    // toasts: one stack, bottom-right, above the player bar, and above extension overlays (up to 2147483601)
+    // so a toast fired from inside an extension's dialog is not hidden behind its backdrop
+    ".qzu-toasts{position:fixed;right:20px;bottom:104px;z-index:2147483640;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none;}",
     ".qzu-toast{pointer-events:auto;display:flex;align-items:flex-start;gap:6px;width:360px;max-width:calc(100vw - 40px);box-sizing:border-box;",
       "padding:10px 8px 14px 16px;border-radius:12px;background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
       "box-shadow:0 12px 32px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .2s ease,transform .2s ease;}",
