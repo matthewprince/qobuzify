@@ -153,8 +153,9 @@ function scard(label, val, d) { return '<div class="qz-stats-scard"><div class="
 function buildPage() {
   var ex = document.getElementById(PAGE_ID); if (ex) return ex;
   var pg = document.createElement("div"); pg.id = PAGE_ID; pg.className = "qz-stats-page";
-  pg.innerHTML = '<div class="qz-stats-inner"><div class="qz-stats-head"><span class="qz-stats-title">' + IC_CHART + ' Listening Stats</span>' +
-    '<div class="qz-stats-headbtns"><button class="qz-stats-cloud" title="Cloud sync">' + IC_CLOUD + '</button><button class="qz-stats-close" aria-label="Close">&#215;</button></div></div>' +
+  Q.ui.follow(pg);
+  pg.innerHTML = '<div class="qz-stats-inner"><div class="qz-stats-head"><span class="qz-stats-title">' + IC_CHART + ' Listening stats</span>' +
+    '<div class="qz-stats-headbtns"><button type="button" class="qz-stats-cloud" title="Cloud sync" aria-label="Cloud sync">' + IC_CLOUD + '</button><button type="button" class="qz-stats-close" aria-label="Close">&#215;</button></div></div>' +
     '<div class="qz-stats-hero"></div><div class="qz-stats-rangebar"></div><div class="qz-stats-cards"></div>' +
     '<div class="qz-stats-grid"><div class="qz-stats-col qz-stats-left"></div><div class="qz-stats-col qz-stats-right"></div></div></div>';
   document.body.appendChild(pg);
@@ -277,9 +278,10 @@ function openCloud() {
   closeCloud();
   var on = cloudOn(), sid = getSyncId();
   var m = document.createElement("div"); m.id = "qz-cloud-modal"; m.className = "qz-cloud-modal";
-  m.innerHTML = '<div class="qz-cloud-box"><div class="qz-cloud-h">' + IC_CLOUD + " Cloud Sync</div>" +
+  Q.ui.follow(m);
+  m.innerHTML = '<div class="qz-cloud-box"><div class="qz-cloud-h">' + IC_CLOUD + " Cloud sync</div>" +
     '<p class="qz-cloud-p">Off by default - your listening history stays only on this device. Turn this on to back it up and sync it across devices. <b>Stored per play:</b> title, artist, album, duration, minutes listened, timestamp, cover URL, quality. No account, no name, nothing else about you.</p>' +
-    '<div class="qz-cloud-row"><span>Enable cloud sync</span><button class="qz-cloud-sw' + (on ? " on" : "") + '" data-act="toggle"><span></span></button></div>' +
+    '<div class="qz-cloud-row"><span>Enable cloud sync</span><span data-sw></span></div>' +
     '<div class="qz-cloud-details" style="display:' + (on ? "block" : "none") + '"><div class="qz-cloud-lbl">Your sync code - paste it on another device to sync the same history</div>' +
     '<div class="qz-cloud-idrow"><code class="qz-cloud-id">' + esc(sid) + '</code><button class="qz-cloud-btn" data-act="copy">Copy</button></div>' +
     '<div class="qz-cloud-status" data-status>&nbsp;</div>' +
@@ -290,10 +292,12 @@ function openCloud() {
   m.addEventListener("mousedown", function (e) { if (e.target === m) closeCloud(); });
   var st = m.querySelector("[data-status]"); function setSt(t) { if (st) st.textContent = t; }
   m.querySelector('[data-act="done"]').addEventListener("click", closeCloud);
-  m.querySelector('[data-act="toggle"]').addEventListener("click", function () {
-    if (cloudOn()) { disableCloud(); this.classList.remove("on"); m.querySelector(".qz-cloud-details").style.display = "none"; }
-    else { this.classList.add("on"); m.querySelector(".qz-cloud-details").style.display = "block"; setSt("Uploading your history…"); enableCloud().then(function (n) { setSt("Backed up. New plays upload automatically."); render(); }); }
-  });
+  // the switch follows the real state: whatever cloudOn() says decides which way a click goes, as before
+  var sw = Q.ui.switch({ checked: on, label: "Enable cloud sync", onChange: function () {
+    if (cloudOn()) { disableCloud(); sw.checked = false; m.querySelector(".qz-cloud-details").style.display = "none"; }
+    else { sw.checked = true; m.querySelector(".qz-cloud-details").style.display = "block"; setSt("Uploading your history…"); enableCloud().then(function (n) { setSt("Backed up. New plays upload automatically."); render(); }); }
+  } });
+  m.querySelector("[data-sw]").replaceWith(sw);
   var cp = m.querySelector('[data-act="copy"]'); if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(sid); } catch (e) {} setSt("Copied sync code."); });
   var sn = m.querySelector('[data-act="syncnow"]'); if (sn) sn.addEventListener("click", function () { setSt("Syncing…"); Promise.all([pushAll(), pullMerge()]).then(function (r) { setSt("Synced · " + r[1] + " pulled from cloud."); render(); }); });
   var uc = m.querySelector('[data-act="usecode"]'); if (uc) uc.addEventListener("click", function () { var im = m.querySelector(".qz-cloud-import"); im.style.display = im.style.display === "none" ? "flex" : "none"; });
@@ -303,73 +307,73 @@ function openCloud() {
 
 var STATS_CSS = [
   ".qz-stats-page{position:fixed;top:0;left:0;right:0;bottom:74px;z-index:2147482000;overflow-y:auto;opacity:0;transition:opacity .2s ease;-webkit-app-region:no-drag;",
-  "background:radial-gradient(120% 100% at 50% 0%,#10131a 0%,#0a0c11 62%,#07090d 100%);color:#e7ecf3;font-family:inherit;}",
+  "--qzst-bg:#121212;background:var(--qzst-bg);color:var(--qzu-fg);font-family:inherit;}",
+  // the page and the cloud dialog follow Qobuz's appearance (Q.ui.follow): Qobuz's page colour on dark, one
+  // step down its grey ramp on light (never white)
+  ".qz-stats-page[data-theme=light]{--qzst-bg:var(--color-grey-10,#f3f3f3);}",
   ".qz-stats-page.qz-stats-show{opacity:1;}",
   ".qz-stats-inner{max-width:1180px;margin:0 auto;padding:16px 26px 64px;}",
-  ".qz-stats-head{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;padding:8px 0 16px;z-index:2;background:linear-gradient(180deg,#0a0c11 72%,transparent);}",
+  ".qz-stats-head{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;padding:8px 0 16px;z-index:2;background:linear-gradient(180deg,var(--qzst-bg) 72%,transparent);}",
   ".qz-stats-title{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:800;}",
   ".qz-stats-title svg{color:var(--qz-accent,#3DA8FE);}",
-  ".qz-stats-close{appearance:none;border:0;background:rgba(255,255,255,.06);color:#cbd3df;width:38px;height:38px;border-radius:10px;font-size:22px;line-height:1;cursor:pointer;-webkit-app-region:no-drag;}",
-  ".qz-stats-close:hover{background:rgba(255,255,255,.13);color:#fff;}",
+  ".qz-stats-close{appearance:none;border:0;background:color-mix(in srgb,currentColor 6%,transparent);color:var(--qzu-fg2);width:38px;height:38px;border-radius:10px;font-size:22px;line-height:1;cursor:pointer;-webkit-app-region:no-drag;}",
+  ".qz-stats-close:hover{background:color-mix(in srgb,currentColor 13%,transparent);color:var(--qzu-fg);}",
   ".qz-stats-hero{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}",
-  ".qz-stats-hcard{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:15px 18px;min-width:0;}",
-  ".qz-stats-hlabel{font-size:12.5px;color:#8b94a3;font-weight:600;}",
+  ".qz-stats-hcard{background:color-mix(in srgb,currentColor 4%,transparent);border:1px solid color-mix(in srgb,currentColor 8%,transparent);border-radius:14px;padding:15px 18px;min-width:0;}",
+  ".qz-stats-hlabel{font-size:12.5px;color:var(--qzu-fg2);font-weight:600;}",
   ".qz-stats-hval{font-size:19px;font-weight:800;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
   ".qz-stats-rangebar{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}",
-  ".qz-stats-range{appearance:none;border:1px solid rgba(255,255,255,.1);background:transparent;color:#9aa3b2;font:inherit;font-size:13px;font-weight:700;padding:7px 15px;border-radius:9px;cursor:pointer;transition:all .13s;}",
-  ".qz-stats-range:hover{color:#e7ecf3;border-color:rgba(255,255,255,.2);}",
+  ".qz-stats-range{appearance:none;border:1px solid color-mix(in srgb,currentColor 10%,transparent);background:transparent;color:var(--qzu-fg2);font:inherit;font-size:13px;font-weight:700;padding:7px 15px;border-radius:9px;cursor:pointer;transition:all .13s;}",
+  ".qz-stats-range:hover{color:var(--qzu-fg);border-color:color-mix(in srgb,currentColor 20%,transparent);}",
   ".qz-stats-range.on{background:var(--qz-accent,#3DA8FE);color:#06090a;border-color:var(--qz-accent,#3DA8FE);}",
   ".qz-stats-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}",
-  ".qz-stats-scard{background:linear-gradient(180deg,rgba(61,168,254,.11),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:15px 18px;}",
-  ".qz-stats-slabel{font-size:12.5px;color:#9aa3b2;font-weight:600;}",
-  ".qz-stats-sval{font-size:25px;font-weight:850;margin-top:4px;}",
-  ".qz-st-up{font-size:13px;color:#4ade80;font-weight:700;margin-left:8px;}",
+  ".qz-stats-scard{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 8%,transparent);border:1px solid color-mix(in srgb,currentColor 8%,transparent);border-radius:14px;padding:15px 18px;}",
+  ".qz-stats-slabel{font-size:12.5px;color:var(--qzu-fg2);font-weight:600;}",
+  ".qz-stats-sval{font-size:25px;font-weight:800;margin-top:4px;}",
+  ".qz-st-up{font-size:13px;color:color-mix(in srgb,#22c55e 80%,currentColor);font-weight:700;margin-left:8px;}",
   ".qz-stats-grid{display:grid;grid-template-columns:.82fr 1.18fr;gap:16px;align-items:start;}",
-  ".qz-stats-panel{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:15px 18px;margin-bottom:16px;}",
+  ".qz-stats-panel{background:color-mix(in srgb,currentColor 3%,transparent);border:1px solid color-mix(in srgb,currentColor 7%,transparent);border-radius:16px;padding:15px 18px;margin-bottom:16px;}",
   ".qz-stats-panel h3{margin:0 0 10px;font-size:15px;font-weight:750;display:flex;align-items:baseline;gap:8px;}",
-  ".qz-stats-panel h3 span{font-size:12px;color:#8b94a3;font-weight:500;}",
+  ".qz-stats-panel h3 span{font-size:12px;color:var(--qzu-fg2);font-weight:500;}",
   ".qz-st-arow{display:flex;align-items:center;gap:12px;padding:7px 0;}",
-  ".qz-st-cover{width:50px;height:50px;border-radius:10px;overflow:hidden;background:rgba(255,255,255,.06);flex:0 0 auto;}",
+  ".qz-st-cover{width:50px;height:50px;border-radius:10px;overflow:hidden;background:color-mix(in srgb,currentColor 6%,transparent);flex:0 0 auto;}",
   ".qz-st-cover.sm{width:40px;height:40px;border-radius:8px;}",
   ".qz-st-cover img{width:100%;height:100%;object-fit:cover;display:block;}",
   ".qz-st-ainfo,.qz-st-sinfo,.qz-st-rinfo{min-width:0;flex:1;}",
   ".qz-st-aname{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-st-rank{font-size:13px;font-weight:800;color:#7e8796;}",
-  ".qz-st-medal-1{color:#ffd54a;}.qz-st-medal-2{color:#cdd5e0;}.qz-st-medal-3{color:#e0a56b;}",
-  ".qz-st-asub{font-size:12.5px;color:#9aa3b2;margin-top:2px;}",
+  ".qz-st-rank{font-size:13px;font-weight:800;color:var(--qzu-fg2);}",
+  ".qz-st-medal-1{color:color-mix(in srgb,#f2b705 85%,currentColor);}.qz-st-medal-2{color:color-mix(in srgb,#a9b1bd 70%,currentColor);}.qz-st-medal-3{color:color-mix(in srgb,#d08a4a 85%,currentColor);}",
+  ".qz-st-asub{font-size:12.5px;color:var(--qzu-fg2);margin-top:2px;}",
   ".qz-st-srow,.qz-st-rrow{display:flex;align-items:center;gap:11px;padding:6px 0;}",
-  ".qz-st-srank{font-size:12px;font-weight:800;color:#7e8796;width:26px;flex:0 0 auto;}",
+  ".qz-st-srank{font-size:12px;font-weight:800;color:var(--qzu-fg2);width:26px;flex:0 0 auto;}",
   ".qz-st-stitle,.qz-st-rtitle{font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-st-ssub,.qz-st-rsub{font-size:12px;color:#9aa3b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-st-rtime{font-size:12px;color:#8b94a3;flex:0 0 auto;white-space:nowrap;}",
+  ".qz-st-ssub,.qz-st-rsub{font-size:12px;color:var(--qzu-fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".qz-st-rtime{font-size:12px;color:var(--qzu-fg2);flex:0 0 auto;white-space:nowrap;}",
   ".qz-st-chart{width:100%;height:250px;display:block;}",
   ".qz-st-line{fill:none;stroke:var(--qz-accent,#3DA8FE);stroke-width:2.4;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round;}",
   ".qz-st-area{fill:var(--qz-accent,#3DA8FE);opacity:.12;stroke:none;}",
-  ".qz-st-grid{stroke:rgba(255,255,255,.07);stroke-width:1;vector-effect:non-scaling-stroke;}",
-  ".qz-st-ylbl{fill:#7e8796;font-size:11px;text-anchor:end;}.qz-st-xlbl{fill:#7e8796;font-size:10px;}",
-  ".qz-st-empty{color:#8b94a3;font-size:13px;padding:12px 4px;}",
+  ".qz-st-grid{stroke:color-mix(in srgb,currentColor 9%,transparent);stroke-width:1;vector-effect:non-scaling-stroke;}",
+  ".qz-st-ylbl{fill:var(--qzu-fg2);font-size:11px;text-anchor:end;}.qz-st-xlbl{fill:var(--qzu-fg2);font-size:10px;}",
+  ".qz-st-empty{color:var(--qzu-fg2);font-size:13px;padding:12px 4px;}",
   "@media(max-width:820px){.qz-stats-hero,.qz-stats-cards,.qz-stats-grid{grid-template-columns:1fr;}}",
   ".qz-stats-headbtns{display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;}",
-  ".qz-stats-cloud{appearance:none;border:0;background:rgba(255,255,255,.06);color:#cbd3df;width:38px;height:38px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;-webkit-app-region:no-drag;}",
-  ".qz-stats-cloud:hover{background:rgba(255,255,255,.13);color:var(--qz-accent,#3DA8FE);}",
-  ".qz-cloud-modal{position:fixed;inset:0;z-index:2147482500;display:flex;align-items:center;justify-content:center;background:rgba(4,6,10,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);-webkit-app-region:no-drag;}",
-  ".qz-cloud-box{width:min(470px,92vw);background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:20px 22px;box-shadow:0 30px 80px rgba(0,0,0,.6);}",
-  ".qz-cloud-h{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:800;color:#eef2f7;}",
+  ".qz-stats-cloud{appearance:none;border:0;background:color-mix(in srgb,currentColor 6%,transparent);color:var(--qzu-fg2);width:38px;height:38px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;-webkit-app-region:no-drag;}",
+  ".qz-stats-cloud:hover{background:color-mix(in srgb,currentColor 13%,transparent);color:var(--qz-accent,#3DA8FE);}",
+  ".qz-cloud-modal{position:fixed;inset:0;z-index:2147482500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);-webkit-app-region:no-drag;}",
+  ".qz-cloud-box{width:min(470px,92vw);box-sizing:border-box;background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);border-radius:16px;padding:20px 22px;box-shadow:0 24px 64px rgba(0,0,0,.45);}",
+  ".qz-cloud-h{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:800;color:var(--qzu-fg);}",
   ".qz-cloud-h svg{color:var(--qz-accent,#3DA8FE);}",
-  ".qz-cloud-p{font-size:12.5px;color:#9aa3b2;line-height:1.55;margin:12px 0 12px;}.qz-cloud-p b{color:#cbd3df;}",
-  ".qz-cloud-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid rgba(255,255,255,.07);}",
-  ".qz-cloud-row span{font-size:14px;font-weight:650;color:#e7ecf3;}",
-  ".qz-cloud-sw{position:relative;width:46px;height:26px;border-radius:20px;border:0;cursor:pointer;background:rgba(255,255,255,.16);transition:background .15s;flex:0 0 auto;}",
-  ".qz-cloud-sw span{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .16s;}",
-  ".qz-cloud-sw.on{background:var(--qz-accent,#3DA8FE);}.qz-cloud-sw.on span{left:23px;}",
-  ".qz-cloud-lbl{font-size:12px;color:#8b94a3;margin:10px 0 6px;}",
+  ".qz-cloud-p{font-size:12.5px;color:var(--qzu-fg2);line-height:1.55;margin:12px 0 12px;}.qz-cloud-p b{color:var(--qzu-fg2);}",
+  ".qz-cloud-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid color-mix(in srgb,currentColor 7%,transparent);}",
+  ".qz-cloud-row>span{font-size:14px;font-weight:650;color:var(--qzu-fg);}",
+  ".qz-cloud-lbl{font-size:12px;color:var(--qzu-fg2);margin:10px 0 6px;}",
   ".qz-cloud-idrow,.qz-cloud-import{display:flex;gap:8px;align-items:center;}",
-  ".qz-cloud-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:#cbd3df;}",
-  ".qz-cloud-btn{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e7ecf3;font:inherit;font-size:12.5px;font-weight:650;padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap;}",
-  ".qz-cloud-btn:hover{background:rgba(255,255,255,.12);}.qz-cloud-btn.ghost{background:transparent;}",
+  ".qz-cloud-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:12px;background:color-mix(in srgb,currentColor 5%,transparent);border:1px solid color-mix(in srgb,currentColor 10%,transparent);border-radius:8px;padding:8px 10px;color:var(--qzu-fg2);}",
+  ".qz-cloud-btn{appearance:none;border:1px solid color-mix(in srgb,currentColor 14%,transparent);background:color-mix(in srgb,currentColor 6%,transparent);color:var(--qzu-fg);font:inherit;font-size:12.5px;font-weight:650;padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap;}",
+  ".qz-cloud-btn:hover{background:color-mix(in srgb,currentColor 12%,transparent);}.qz-cloud-btn.ghost{background:transparent;}",
   ".qz-cloud-status{font-size:12px;color:var(--qz-accent,#3DA8FE);margin:10px 0 4px;min-height:16px;}",
   ".qz-cloud-actrow{display:flex;gap:8px;margin-top:6px;}.qz-cloud-import{margin-top:8px;}",
-  ".qz-cloud-input{flex:1;min-width:0;appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#e7ecf3;font:inherit;font-size:12.5px;padding:8px 10px;border-radius:8px;}",
+  ".qz-cloud-input{flex:1;min-width:0;appearance:none;border:1px solid color-mix(in srgb,currentColor 14%,transparent);background:color-mix(in srgb,currentColor 5%,transparent);color:var(--qzu-fg);font:inherit;font-size:12.5px;padding:8px 10px;border-radius:8px;}",
   ".qz-cloud-done{width:100%;margin-top:16px;appearance:none;border:0;border-radius:9px;padding:10px;font:inherit;font-size:14px;font-weight:750;cursor:pointer;color:#06090a;background:var(--qz-accent,#3DA8FE);}"
 ].join("");
 
