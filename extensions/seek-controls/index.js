@@ -76,37 +76,32 @@ var SVG_FWD = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none"><g tr
 Q.css(CSS_ID, [
   ".qz-seek-group{display:inline-flex;align-items:center;gap:1px;margin-right:6px;flex:0 0 auto;}",
   ".qz-seek-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;appearance:none;border:0;",
-  "border-radius:50%;background:transparent;color:#cbd3df;cursor:pointer;transition:background .15s,color .12s,transform .08s;flex:0 0 auto;}",
+  "border-radius:50%;background:transparent;color:color-mix(in srgb,currentColor 82%,transparent);cursor:pointer;transition:background .15s,color .12s,transform .08s;flex:0 0 auto;}",
   ".qz-seek-btn:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 20%,transparent);color:var(--qz-accent,#3DA8FE);}",
   ".qz-seek-btn:active{transform:scale(.88);}",
   ".qz-seek-btn.qz-seek-flash{color:var(--qz-accent,#3DA8FE);}",
   ".qz-seek-btn svg{pointer-events:none;display:block;}",
   ".qz-ab-btn{width:auto;min-width:36px;height:24px;margin-left:2px;padding:0 9px;border-radius:16px;font:inherit;font-size:11px;",
-  "font-weight:800;letter-spacing:.4px;color:#cbd3df;background:transparent;border:1px solid rgba(255,255,255,.20);cursor:pointer;",
+  "font-weight:700;color:color-mix(in srgb,currentColor 82%,transparent);background:transparent;border:1px solid color-mix(in srgb,currentColor 20%,transparent);cursor:pointer;",
   "transition:all .15s;white-space:nowrap;}",
   ".qz-ab-btn:hover{color:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);}",
   ".qz-ab-btn.qz-ab-armed{color:#06090a;background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);}",
-  ".qz-ab-btn.qz-ab-loop{color:#06090a;background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);box-shadow:0 0 12px -2px var(--qz-accent,#3DA8FE);}",
-  "#qz-seek-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);z-index:2147483600;",
-  "padding:10px 17px;border-radius:24px;font-size:13px;font-weight:600;color:#06090a;background:var(--qz-accent,#3DA8FE);",
-  "box-shadow:0 16px 44px -12px rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;white-space:nowrap;}",
-  "#qz-seek-toast.qz-show{opacity:1;transform:translateX(-50%) translateY(0);}"
+  ".qz-ab-btn.qz-ab-loop{color:#06090a;background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);}",
 ].join(""));
 
-var toastT = null;
+// one toast at a time: a new message replaces the last one
+var curToast = null;
 function toast(msg) {
-  var t = document.getElementById("qz-seek-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-seek-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 1800);
+  if (curToast) curToast.close();
+  curToast = Q.ui.toast(msg, { timeout: 1800 });
 }
 
 // rewind / forward -> RIGHT zone (the settings cluster, with lyrics + fullscreen)
 var seekG = document.createElement("span");
 seekG.className = "qz-seek-group";
 seekG.innerHTML =
-  '<button class="qz-seek-btn" data-qz-seek="back" title="Back 10 seconds">' + SVG_BACK + "</button>" +
-  '<button class="qz-seek-btn" data-qz-seek="fwd" title="Forward 10 seconds">' + SVG_FWD + "</button>";
+  '<button class="qz-seek-btn" data-qz-seek="back" title="Back 10 seconds" aria-label="Back 10 seconds">' + SVG_BACK + "</button>" +
+  '<button class="qz-seek-btn" data-qz-seek="fwd" title="Forward 10 seconds" aria-label="Forward 10 seconds">' + SVG_FWD + "</button>";
 seekG.querySelector('[data-qz-seek="back"]').addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); nudge(-STEP); });
 seekG.querySelector('[data-qz-seek="fwd"]').addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); nudge(STEP); });
 var slotSeek = Q.playerSlot({ id: "seek-fwdback", zone: "right", order: 20, el: seekG });
@@ -127,6 +122,6 @@ return function cleanup() {
   if (offTrack) offTrack();
   if (loopIv) clearInterval(loopIv);
   loopA = null; loopB = null; loopIv = null;
-  var t = document.getElementById("qz-seek-toast"); if (t) t.remove();
+  if (curToast) curToast.close();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
