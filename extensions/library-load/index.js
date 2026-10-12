@@ -43,8 +43,11 @@ var mem = {
   idsPromise: null,
   meta: {},         // type -> array of (full or rehydrated-compact) track objects
   loaded: {},       // type -> bool (full metadata in memory)
-  loading: {}       // type -> in-flight Promise
+  loading: {},      // type -> in-flight Promise
+  stale: {},        // type -> bool: mem.meta holds an out-of-date cache served after a failed load
+  retryAt: {}       // type -> ms timestamp; a failed load isn't retried (non-forced) before this
 };
+var RETRY_MS = 120000;          // after a failed load, serve what we have and retry no sooner than this
 var progCbs = [];   // Q.library.onProgress subscribers
 
 function fmt(n) { try { return Number(n).toLocaleString("en-US"); } catch (e) { return String(n); } }
@@ -174,24 +177,30 @@ function ensureIds(force) {
 }
 
 function pageAll(type, fpv) {
-  var all = [], offset = 0, total = null, pages = 0;
+  var all = [], offset = 0, total = null, apiTotal = null, pages = 0;
   progStart();
   function step() {
     // realApi, never Q.api: our own wrap (below) serves cached id-only stubs for favorites calls, and
     // paging through it would persist a metadata cache of empty records under a valid fingerprint.
     return realApi.call(Q, "favorite/getUserFavorites?type=" + type + "&limit=" + PAGE + "&offset=" + offset).then(function (j) {
       var node = j && j[type], items = (node && node.items) || [];
-      if (total == null) total = (node && node.total) || (mem.ids && Object.keys(mem.ids[type] || {}).length) || items.length;
+      if (apiTotal == null && node && typeof node.total === "number") apiTotal = node.total;
+      if (total == null) total = apiTotal || (mem.ids && Object.keys(mem.ids[type] || {}).length) || items.length;
       all = all.concat(items);
       progUpdate(all.length, total);
       offset += PAGE; pages++;
-      if (items.length === PAGE && all.length < total && pages < MAX_PAGES) return step();
+      // A short page is not the end (the server can return fewer than PAGE mid-list); only an empty
+      // page or reaching the total is.
+      if (items.length && all.length < total && pages < MAX_PAGES) return step();
       return all;
     });
   }
   return step().then(function (list) {
-    persistMeta(type, fpv, list);
-    progDone(list.length, false);
+    // Short of the server's own total = an incomplete list. Keep it in memory for this session, but
+    // never persist it as the complete set under a valid fingerprint.
+    var short = apiTotal != null && list.length < apiTotal;
+    if (!short) persistMeta(type, fpv, list);
+    progDone(list.length, short);
     return list;
   }, function (e) { progDone(all.length, true); throw e; });
 }
@@ -199,6 +208,8 @@ function pageAll(type, fpv) {
 function loadType(type, force) {
   if (mem.loaded[type] && !force) return Promise.resolve(mem.meta[type]);
   if (mem.loading[type]) return mem.loading[type];
+  // a recent load failed: serve what we have rather than hammering the API on every caller
+  if (!force && mem.retryAt[type] && Date.now() < mem.retryAt[type]) return Promise.resolve(mem.meta[type] || []);
   mem.loading[type] = ensureIds(force).then(function () {
     var fpNow = mem.fp[type];
     if (!force) {
@@ -207,12 +218,16 @@ function loadType(type, force) {
     }
     return pageAll(type, fpNow);
   }).then(function (list) {
-    mem.meta[type] = list; mem.loaded[type] = true; delete mem.loading[type]; updateSettingsSub();
+    mem.meta[type] = list; mem.loaded[type] = true; delete mem.loading[type];
+    delete mem.stale[type]; delete mem.retryAt[type]; updateSettingsSub();
     return list;
   }).catch(function () {
     delete mem.loading[type];
-    var stale = hydrateMeta(type, null); // last-ditch: serve whatever's cached even if fingerprint moved
-    if (stale) { mem.meta[type] = stale; mem.loaded[type] = true; return stale; }
+    mem.retryAt[type] = Date.now() + RETRY_MS;
+    // last-ditch: serve whatever's cached even if the fingerprint moved. Not marked loaded, so a
+    // later call (after retryAt) pages again; ready() still reports it so consumers can render.
+    if (!mem.meta[type]) mem.meta[type] = hydrateMeta(type, null) || undefined;
+    if (mem.meta[type]) mem.stale[type] = true;
     return mem.meta[type] || [];
   });
   return mem.loading[type];
@@ -273,7 +288,9 @@ function notify(ev) { for (var i = 0; i < progCbs.length; i++) { try { progCbs[i
 // Better Search is left unedited per task; this exposes the complete set for it (and anyone) to adopt.
 var libApi = {
   idsReady: function () { return !!mem.ids; },
-  ready: function (type) { return !!mem.loaded[type || "tracks"]; },
+  // true once there is a usable list: fully loaded, or a stale cache served after a failed load
+  // (that one is retried later, see loadType)
+  ready: function (type) { type = type || "tracks"; return !!(mem.loaded[type] || mem.stale[type]); },
   has: function (type, id) { try { return !!(mem.ids && mem.ids[type] && mem.ids[type][String(id)]); } catch (e) { return false; } },
   hasTrack: function (id) { return this.has("tracks", id); },
   ids: function (type) { try { return mem.ids ? Object.keys(mem.ids[type || "tracks"] || {}) : []; } catch (e) { return []; } },
