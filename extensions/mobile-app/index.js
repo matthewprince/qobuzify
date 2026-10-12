@@ -714,29 +714,63 @@ function shuffleWholeLibrary() {
   }).catch(function () { qToast("Couldn't shuffle your library"); _shufBusy = false; });
 }
 var _shufBusy = false;
-// Own playlist slot, so shuffling does not delete the radio playlist and vice versa.
-function createShufflePlaylist(ids) {
-  return Q.api("playlist/create?name=" + encodeURIComponent("Shuffle \u00b7 My Tracks") + "&is_public=false").then(function (c) {
+
+// ---- generated playlists (radio, shuffle): one slot each, the previous one reclaimed on the next run ----
+// The slot stores what we created ({ id, name, description, count, done }), not just the id, because the
+// user can adopt one of these playlists: rename it, add or remove tracks, keep it. Before deleting a stored
+// id we re-read it (uncached) and delete only if name, description and track count are still exactly ours;
+// anything else means it is the user's playlist now, so we just forget the id. A legacy slot (a bare id from
+// before this check) carries nothing to compare against, so it is forgotten, never deleted.
+// Q.storage holds strings: the record is JSON; a legacy bare id parses as a number or not at all, and
+// either way comes back as null (nothing to compare, so nothing is deleted).
+function getSlot(slot) {
+  try { var o = JSON.parse(Q.storage.get(slot, "null")); return (o && typeof o === "object" && o.id) ? o : null; } catch (e) { return null; }
+}
+function setSlot(slot, rec) { try { Q.storage.set(slot, JSON.stringify(rec)); } catch (e) {} }
+function reclaimGenerated(rec) {
+  if (!rec || typeof rec !== "object" || !rec.id) return Promise.resolve(false);
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(rec.id) + "&limit=0").then(function (j) {
+    if (!j || String(j.id) !== String(rec.id)) return false;
+    var n = Number(j.tracks_count);
+    var countOk = rec.done ? n === rec.count : (n >= 0 && n <= rec.count);   // an interrupted fill may be short
+    if ((j.name || "") !== rec.name || (j.description || "") !== (rec.description || "") || !countOk) return false;
+    return deletePlaylist(rec.id).then(function () { invalidateApi("playlist/getUserPlaylists"); return true; });
+  }).catch(function () { return false; });   // gone already, or unreadable: never delete blind
+}
+function createGeneratedPlaylist(slot, name, ids) {
+  return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false").then(function (c) {
     var pid = String(c.id);
-    var old = Q.storage.get("mob:shuffle", null); Q.storage.set("mob:shuffle", pid);
-    if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
+    var rec = { id: pid, name: (c && c.name) || name, description: (c && c.description) || "", count: ids.length, done: false };
+    // Record + reclaim the previous one BEFORE adding tracks: if addTracks fails or the app dies mid-way,
+    // the slot still points at this new playlist, so the next run can reclaim it instead of orphaning it.
+    var old = getSlot(slot); setSlot(slot, rec);
+    if (old && old.id !== pid) setTimeout(function () { reclaimGenerated(old); }, 8000);
     return addTracksBatched(pid, ids).then(function () {
-      qToast("Shuffling " + ids.length + " tracks");
-      navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });
+      // Read the real count back (Qobuz may drop duplicates), so the next reclaim compares like with like.
+      return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&limit=0").then(function (j) {
+        if (j && j.tracks_count != null) rec.count = Number(j.tracks_count);
+        if (j && typeof j.name === "string") rec.name = j.name;
+        if (j && typeof j.description === "string") rec.description = j.description;
+      }).catch(function () {}).then(function () {
+        rec.done = true;
+        var cur = getSlot(slot);
+        if (cur && cur.id === pid) setSlot(slot, rec);
+        return pid;
+      });
     });
   });
 }
+// Own playlist slot, so shuffling does not delete the radio playlist and vice versa.
+function createShufflePlaylist(ids) {
+  return createGeneratedPlaylist("mob:shuffle", "Shuffle \u00b7 My Tracks", ids).then(function (pid) {
+    qToast("Shuffling " + ids.length + " tracks");
+    navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });
+  });
+}
 function createRadioPlaylist(name, ids) {
-  return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false").then(function (c) {
-    var pid = String(c.id);
-    // Record + reclaim the previous radio BEFORE adding tracks: if addTracks fails mid-way, mob:radio still
-    // points at this new playlist, so the next radio run deletes it instead of orphaning it in the library.
-    var old = Q.storage.get("mob:radio", null); Q.storage.set("mob:radio", pid);   // keep one radio playlist
-    if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
-    return addTracksBatched(pid, ids).then(function () {
-      qToast("Radio started");
-      navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });           // proven native play
-    });
+  return createGeneratedPlaylist("mob:radio", name, ids).then(function (pid) {   // keep one radio playlist
+    qToast("Radio started");
+    navClickRow("/playlist/" + pid, function (rows) { return rows[0]; });           // proven native play
   });
 }
 // Prefer Smart Radio's engine when that extension is switched on. Its picks are materially better than
