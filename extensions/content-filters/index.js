@@ -46,23 +46,29 @@ function openPop(wrap) {
   if (wrap.querySelector(".qz-cf-pop")) { closePop(); return; }
   var pop = document.createElement("div");
   pop.className = "qz-cf-pop";
+  Q.ui.follow(pop);
   pop.innerHTML = "<h4>Show in nav</h4>";
   ITEMS.forEach(function (it) {
     var row = document.createElement("div");
     var hidden = isHidden(it.key);
-    row.className = "qz-cf-row" + (hidden ? "" : " qz-on"); // qz-on = shown (toggle ON)
-    row.innerHTML = "<span>" + it.label + "</span><span class='qz-cf-chk'><i></i></span>";
-    row.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var nowShown = !row.classList.contains("qz-on");
+    row.className = "qz-cf-row" + (hidden ? "" : " qz-on"); // qz-on = shown (switch ON)
+    row.innerHTML = "<span>" + it.label + "</span>";
+    var sw = Q.ui.switch({ checked: !hidden, label: "Show " + it.label, onChange: function (nowShown) {
       row.classList.toggle("qz-on", nowShown);
       toggleKey(it.key, !nowShown); // shown => not hidden
+    } });
+    row.appendChild(sw);
+    // the whole row toggles, as before; a click on the switch itself is handled by the switch
+    row.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (e.target.closest && e.target.closest(".qzu-switch")) return;
+      sw.click();
     });
     pop.appendChild(row);
   });
   var foot = document.createElement("div");
   foot.className = "qz-cf-foot";
-  foot.innerHTML = "<button data-act='all'>Show all</button>";
+  foot.innerHTML = "<button type='button' class='qzu-btn' data-act='all'>Show all</button>";
   foot.querySelector("[data-act='all']").addEventListener("click", function (e) { e.stopPropagation(); setHidden([]); applyHide(); closePop(); openPop(wrap); });
   pop.appendChild(foot);
   wrap.appendChild(pop);
@@ -74,25 +80,20 @@ var FUNNEL = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke
 Q.css(CSS_ID, [
   "#qz-cf-wrap{position:relative;display:inline-flex;align-items:center;flex:0 0 auto;}",
   "#qz-cf-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;appearance:none;border:0;border-radius:9px;",
-  "background:transparent;color:#aeb6c2;cursor:pointer;transition:background .15s,color .12s;}",
-  "#qz-cf-btn:hover{background:rgba(255,255,255,.08);color:var(--qz-accent,#3DA8FE);}",
+  "background:transparent;color:color-mix(in srgb,currentColor 75%,transparent);cursor:pointer;transition:background .15s,color .12s;}",
+  "#qz-cf-btn:hover{background:color-mix(in srgb,currentColor 8%,transparent);color:var(--qz-accent,#3DA8FE);}",
   "#qz-cf-btn svg{pointer-events:none;display:block;}",
-  ".qz-cf-pop{position:absolute;top:calc(100% + 10px);right:0;z-index:2147483600;min-width:230px;padding:10px;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-cf-pop h4{margin:4px 6px 9px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#8b94a3;}",
+  // the popover follows Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
+  ".qz-cf-pop{position:absolute;top:calc(100% + 10px);right:0;z-index:2147483600;min-width:230px;padding:10px;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-cf-pop h4{margin:4px 6px 9px;font-size:13px;font-weight:600;color:var(--qzu-fg2);}",
   ".qz-cf-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px;border-radius:9px;cursor:pointer;}",
-  ".qz-cf-row:hover{background:rgba(255,255,255,.05);}",
-  ".qz-cf-row span:first-child{font-size:13px;color:#e7ecf3;font-weight:550;}",
-  ".qz-cf-row:not(.qz-on) span:first-child{color:#7e8796;}",
-  ".qz-cf-chk{position:relative;width:38px;height:22px;border-radius:20px;background:rgba(255,255,255,.16);flex:0 0 auto;transition:background .15s;}",
-  ".qz-cf-chk i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .16s;}",
-  ".qz-cf-row.qz-on .qz-cf-chk{background:var(--qz-accent,#3DA8FE);}",
-  ".qz-cf-row.qz-on .qz-cf-chk i{left:19px;}",
+  ".qz-cf-row:hover{background:var(--qzu-fill);}",
+  ".qz-cf-row>span{font-size:13px;font-weight:550;}",
+  ".qz-cf-row:not(.qz-on)>span{color:var(--qzu-fg2);}",
   ".qz-cf-foot{display:flex;padding:8px 6px 3px;}",
-  ".qz-cf-foot button{flex:1;appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#cbd3df;",
-  "font:inherit;font-size:12px;font-weight:600;padding:7px;border-radius:8px;cursor:pointer;}",
-  ".qz-cf-foot button:hover{background:rgba(255,255,255,.1);color:#fff;}"
+  ".qz-cf-foot .qzu-btn{flex:1;}"
 ].join(""));
 
 function ensureButton() {
@@ -101,7 +102,7 @@ function ensureButton() {
   var wrap = document.createElement("span");
   wrap.id = "qz-cf-wrap";
   var b = document.createElement("button");
-  b.id = "qz-cf-btn"; b.title = "Hide nav items";
+  b.id = "qz-cf-btn"; b.title = "Hide nav items"; b.setAttribute("aria-label", "Hide nav items");
   b.innerHTML = FUNNEL;
   b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPop(wrap); });
   wrap.appendChild(b);
