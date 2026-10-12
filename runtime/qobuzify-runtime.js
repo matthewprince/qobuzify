@@ -1036,7 +1036,8 @@
   var playerSlots = { left: [], right: [] }; // player-bar buttons added by extensions (see Q.playerSlot)
   // Slots pinned to their zone's outer edge, so a narrow window hides them last. Lyrics is the button
   // people reach for most and it used to have the lowest order, which made it the first to vanish.
-  var OUTER_SLOTS = { "qz-lyrics": 1 };
+  // The value ranks them: higher sits further out. Full screen is outermost, lyrics just inside it.
+  var OUTER_SLOTS = { "full-app-display": 2, "qz-lyrics": 1 };
   var API_TIMEOUT_MS = 15000;      // Q.api default; long callers pass { timeout }
 
   // Walk the React fiber tree from #root to find the Redux store. Qobuz ships a
@@ -1474,7 +1475,7 @@
         var zone = spec.zone === "left" ? "left" : "right";
         var order = spec.order || 0;
         // outermost = highest order on the right (buttons flow toward the window edge), lowest on the left
-        if (spec.outer || OUTER_SLOTS[spec.id]) order = zone === "right" ? 1e6 : -1e6;
+        if (spec.outer || OUTER_SLOTS[spec.id]) { var rank = OUTER_SLOTS[spec.id] || 0; order = zone === "right" ? 1e6 + rank : -1e6 - rank; }
         playerSlots[zone] = playerSlots[zone].filter(function (s) { return s.id !== spec.id; });
         playerSlots[zone].push({ id: spec.id, order: order, el: spec.el, label: spec.label || "" });
         injectPlayerSlots();
@@ -1877,8 +1878,8 @@
     // flex:0 0 auto and keep their size) so the chip ellipsizes instead of the timer being shoved out.
     ".qz-slot-left{display:inline-flex;align-items:center;gap:4px;padding:0 8px;flex:0 1 auto;min-width:0;}",
     // Buttons flow in ascending `order` left-to-right, so the highest-order button sits at the OUTER (right)
-    // edge and the lowest nearest the centred transport. Lyrics is pinned outermost (OUTER_SLOTS), then Full
-    // App Display (40). fitPlayerSlots drops from the inner edge on narrow windows, so the outer buttons
+    // edge and the lowest nearest the centred transport. Full App Display is pinned outermost and lyrics
+    // just inside it (OUTER_SLOTS). fitPlayerSlots drops from the inner edge on narrow windows, so the outer buttons
     // survive longest, and whatever it drops is listed under the "..." button.
     ".qz-slot-right{display:inline-flex;align-items:center;gap:8px;margin-right:14px;flex:0 0 auto;}",
     ".qz-pbtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;appearance:none;border:0;border-radius:9px;",
