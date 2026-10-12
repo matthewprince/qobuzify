@@ -5,8 +5,9 @@
 const fs = require("fs");
 const path = require("path");
 const { locate } = require("../lib/locate");
-const { install, buildCatalog, buildExtensions } = require("../lib/apply");
+const { install, buildCatalog, buildExtensions, RUNTIME_ID } = require("../lib/apply");
 const { restore } = require("../lib/restore");
+const autopatch = require("../lib/autopatch");
 
 const ROOT = path.join(__dirname, "..");
 const THEMES_DIR = path.join(ROOT, "themes");
@@ -44,10 +45,18 @@ function currentSeed() {
 
 // Inject the runtime + full theme catalog, asserting `def` as the starting theme. A fresh `seed`
 // forces `def` on next launch; pass the existing seed to leave the live theme choice alone.
-function installRuntime(def, seed) {
+// opts.explicit: the user typed this theme, so a typo is an error. Otherwise (update, reapply) the theme
+// came from the baked block or the state file and may name a theme a newer Qobuzify no longer ships: fall
+// back to the default rather than refusing to update at all.
+// opts.relaunch: false to patch without restarting Qobuz.
+function installRuntime(def, seed, opts = {}) {
   const catalog = buildCatalog(THEMES_DIR);
   if (def && !catalog.some((t) => t.slug === def)) {
-    throw new Error(`Theme "${def}" not found. Run: qobuzify list`);
+    if (opts.explicit) throw new Error(`Theme "${def}" not found. Run: qobuzify list`);
+    const fallback = catalog.some((t) => t.slug === DEFAULT_THEME) ? DEFAULT_THEME : (catalog[0] && catalog[0].slug);
+    if (!fallback) throw new Error("No themes found in " + THEMES_DIR);
+    console.error(`Theme "${def}" is no longer included; using "${fallback}" instead.`);
+    def = fallback;
   }
   const extensions = buildExtensions(EXT_DIR);
   const runtimeSrc = fs.readFileSync(RUNTIME, "utf8");
@@ -62,8 +71,43 @@ function installRuntime(def, seed) {
   // one today - the lyrics view renders through Lyra, which is prepended into the payload - so this is
   // empty, but the plumbing stays for any future vendor-bearing extension.
   const vendors = extensions.filter((e) => e.hasVendor).map((e) => ({ name: "qobuzify-ext-" + e.id + ".js", src: path.join(EXT_DIR, e.id, "vendor.js") }));
-  install(locate(), { catalog, extensions, def: def || DEFAULT_THEME, version: version(), seed: seed || Date.now(), runtimeSrc, spotify, spotifyToken, apple, vendors });
+  install(locate(), { catalog, extensions, def: def || DEFAULT_THEME, version: version(), seed: seed || Date.now(), runtimeSrc, spotify, spotifyToken, apple, vendors },
+    { relaunch: opts.relaunch !== false });
   return catalog.find((t) => t.slug === (def || DEFAULT_THEME));
+}
+
+// Install/refresh the auto-reapply task unless the user turned it off with `qobuzify autopatch off`.
+function ensureAutopatch() {
+  if (process.platform !== "win32" || readState().autopatch === false) return;
+  const r = autopatch.enable(ROOT);
+  if (r.ok) console.log("Qobuz updates are re-patched automatically (turn off with: qobuzify autopatch off).");
+  else console.error("Could not set up automatic re-patching after Qobuz updates (" + r.reason + "). Run qobuzify update after a Qobuz update.");
+}
+
+// Run by the auto-reapply Scheduled Task. Quiet, never relaunches Qobuz, and does nothing unless the
+// newest app-* folder is unpatched AND Squirrel has finished writing it (nothing in it changed in the last
+// two minutes; a half-unpacked folder would otherwise give us a truncated file to back up).
+const SETTLE_MS = 2 * 60 * 1000;
+function reapply() {
+  let p;
+  try { p = locate(); } catch (_) { return 0; } // Qobuz missing or mid-update (files not there yet): next run
+  let html;
+  try { html = fs.readFileSync(p.appHtml, "utf8"); } catch (_) { return 0; }
+  if (html.includes(`<script id="${RUNTIME_ID}">`)) return 0; // already patched: the common case
+  const files = [p.appDir, p.appHtml, p.legacyCss, path.join(path.dirname(p.appHtml), "main-win32.js")];
+  const newest = Math.max(...files.map((f) => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } }));
+  if (Date.now() - newest < SETTLE_MS) return 0;
+  const st = readState();
+  const def = st.theme || DEFAULT_THEME;
+  const seed = st.seed || Date.now();
+  try {
+    const t = installRuntime(def, seed, { relaunch: false });
+    saveState({ seed, theme: t ? t.slug : def, lastReapply: { at: new Date().toISOString(), version: p.version, ok: true } });
+    return 0;
+  } catch (e) {
+    saveState({ lastReapply: { at: new Date().toISOString(), version: p.version, ok: false, error: String(e.message).slice(0, 300) } });
+    return 1;
+  }
 }
 
 function usage() {
@@ -74,7 +118,13 @@ function usage() {
   console.log("  qobuzify install [theme]  install the in-app Marketplace (default theme optional)");
   console.log("  qobuzify update           re-apply the current files, keeping your theme and settings");
   console.log("  qobuzify apply <theme>    set a theme and relaunch (switch live from the Marketplace after)");
-  console.log("  qobuzify restore          revert to the stock Qobuz UI");
+  console.log("  qobuzify restore          revert to the stock Qobuz UI and remove the auto-reapply task");
+  console.log("  qobuzify autopatch [on|off]  show, turn on or turn off automatic re-patching");
+  console.log("");
+  console.log("Qobuz updates itself into a fresh, unpatched folder. On Windows, install/update/apply also");
+  console.log("create a per-user Scheduled Task (\"Qobuzify Auto-Reapply\", no admin needed) that runs");
+  console.log("`qobuzify reapply` every 15 minutes: when the newest Qobuz is unpatched it re-applies your");
+  console.log("theme and settings, without restarting Qobuz. `qobuzify restore` removes the task.");
 }
 
 async function main() {
@@ -105,23 +155,49 @@ async function main() {
         const st = readState();
         const def = arg || currentTheme() || st.theme || DEFAULT_THEME;
         const seed = arg ? Date.now() : (existingSeed || st.seed || Date.now());
-        const t = installRuntime(def, seed);
-        saveState({ seed, theme: def });
+        const t = installRuntime(def, seed, { explicit: !!arg });
+        saveState({ seed, theme: t ? t.slug : def });
         const verb = (existingSeed || st.seed) ? "Updated" : "Installed";
         console.log(`${verb} Qobuzify v${version()} (theme "${t ? t.name : DEFAULT_THEME}").`);
         console.log("In Qobuz: click your avatar (top-right) > Marketplace to browse and switch themes live.");
+        ensureAutopatch();
         break;
       }
       case "apply": {
         if (!arg) throw new Error("Usage: qobuzify apply <theme>  (or: qobuzify install)");
         const seed = Date.now();
-        const t = installRuntime(arg, seed);
+        const t = installRuntime(arg, seed, { explicit: true });
         saveState({ seed, theme: arg });
         console.log(`Applied "${t ? t.name : arg}" and relaunched Qobuz.`);
         console.log("Switch themes live from the avatar menu > Marketplace.");
+        ensureAutopatch();
+        break;
+      }
+      case "reapply":
+        process.exit(reapply());
+        break;
+      case "autopatch": {
+        if (process.platform !== "win32") throw new Error("Automatic re-patching is Windows-only (it follows the Qobuz desktop app's own updater).");
+        if (arg === "off") {
+          const r = autopatch.disable(ROOT);
+          saveState({ autopatch: false });
+          console.log(r.ok ? "Automatic re-patching is off. Run qobuzify update after each Qobuz update." : "Could not remove the scheduled task \"" + autopatch.TASK_NAME + "\"; remove it in Task Scheduler.");
+        } else if (arg === "on") {
+          saveState({ autopatch: true });
+          const r = autopatch.enable(ROOT);
+          if (!r.ok) throw new Error("Could not create the scheduled task: " + r.reason);
+          console.log("Automatic re-patching is on: Qobuzify is re-applied within 15 minutes of a Qobuz update.");
+        } else {
+          const st = readState();
+          console.log("Automatic re-patching: " + (autopatch.status().installed ? "on" : "off") + " (task \"" + autopatch.TASK_NAME + "\")");
+          if (st.lastReapply) console.log("Last re-patch: " + st.lastReapply.at + " Qobuz " + st.lastReapply.version + (st.lastReapply.ok ? " ok" : " FAILED: " + st.lastReapply.error));
+        }
         break;
       }
       case "restore": {
+        // Remove the auto-reapply task first, so it can't patch Qobuz straight back after the restore.
+        const a = autopatch.disable(ROOT);
+        if (!a.ok) console.error("Could not remove the scheduled task \"" + autopatch.TASK_NAME + "\"; remove it in Task Scheduler.");
         const n = restore(locate());
         console.log(n ? "Restored Qobuz to stock and relaunched." : "No Qobuzify backups found; nothing to restore.");
         break;
