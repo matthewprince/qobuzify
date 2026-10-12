@@ -86,7 +86,10 @@ let probeTimer = null; // dev-only diagnostics interval; cleared on window close
 // to an update was noticing by hand. Ask the releases API directly: one request, no updater dependency, and
 // it behaves the same for AppImage, deb, rpm, nsis and mac. We only ever TELL: deb/rpm installs belong to the
 // package manager, and silently swapping an AppImage under someone is not ours to do.
-const RELEASES_API = "https://api.github.com/repos/matthewprince/qobuzify/releases/latest";
+// The list, not /releases/latest: other product lines (android-v*, bake-v*) publish to the same repo, and
+// whenever one of them was GitHub's "latest" the check saw a tag it can't parse and went blind (07-30 to
+// 08-01). Take the highest plain v* tag out of the most recent 30 instead.
+const RELEASES_API = "https://api.github.com/repos/matthewprince/qobuzify/releases?per_page=30";
 const RELEASES_PAGE = "https://github.com/matthewprince/qobuzify/releases/latest";
 const UPDATE_EVERY_MS = 24 * 60 * 60 * 1000;
 let updateTimer = null, notifiedTag = null;
@@ -160,12 +163,22 @@ function checkForUpdate() {
       res.on("data", (d) => { body += d; if (body.length > 1024 * 1024) { try { req.destroy(); } catch (_) {} } });
       res.on("end", () => {
         try {
-          const j = JSON.parse(body);
-          if (j.draft || j.prerelease) return;
-          const tag = j.tag_name || j.name;
+          const list = JSON.parse(body);
+          if (!Array.isArray(list)) return;
+          // Highest wrapper release: skip drafts/prereleases, and semver() is anchored, so android-v* and
+          // bake-v* tags parse as nothing and drop out here.
+          let best = null;
+          for (const j of list) {
+            if (!j || j.draft || j.prerelease) continue;
+            const t = j.tag_name;
+            if (!/^v\d/.test(String(t || "")) || !semver(t)) continue;
+            if (!best || isNewer(t, best.tag_name)) best = j;
+          }
+          if (!best) return;
+          const tag = best.tag_name;
           if (!isNewer(tag, app.getVersion()) || notifiedTag === tag) return;
           notifiedTag = tag; // one mention per version per run, not once a day forever
-          tellAboutUpdate(tag, j.html_url || RELEASES_PAGE);
+          tellAboutUpdate(tag, best.html_url || RELEASES_PAGE);
         } catch (_) {}
       });
     });
@@ -1556,7 +1569,10 @@ async function createWindow() {
   // and an accelerator can't double-toggle and cancel out). autoHideMenuBar keeps this menu off-screen
   // until Alt; it still carries devtools/reload/zoom so nothing useful is lost.
   const toggleFullScreen = () => { try { if (win) win.setFullScreen(!win.isFullScreen()); } catch (_) {} };
+  // macOS: the app menu (About, Hide, Quit / Cmd+Q) has to be the first entry or the Mac gets no way to
+  // quit from the keyboard or the menu bar.
   Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
     { role: "fileMenu" },
     { role: "editMenu" },
     { label: "View", submenu: [
@@ -1632,6 +1648,10 @@ async function createWindow() {
   win.on("closed", () => {
     if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
     if (updateTimer) { clearInterval(updateTimer); updateTimer = null; } // never outlive the window
+    // The taskbar poll runs executeJavaScript every 2s; the same pattern against a dying webContents has
+    // segfaulted on Linux, so stop it with the window. Reset its state so a new window sets it up again.
+    if (_thumb.timer) { clearInterval(_thumb.timer); _thumb.timer = null; }
+    _thumb.winId = null; _thumb.playing = null;
     win = null;
   });
 
