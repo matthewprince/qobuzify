@@ -331,9 +331,9 @@ function posMs() { try { return Q.player.getPositionMs ? Q.player.getPositionMs(
 // --- drive mpv from the web state (one-directional; the web UI renders its own progress off its live clock) ---
 // The bytes arrive on their own via the MSE tap, which also opens each track on its init segment, so there
 // is no URL to hand over here; this only has to keep transport state in step.
+// Does NOT touch lastTrackId: that key belongs to onNewTrack alone (see below).
 function loadCurrent() {
   var tr = curTrack(); if (!tr || tr.id == null) return;
-  lastTrackId = String(tr.id);
   if (!enabled) return;
   if (G.direct) {
     var tok = bpToken();
@@ -349,6 +349,24 @@ function loadCurrent() {
     // no token (not logged in yet) - fall through to plain transport; the next track change retries.
   }
   BP.send(isPlaying() ? { type: "play" } : { type: "pause" });
+}
+
+// THE per-track reset, in one place, keyed on lastTrackId which nothing else writes (enable() only clears
+// it to force a re-run). A track change is seen by two paths: syncTick's 300ms poll and the
+// runtime's settled Q.player.onChange, which usually fires FIRST (~150ms). loadCurrent used to write
+// lastTrackId itself, so when onChange won, syncTick saw no change and this whole reset was skipped: a
+// directFailed/bpStalled latch from the previous track left the web element unmuted over mpv (the track
+// played twice), justLoaded stayed false so the play edge re-seeked a fresh direct stream (the start-of-
+// track drop), and the previous track's mpv position and spent EOF latch carried over. Whichever path
+// sees the new id first runs this; the other finds the key already current and does nothing extra.
+function onNewTrack(id) {
+  if (!id || id === lastTrackId) return false;
+  lastTrackId = id;
+  bpStalled = false; directFailed = false; lastMpvMs = null; lastSeekAt = 0; justLoaded = true;
+  endedLatch = false; endfeedSent = false;
+  loadCurrent();
+  lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now();
+  return true;
 }
 
 // --- volume -> the DAC's hardware mixer -----------------------------------------------------------
@@ -407,7 +425,7 @@ function syncTick() {
   if (disposed || !enabled) return;
   pushVol(false);
   var tr = curTrack(); var id = tr && tr.id != null ? String(tr.id) : null;
-  if (id && id !== lastTrackId) { bpStalled = false; directFailed = false; lastMpvMs = null; lastSeekAt = 0; justLoaded = true; endedLatch = false; endfeedSent = false; loadCurrent(); lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now(); return; }
+  if (onNewTrack(id)) return;
   var playing = isPlaying();
   // Edge-triggered alone is not enough. The sidecar's transport can be moved by things this loop never
   // observed (a newtrack arriving from the MSE tap, a respawn after a mode change, a dropped command), and
@@ -811,7 +829,12 @@ function enable() {
   // Direct mode loads the current track's signed URL immediately (no waiting for the next segment); the tap
   // path primes mpv with the captured header and engages within a segment, or waits for the next track.
   var primed = G.direct ? !!curTrack() : ((curTrack() && isPlaying()) ? forceRefeed() : false);
-  loadCurrent();
+  // Per-track reset for the current track (lastTrackId was cleared above, so this always runs when there
+  // is a track), which also loads it. Baselining lastWebMs/lastWall here matters: they are frozen from
+  // before the disable, and the first tick's jump detector would otherwise read the gap as a scrub and
+  // re-seek the stream that was just loaded.
+  var etr = curTrack();
+  if (!onNewTrack(etr && etr.id != null ? String(etr.id) : null)) loadCurrent();
   renderBadge();
   toast(G.direct ? "Bit-perfect on (direct stream)" : (primed ? "Bit-perfect on" : "Bit-perfect on - starts on the next track"));
 }
@@ -832,7 +855,14 @@ function syncSettingsButton() {
 hookMedia(); // install before the first play() so no element ever escapes the registry
 tapMse();    // and before the first appendBuffer, so we always hold the current track's init segment
 var syncTimer = setInterval(syncTick, 300);
-var offChange = Q.player.onChange ? Q.player.onChange(function () { if (enabled) { loadCurrent(); } }) : null;
+// Settled track change: route it through the same per-track reset as syncTick. If syncTick already ran it
+// for this id, fall back to the plain loadCurrent this used to do (deduped in direct mode, transport resend
+// in tap mode).
+var offChange = Q.player.onChange ? Q.player.onChange(function () {
+  if (!enabled) return;
+  var tr = curTrack(), id = tr && tr.id != null ? String(tr.id) : null;
+  if (!onNewTrack(id)) loadCurrent();
+}) : null;
 
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
@@ -857,7 +887,10 @@ var unregSettings = Q.registerSettings ? Q.registerSettings(settingsEntry) : nul
 function toggleDirect() {
   setDirect(!G.direct);
   syncDirectButton();
-  if (enabled) { directFailed = false; directToldOnce = false; lastMpvMs = null; lastTrackId = null; _lastDirectId = null; loadCurrent(); }
+  // Same track, new source: reload it but deliberately NOT through onNewTrack. That would also clear a
+  // bpStalled give-up and re-mute the browser over a source that may not produce audio. lastTrackId stays
+  // as it is (it used to be nulled here and immediately re-set by loadCurrent, net no change).
+  if (enabled) { directFailed = false; directToldOnce = false; lastMpvMs = null; _lastDirectId = null; loadCurrent(); }
   toast(G.direct ? "Direct stream on" : "Direct stream off (tap)");
 }
 function syncDirectButton() { try { if (directEntry) directEntry.button = G.direct ? "On" : "Off"; } catch (e) {} }
