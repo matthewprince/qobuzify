@@ -11,7 +11,9 @@ var HIDE_ID = "qz-cf-hide";      // dynamic hide rules
 var PREF = "cfilters:hidden";
 
 var ITEMS = [
-  { key: "/foryou", label: "For You", sel: '.NavBar__items a[href="/foryou"]' },
+  // For You is recommended's injected tab: hide its whole .ui-block-nav-item wrapper (data-qz-nav), not just the
+  // <a>, or an empty padded box is left in the nav row. The bare <a> rule stays for any native /foryou link.
+  { key: "/foryou", label: "For You", sel: '.NavBar__items [data-qz-nav="foryou"], .NavBar__items a[href="/foryou"]' },
   { key: "/discover", label: "Discover", sel: '.NavBar__items a[href="/discover"]' },
   { key: "/magazine", label: "Magazine", sel: '.NavBar__items a[href="/magazine"]' },
   { key: "/user-library", label: "Library", sel: '.NavBar__items a[href="/user-library"]' },
