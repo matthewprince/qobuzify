@@ -3,7 +3,8 @@
 // The audio engine is sealed, so every action drives the player's own DOM controls instead -
 // transport is the .player__action .pct spans, seek is the progress-bar mousemove->mouseup commit,
 // mute is .pct-volume - or it reads/writes the store. Keys are ignored while you're typing in an
-// input, textarea, or contenteditable, and anything with Ctrl/Cmd/Alt held is left for the app.
+// input, textarea, or contenteditable, while focus is in a menu/listbox/other ARIA widget, or when
+// the app already handled the key; anything with Ctrl/Cmd/Alt held is left for the app.
 var Q = Qobuzify;
 var CSS_ID = "qz-kbd-css";
 var helpOpen = false;
@@ -65,12 +66,12 @@ function toggleFullscreen() {
 
 var MAP = [
   { keys: [" ", "k"], label: "Space / K", desc: "Play / pause", run: function () { transport("playpause"); } },
-  { keys: ["l"], label: "L", desc: "Forward 10s", run: function () { seekBy(10000); } },
-  { keys: ["j"], label: "J", desc: "Back 10s", run: function () { seekBy(-10000); } },
-  { keys: ["ArrowRight"], label: "→", desc: "Forward 5s", run: function () { seekBy(5000); } },
-  { keys: ["ArrowLeft"], label: "←", desc: "Back 5s", run: function () { seekBy(-5000); } },
-  { keys: ["ArrowUp"], label: "↑", desc: "Volume up", run: function () { adjustVolume(5); } },
-  { keys: ["ArrowDown"], label: "↓", desc: "Volume down", run: function () { adjustVolume(-5); } },
+  { keys: ["l"], label: "L", desc: "Forward 10s", repeat: true, run: function () { seekBy(10000); } },
+  { keys: ["j"], label: "J", desc: "Back 10s", repeat: true, run: function () { seekBy(-10000); } },
+  { keys: ["ArrowRight"], label: "→", desc: "Forward 5s", repeat: true, run: function () { seekBy(5000); } },
+  { keys: ["ArrowLeft"], label: "←", desc: "Back 5s", repeat: true, run: function () { seekBy(-5000); } },
+  { keys: ["ArrowUp"], label: "↑", desc: "Volume up", repeat: true, run: function () { adjustVolume(5); } },
+  { keys: ["ArrowDown"], label: "↓", desc: "Volume down", repeat: true, run: function () { adjustVolume(-5); } },
   { keys: ["n"], label: "N", desc: "Next track", run: function () { transport("next"); } },
   { keys: ["p"], label: "P", desc: "Previous track", run: function () { transport("prev"); } },
   { keys: ["m"], label: "M", desc: "Mute", run: function () { transport("mute"); } },
@@ -83,15 +84,39 @@ var MAP = [
 ];
 var PREVENT = { " ": 1, "/": 1, "?": 1, ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
 
-function typing(el) { if (!el) return false; var t = el.tagName; return t === "INPUT" || t === "TEXTAREA" || t === "SELECT" || el.isContentEditable; }
+// Inputs that take text. A range input (the seek bar keeps focus after a click) is not typing,
+// and neither are checkboxes, radios or buttons.
+var NON_TEXT_INPUT = { range: 1, checkbox: 1, radio: 1, button: 1, submit: 1, reset: 1, color: 1, file: 1, image: 1 };
+function typing(el) {
+  if (!el) return false;
+  var t = el.tagName;
+  if (t === "INPUT") return !NON_TEXT_INPUT[(el.type || "").toLowerCase()];
+  return t === "TEXTAREA" || t === "SELECT" || el.isContentEditable;
+}
+// Widgets that own their arrow keys (and usually Space/Enter): leave them alone so menus,
+// listboxes, tabs and sliders keep working.
+var ARIA_WIDGET = '[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],' +
+  '[role=listbox],[role=option],[role=combobox],[role=tree],[role=treeitem],[role=grid],[role=gridcell],' +
+  '[role=tablist],[role=tab],[role=radiogroup],[role=slider],[role=spinbutton],[role=textbox]';
+var WIDGET_KEYS = { " ": 1, ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
+function inWidget(el) { try { return !!(el && el.closest && el.closest(ARIA_WIDGET)); } catch (e) { return false; } }
 function onKey(e) {
+  if (e.defaultPrevented) return; // the app (or a focused widget) already handled it
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (helpOpen && e.key === "Escape") { toggleHelp(false); return; }
-  if (typing(e.target)) return;
+  var target = e.target;
+  if (typing(target)) return;
   var key = e.key, lk = key.length === 1 ? key.toLowerCase() : key;
+  if (WIDGET_KEYS[key] && inWidget(target)) return; // letters still work while a widget has focus
   for (var i = 0; i < MAP.length; i++) {
     if (MAP[i].keys.indexOf(key) >= 0 || MAP[i].keys.indexOf(lk) >= 0) {
+      // We own this key now: keep the default (page scroll on Space/arrows) and any app-level
+      // listener further up (Qobuz's own Space binding) from acting on it too.
       if (PREVENT[key]) e.preventDefault();
+      e.stopPropagation();
+      // Holding a key: only seek and volume auto-repeat. Holding N or Space must not skip
+      // through the queue or toggle play/pause rapidly.
+      if (e.repeat && !MAP[i].repeat) return;
       try { MAP[i].run(e); } catch (err) {}
       return;
     }
