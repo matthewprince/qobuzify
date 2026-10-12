@@ -26,6 +26,9 @@
         // (see setCoverBg in index.js), so its own #qz-cbg is redundant while Lyra is active.
         settings: { background: true, glow: true, cascade: true, depthBlur: true },
       });
+      // Lyra's own perceptual lead (timingOffsetMs, 110 by default). The user's timing nudge is ADDED to it,
+      // so "in sync" keeps Lyra's tuned lead instead of zeroing it.
+      var baseOffset = (r.settings && typeof r.settings.timingOffsetMs === "number") ? r.settings.timingOffsetMs : 110;
       return {
         render: function (ly) { return r.load(ly); },
         start: function () { r.start(); },
@@ -41,6 +44,8 @@
         // the right equivalent.
         scrollToTop: function () { r.resync(); },
         remeasure: function () { r.remeasure(); },
+        // ms > 0 = lyrics earlier. Goes through Lyra's public setOffset, read once per frame by its clock.
+        setUserOffset: function (ms) { if (r.setOffset) r.setOffset(baseOffset + (+ms || 0)); },
         get lineCount() { return r.lineCount; },
       };
     },
