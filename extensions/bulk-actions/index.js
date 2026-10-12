@@ -370,11 +370,24 @@ function libraryHost() {
   while (host && !host.contains(l) && ++hops < 6) host = host.parentElement;
   return (host && host.contains(l) && host.parentElement) ? { parent: host.parentElement, before: host } : null;
 }
+// Qobuz keeps the album/playlist header dark in BOTH appearances, but the actions row itself inherits the
+// page's text colour, so a plain `inherit` went dark-on-dark on the light appearance. Take the colour from
+// one of Qobuz's own icon buttons in the same row instead (a transparent one: the big round Play is filled).
+function syncHeaderColor(wrap, actions) {
+  if (!actions) return;
+  var bs = actions.querySelectorAll("button"), col = "";
+  for (var i = 0; i < bs.length && !col; i++) {
+    if (wrap.contains(bs[i])) continue;
+    var cs = getComputedStyle(bs[i]);
+    if (cs.backgroundColor === "rgba(0, 0, 0, 0)" || cs.backgroundColor === "transparent") col = cs.color;
+  }
+  if (col && wrap.style.color !== col) wrap.style.color = col;
+}
 function inject() {
   var c = ctx();
   var ex = document.getElementById(WRAP_ID);
   if (!c) { if (ex) ex.remove(); closePicker(); return; }
-  if (ex) { if (ex.getAttribute("data-ctx") === c.kind + ":" + c.id && ex.parentNode) return; ex.remove(); }
+  if (ex) { if (ex.getAttribute("data-ctx") === c.kind + ":" + c.id && ex.parentNode) { syncHeaderColor(ex, ex.parentNode.closest && ex.parentNode.closest(".PageHeader__actions")); return; } ex.remove(); }
   var lib = c.kind === "library";
   var actions = document.querySelector(".PageHeader__actions");
   var libHost = (!actions && lib) ? libraryHost() : null;
@@ -388,7 +401,7 @@ function inject() {
   wrap.querySelector("#qz-ba-shuf").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); shufflePlay(this, c); });
   var fv = wrap.querySelector("#qz-ba-fav"); if (fv) fv.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); favouriteAll(this, c); });
   var ad = wrap.querySelector("#qz-ba-add"); if (ad) ad.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPicker(this, c); });
-  if (actions) actions.appendChild(wrap);
+  if (actions) { actions.appendChild(wrap); syncHeaderColor(wrap, actions); }
   else libHost.parent.insertBefore(wrap, libHost.before);
 }
 
