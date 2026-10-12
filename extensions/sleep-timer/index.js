@@ -134,12 +134,16 @@ Q.css(CSS_ID, [
   ".qz-sleep-ico-eot{width:9px;height:9px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);opacity:.7;}"
 ].join(""));
 
-// one toast at a time: a new message replaces the last one
-var curToast = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  if (curToast) curToast.close();
-  curToast = Q.ui.toast(msg, { timeout: 2400 });
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 2400);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 var wrap = document.createElement("span");
 wrap.id = "qz-sleep-wrap";
@@ -155,6 +159,6 @@ return function cleanup() {
   if (slot) slot.remove();
   clearAll();
   closePop();
-  if (curToast) curToast.close();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };

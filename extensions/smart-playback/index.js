@@ -247,12 +247,16 @@ function smartRadio(opts) {
 function setBusy(on) { var b = document.getElementById("qz-radio-btn"); if (b) b.classList.toggle("qz-radio-busy", !!on); }
 
 // --- toast ---
-// one toast at a time: a new message replaces the last one
-var curToast = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  if (curToast) curToast.close();
-  curToast = Q.ui.toast(msg, { timeout: 2600 });
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 2600);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 Q.css(CSS_ID, [
   ".qz-radio-busy{pointer-events:none;animation:qz-radio-spin 1s linear infinite;opacity:.85;}",
@@ -440,6 +444,6 @@ return function cleanup() {
   document.removeEventListener("contextmenu", onRadioContext, false);
   removeRadioMenu();
   if (slot) slot.remove();
-  if (curToast) curToast.close();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
