@@ -245,6 +245,7 @@ function ensureUI() {
     '<span class="qz-hrf-count"></span>' +
     '<button class="qz-hrf-close" aria-label="Show all tracks">Show all</button></div>' +
     '<div class="qz-hrf-body"></div></div>');
+  Q.ui.follow(panel);
   panel.querySelector(".qz-hrf-close").addEventListener("click", function () { setOn(false); });
   // one delegated handler for the whole list: a per-row listener on a few hundred rows is wasted work
   panel.querySelector(".qz-hrf-body").addEventListener("click", function (e) {
@@ -339,27 +340,30 @@ Q.css(CSS_ID, [
   // grey was near-invisible on white. Border and fill are mixes of that same colour.
   "color:inherit;border:1px solid color-mix(in srgb,currentColor 18%,transparent);",
   "background:color-mix(in srgb,currentColor 6%,transparent);font:inherit;font-size:13px;font-weight:650;",
-  "letter-spacing:.2px;white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
+  "white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
   "#" + CHIP_ID + ":hover{border-color:color-mix(in srgb,currentColor 34%,transparent);background:color-mix(in srgb,currentColor 10%,transparent);}",
   "#" + CHIP_ID + ".qz-hrf-active{background:var(--qz-accent,#3DA8FE);border-color:transparent;color:#06090a;}",
   ".qz-hrf-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.65;}",
 
-  "#" + PANEL_ID + "{position:fixed;z-index:220;display:none;flex-direction:column;color:#eef2f7;",
-  "background:linear-gradient(180deg,#0a0e17,#060a12 60%);opacity:0;transition:opacity .16s ease;",
+  "#" + PANEL_ID + "{position:fixed;z-index:220;display:none;flex-direction:column;color:var(--qzu-fg);",
+  "background:#121212;opacity:0;transition:opacity .16s ease;",
   "font-family:inherit;overflow:hidden;}",
   "#" + PANEL_ID + ".qz-hrf-in{opacity:1;}",
+  // the panel follows Qobuz's appearance (Q.ui.follow): its own page colour on dark, one step down its grey
+  // ramp on light (never white)
+  "#" + PANEL_ID + "[data-theme=light]{background:var(--color-grey-10,#f3f3f3);}",
   ".qz-hrf-head{flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:18px 30px 12px;",
-  "border-bottom:1px solid rgba(255,255,255,.07);}",
+  "border-bottom:1px solid color-mix(in srgb,currentColor 7%,transparent);}",
   ".qz-hrf-title{font-size:19px;font-weight:700;}",
-  ".qz-hrf-count{font-size:12.5px;font-weight:600;color:#7d8798;flex:1;}",
-  ".qz-hrf-close{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;color:#cdd6e2;",
+  ".qz-hrf-count{font-size:12.5px;font-weight:600;color:var(--qzu-fg2);flex:1;}",
+  ".qz-hrf-close{appearance:none;border:1px solid color-mix(in srgb,currentColor 16%,transparent);background:transparent;color:inherit;",
   "font:inherit;font-size:12.5px;font-weight:600;padding:6px 13px;border-radius:999px;cursor:pointer;}",
-  ".qz-hrf-close:hover{border-color:rgba(255,255,255,.3);color:#fff;}",
+  ".qz-hrf-close:hover{border-color:color-mix(in srgb,currentColor 30%,transparent);color:var(--qzu-fg);}",
   ".qz-hrf-body{flex:1 1 auto;overflow-y:auto;padding:6px 16px 22px;}",
-  ".qz-hrf-empty{color:#8b95a6;font-size:14px;padding:26px 14px;line-height:1.6;max-width:640px;}",
+  ".qz-hrf-empty{color:var(--qzu-fg2);font-size:14px;padding:26px 14px;line-height:1.6;max-width:640px;}",
   ".qz-hrf-row{display:flex;align-items:center;gap:14px;padding:7px 14px;border-radius:9px;cursor:pointer;}",
-  ".qz-hrf-row:hover{background:rgba(255,255,255,.06);}",
-  ".qz-hrf-art{position:relative;flex:0 0 42px;width:42px;height:42px;border-radius:5px;overflow:hidden;background:#131823;}",
+  ".qz-hrf-row:hover{background:color-mix(in srgb,currentColor 6%,transparent);}",
+  ".qz-hrf-art{position:relative;flex:0 0 42px;width:42px;height:42px;border-radius:5px;overflow:hidden;background:color-mix(in srgb,currentColor 8%,transparent);}",
   ".qz-hrf-art img{width:100%;height:100%;object-fit:cover;display:block;}",
   ".qz-hrf-play{position:absolute;inset:0;display:none;align-items:center;justify-content:center;",
   "appearance:none;border:0;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;padding:0;}",
@@ -367,13 +371,13 @@ Q.css(CSS_ID, [
   ".qz-hrf-row:hover .qz-hrf-play{display:flex;}",
   ".qz-hrf-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px;}",
   ".qz-hrf-t{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-hrf-s{font-size:12px;color:#8b95a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-hrf-s{font-size:12px;color:var(--qzu-fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
   // no tint, no filter: it is Qobuz's own gold logo and it should look exactly like it does everywhere else
   ".qz-hrf-spec{flex:0 0 auto;display:inline-flex;align-items:center;gap:9px;}",
   ".qz-hrf-spec img{height:26px;width:auto;display:block;}",
   // fixed width + tabular figures so the rates form a straight column instead of jittering per row
-  ".qz-hrf-rate{min-width:62px;font-size:12px;font-weight:600;color:#8b95a6;font-variant-numeric:tabular-nums;}",
-  ".qz-hrf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:#7d8798;font-variant-numeric:tabular-nums;}"
+  ".qz-hrf-rate{min-width:62px;font-size:12px;font-weight:600;color:var(--qzu-fg2);font-variant-numeric:tabular-nums;}",
+  ".qz-hrf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:var(--qzu-fg2);font-variant-numeric:tabular-nums;}"
 ].join(""));
 
 var offRoute = Q.onRoute(sync);

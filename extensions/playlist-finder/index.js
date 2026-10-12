@@ -278,11 +278,12 @@ function ensureUI() {
   panel = el('<div id="' + PANEL_ID + '">' +
     '<div class="qz-plf-head"><span class="qz-plf-title">Playlists</span>' +
     '<span class="qz-plf-count"></span>' +
-    '<input class="qz-plf-q" type="text" placeholder="Filter by title or artist" spellcheck="false">' +
+    '<input class="qz-plf-q" type="text" placeholder="Filter by title or artist" aria-label="Filter by title or artist" spellcheck="false">' +
     '<button class="qz-plf-orph">In no playlist</button>' +
     '<button class="qz-plf-rebuild" title="Re-read your playlists">Refresh</button>' +
     '<button class="qz-plf-close">Close</button></div>' +
     '<div class="qz-plf-body"></div></div>');
+  Q.ui.follow(panel);
   panel.querySelector(".qz-plf-close").addEventListener("click", function () { setOn(false); });
   panel.querySelector(".qz-plf-rebuild").addEventListener("click", function () { buildIndex(true); });
   panel.querySelector(".qz-plf-orph").addEventListener("click", function (e) {
@@ -357,42 +358,45 @@ Q.css(CSS_ID, [
   // grey was near-invisible on white. Border and fill are mixes of that same colour.
   "color:inherit;border:1px solid color-mix(in srgb,currentColor 18%,transparent);",
   "background:color-mix(in srgb,currentColor 6%,transparent);font:inherit;font-size:13px;font-weight:650;",
-  "letter-spacing:.2px;white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
+  "white-space:nowrap;transition:background .13s,color .13s,border-color .13s;}",
   "#" + CHIP_ID + ":hover{border-color:color-mix(in srgb,currentColor 34%,transparent);background:color-mix(in srgb,currentColor 10%,transparent);}",
   "#" + CHIP_ID + ".qz-plf-active{background:var(--qz-accent,#3DA8FE);border-color:transparent;color:#06090a;}",
-  "#" + PANEL_ID + "{position:fixed;z-index:220;display:none;flex-direction:column;color:#eef2f7;",
-  "background:linear-gradient(180deg,#0a0e17,#060a12 60%);opacity:0;transition:opacity .16s ease;font-family:inherit;overflow:hidden;}",
+  "#" + PANEL_ID + "{position:fixed;z-index:220;display:none;flex-direction:column;color:var(--qzu-fg);",
+  "background:#121212;opacity:0;transition:opacity .16s ease;font-family:inherit;overflow:hidden;}",
   "#" + PANEL_ID + ".qz-plf-in{opacity:1;}",
-  ".qz-plf-head{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:16px 26px 12px;border-bottom:1px solid rgba(255,255,255,.07);flex-wrap:wrap;}",
+  // the panel follows Qobuz's appearance (Q.ui.follow): its own page colour on dark, one step down its grey
+  // ramp on light (never white)
+  "#" + PANEL_ID + "[data-theme=light]{background:var(--color-grey-10,#f3f3f3);}",
+  ".qz-plf-head{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:16px 26px 12px;border-bottom:1px solid color-mix(in srgb,currentColor 7%,transparent);flex-wrap:wrap;}",
   ".qz-plf-title{font-size:19px;font-weight:700;}",
-  ".qz-plf-count{font-size:12.5px;font-weight:600;color:#7d8798;flex:1;min-width:170px;}",
-  ".qz-plf-q{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#e7ecf3;font:inherit;",
+  ".qz-plf-count{font-size:12.5px;font-weight:600;color:var(--qzu-fg2);flex:1;min-width:170px;}",
+  ".qz-plf-q{background:color-mix(in srgb,currentColor 6%,transparent);border:1px solid color-mix(in srgb,currentColor 14%,transparent);color:var(--qzu-fg);font:inherit;",
   "font-size:13px;padding:7px 12px;border-radius:999px;outline:none;min-width:200px;}",
   ".qz-plf-q:focus{border-color:var(--qz-accent,#3DA8FE);}",
-  ".qz-plf-orph,.qz-plf-rebuild,.qz-plf-close{appearance:none;border:1px solid rgba(255,255,255,.16);background:transparent;",
-  "color:#cdd6e2;font:inherit;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;}",
-  ".qz-plf-orph:hover,.qz-plf-rebuild:hover,.qz-plf-close:hover{border-color:rgba(255,255,255,.3);color:#fff;}",
+  ".qz-plf-orph,.qz-plf-rebuild,.qz-plf-close{appearance:none;border:1px solid color-mix(in srgb,currentColor 16%,transparent);background:transparent;",
+  "color:inherit;font:inherit;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;}",
+  ".qz-plf-orph:hover,.qz-plf-rebuild:hover,.qz-plf-close:hover{border-color:color-mix(in srgb,currentColor 30%,transparent);color:var(--qzu-fg);}",
   ".qz-plf-orph.qz-on{background:var(--qz-accent,#3DA8FE);border-color:transparent;color:#06090a;}",
   ".qz-plf-body{flex:1 1 auto;overflow-y:auto;padding:6px 16px 22px;}",
-  ".qz-plf-empty{color:#8b95a6;font-size:14px;padding:26px 14px;line-height:1.6;max-width:640px;}",
+  ".qz-plf-empty{color:var(--qzu-fg2);font-size:14px;padding:26px 14px;line-height:1.6;max-width:640px;}",
   ".qz-plf-row{display:flex;align-items:center;gap:14px;padding:8px 14px;border-radius:9px;cursor:pointer;}",
-  ".qz-plf-row:hover{background:rgba(255,255,255,.06);}",
-  ".qz-plf-art{position:relative;flex:0 0 42px;width:42px;height:42px;border-radius:5px;overflow:hidden;background:#131823;}",
+  ".qz-plf-row:hover{background:color-mix(in srgb,currentColor 6%,transparent);}",
+  ".qz-plf-art{position:relative;flex:0 0 42px;width:42px;height:42px;border-radius:5px;overflow:hidden;background:color-mix(in srgb,currentColor 8%,transparent);}",
   ".qz-plf-art img{width:100%;height:100%;object-fit:cover;display:block;}",
   ".qz-plf-play{position:absolute;inset:0;display:none;align-items:center;justify-content:center;appearance:none;border:0;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;padding:0;}",
   ".qz-plf-play svg{width:20px;height:20px;}",
   ".qz-plf-row:hover .qz-plf-play{display:flex;}",
   ".qz-plf-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px;}",
   ".qz-plf-t{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-plf-s{font-size:12px;color:#8b95a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-plf-s{font-size:12px;color:var(--qzu-fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
   ".qz-plf-tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:1px;}",
-  ".qz-plf-tag{appearance:none;border:1px solid rgba(61,168,254,.35);background:rgba(61,168,254,.12);color:#9fd0ff;",
+  ".qz-plf-tag{appearance:none;border:1px solid color-mix(in srgb,var(--qz-accent,#3DA8FE) 35%,transparent);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);color:inherit;",
   "font:inherit;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;cursor:pointer;max-width:210px;",
   "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-plf-tag:hover{background:rgba(61,168,254,.22);color:#cfe8ff;}",
-  ".qz-plf-more{font-size:11px;color:#7d8798;font-weight:600;}",
-  ".qz-plf-none{font-size:11px;color:#8a6b3d;font-weight:600;}",
-  ".qz-plf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:#7d8798;font-variant-numeric:tabular-nums;}"
+  ".qz-plf-tag:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 22%,transparent);}",
+  ".qz-plf-more{font-size:11px;color:var(--qzu-fg2);font-weight:600;}",
+  ".qz-plf-none{font-size:11px;color:color-mix(in srgb,#c8902f 75%,currentColor);font-weight:600;}",
+  ".qz-plf-dur{flex:0 0 46px;text-align:right;font-size:12px;color:var(--qzu-fg2);font-variant-numeric:tabular-nums;}"
 ].join(""));
 
 var offRoute = Q.onRoute(sync);
