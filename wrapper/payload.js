@@ -36,7 +36,7 @@ function buildPayloadSource(def) {
   const data = {
     catalog,
     extensions,
-    def: def || "electric-blue",
+    def: def || "qobuzify",
     version: version(),
     seed: 1,            // fresh seed asserts `def` as the active theme on first launch
     spotify: null,
