@@ -89,6 +89,37 @@ window.__QZBP_AUDIOPOS__ = function () {
   } catch (e) { return null; }
 };
 var directFailed = false, directToldOnce = false, _lastDirectId = null;
+// Direct-stream recovery. A signed URL can die under mpv mid-track: it expires (measured with a fault-
+// injecting server: a reconnect that gets 403 makes mpv report a plain early EOF, no error event), or the
+// connection dies for good. Seeking the same URL again cannot help, so re-sign a fresh one at the current
+// position instead. Bounded per track so a track that truly cannot stream falls back instead of looping.
+var directRetries = 0, DIRECT_RETRY_MAX = 2;
+var directFailReason = null;      // last directfail reason for THIS track ("network" is retried on 'online')
+var downgradeTold = {};           // one calm note per kind per session, never one per track
+// New user-facing notes go through the shared kit; the local toast stays the fallback for an older runtime.
+function note(msg) {
+  try { if (Q.ui && Q.ui.toast) { Q.ui.toast(msg); return; } } catch (e) {}
+  toast(msg);
+}
+// Re-sign the current track's URL and reload it at the web clock's position. Returns false once the
+// per-track budget is spent (or when not in direct mode), so the caller can fall back.
+function directReload(why) {
+  if (disposed || !enabled || !G.direct || directFailed) return false;
+  if (directRetries >= DIRECT_RETRY_MAX) return false;
+  directRetries++;
+  bpLog("direct: re-signing the stream (" + why + ", attempt " + directRetries + "/" + DIRECT_RETRY_MAX + ") at " + posMs() + "ms");
+  lastMpvMs = null; _lastDirectId = null; justLoaded = true;
+  loadCurrent();
+  return true;
+}
+// Give up on the direct stream for the rest of this track: stop mpv (it is parked at a dead EOF) and let
+// the browser play it, which is what every other give-up path does. The next track tries direct again.
+function directGiveUp(msg) {
+  directFailed = true; curRate = 0; bpTrue = false;
+  try { BP.send({ type: "stop" }); } catch (e) {}
+  muteWeb(false); renderBadge();
+  if (!directToldOnce) { directToldOnce = true; note(msg); }
+}
 var mode = "off", curRate = 0, curFmt = "";
 var hwRate = 0;      // rate the DAC is actually clocked at, straight from the kernel
 var bpTrue = false;  // every condition below holds, i.e. the DAC gets the file's own samples
@@ -96,6 +127,9 @@ var bpWhy = null;    // ARRAY of failed conditions: "rate" | "gain" | "gain-unkn
 var bpGain = 1;      // linear gain the output applies to our samples (1 = untouched)
 var bpPro = false;   // sink is on a Pro Audio profile (explains a SOFTWARE volume multiply)
 var bpSrcRate = 0;   // decoder-side rate, to show what a player-side conversion converted FROM
+var bpSrcFmt = null; // decoder-side sample format as mpv measured it (s16 = 16-bit file, s32 = 24-bit FLAC)
+// Bit depth of what is actually being DELIVERED, from mpv's own decode, never from what was requested.
+function srcDepth() { var f = String(bpSrcFmt || ""); return /^s16/.test(f) ? 16 : (/^s(24|32)/.test(f) ? 24 : 0); }
 var lastTrackId = null, lastPlaying = null, lastWebMs = 0, lastWall = 0;
 var reassert = 0;   // tick counter for the periodic transport re-send (see syncTick)
 // Shared cooldown for BOTH seek sites in syncTick. MUST init to 0, never undefined: `now - undefined` is NaN,
@@ -198,7 +232,9 @@ function bpShapeWatch(sb) {
   });
 }
 function onNewSourceBuffer(sb) {
-  try { if (sourceBuffers.indexOf(sb) < 0) sourceBuffers.push(sb); } catch (e) {}
+  // Capped: the player makes a fresh MediaSource (and SourceBuffer) per stream, so over a long session this
+  // list retained every one ever created. Only the current track's buffer matters to the endfeed check.
+  try { if (sourceBuffers.indexOf(sb) < 0) { sourceBuffers.push(sb); if (sourceBuffers.length > 4) sourceBuffers.splice(0, sourceBuffers.length - 4); } } catch (e) {}
   try { bpShapeWatch(sb); } catch (e) {}
 }
 
@@ -363,7 +399,7 @@ function onNewTrack(id) {
   if (!id || id === lastTrackId) return false;
   lastTrackId = id;
   bpStalled = false; directFailed = false; lastMpvMs = null; lastSeekAt = 0; justLoaded = true;
-  endedLatch = false; endfeedSent = false;
+  endedLatch = false; endfeedSent = false; directRetries = 0; directFailReason = null;
   loadCurrent();
   lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now();
   return true;
@@ -600,7 +636,7 @@ function renderBadge() {
   if (!curRate) { badge.className = "qz-bp-badge wait"; badge.textContent = "Bit-perfect…"; badge.title = TIP_WAIT; return; }
   if (bpTrue) {
     badge.className = "qz-bp-badge bp"; badge.textContent = "Bit-perfect · " + fmtRate(curRate);
-    badge.title = "Bit-perfect: this track decodes at " + fmtRate(curRate) + ", your converter is clocked at "
+    badge.title = "Bit-perfect: this track decodes at " + (srcDepth() ? srcDepth() + "-bit / " : "") + fmtRate(curRate) + ", your converter is clocked at "
       + fmtRate(hwRate) + ", and the output volume is at unity, so the samples reaching the DAC are the samples in the file.";
     return;
   }
@@ -610,6 +646,12 @@ function renderBadge() {
   // desktop, so the hidden case was the common one. Lead the badge with the most actionable fault but
   // put every one of them in the tooltip, or the user fixes one and is told nothing about the rest.
   var reasons = bpWhy || [];
+  // Lossy outranks everything: no rate or volume fix makes a lossy decode the original recording.
+  if (reasons.indexOf("lossy") >= 0) {
+    badge.textContent = "Lossy · " + fmtRate(curRate);
+    badge.title = "Not lossless: this track arrived in a lossy format (MP3), so the samples reaching the DAC are a lossy decode, not the original recording. Check Qobuz's streaming quality setting.";
+    return;
+  }
   if (reasons.length > 1) {
     var parts = [];
     if (reasons.indexOf("convert") >= 0) parts.push("the player had to convert it before output");
@@ -666,6 +708,7 @@ var offBP = BP.on(function (m) {
     hwRate = m.hwRate || 0; bpTrue = !!m.bitperfect;
     bpWhy = Array.isArray(m.why) ? m.why : (m.why ? [m.why] : []); bpPro = !!m.pro; bpSrcRate = m.srcRate || 0;
     bpGain = (typeof m.gain === "number") ? m.gain : 1;
+    bpSrcFmt = m.srcFormat || null;
     renderBadge();
   }
   // A mode change means the main process is respawning mpv on a different output, so the loaded track is
@@ -719,10 +762,18 @@ var offBP = BP.on(function (m) {
       // web-clock test rather than doing nothing, so a real truncated-stream tail is still rescued.
       var reallyEarly = emp != null ? (edur && (edur - emp) > 3000) : (edur && (edur - epm) > 3000);
       if (esid && esid === mpvId && edur && reallyEarly && (Date.now() - lastLoadAt) > 5000) {
-        endedLatch = true;
-        bpLog("mpv ended early (mpv=" + emp + " web=" + epm + " dur=" + edur + ") - resyncing to the web clock");
-        BP.send({ type: "seek", ms: epm });
-        if (isPlaying()) BP.send({ type: "play" });
+        bpLog("mpv ended early (mpv=" + emp + " web=" + epm + " dur=" + edur + ")" + (G.direct ? "" : " - resyncing to the web clock"));
+        if (G.direct) {
+          // DIRECT: the URL itself is the likely casualty (expired, or the connection died past ffmpeg's
+          // reconnects). The old seek re-requested the SAME dead URL, hit EOF again with the latch spent,
+          // and the rest of the track was silence under a muted browser. Re-sign instead; when the budget
+          // is gone, hand the track to the browser rather than leave it silent.
+          if (!directReload("ended early")) { endedLatch = true; directGiveUp("Lost the direct stream - playing this track normally"); }
+        } else {
+          endedLatch = true;
+          BP.send({ type: "seek", ms: epm });
+          if (isPlaying()) BP.send({ type: "play" });
+        }
       } else if (esid && esid === mpvId && edur && emp != null && (edur - emp) <= 3000 && (edur - epm) > 3000) {
         // mpv reached the true end while the element is still far behind. Nothing is going to produce sound
         // until the element gets there, and it is the component that owns the queue - so hand it the end of
@@ -743,11 +794,33 @@ var offBP = BP.on(function (m) {
   // Direct source: getFileUrl could not resolve a playable URL for this track (region/format restriction,
   // or a transient network/auth issue). Fall back to the web element (still playing, just muted) for THIS
   // track; the next track change resets and retries. Not a fatal - bit-perfect stays on.
+  // What getFileUrl actually granted for the direct stream. Format 27 is always requested, and Qobuz
+  // answering with less is normal for a CD-only release (restriction FormatRestrictedByFormatAvailability).
+  // Anything else - MP3, or a restriction about the account or region - is a quiet downgrade the user
+  // should hear about once, calmly. The badge keeps reporting what mpv measures; this only adds the why.
+  else if (m.type === "directinfo") {
+    var rs = Array.isArray(m.restrictions) ? m.restrictions : [];
+    var other = rs.filter(function (c) { return c && c !== "FormatRestrictedByFormatAvailability"; });
+    var fid = Number(m.formatId) || 0;
+    bpLog("direct: granted format " + fid + " (" + (m.bitDepth || "?") + "-bit/" + (m.rate || "?") + "kHz)" + (rs.length ? " restrictions=" + rs.join(",") : ""));
+    if (fid === 5) {
+      dstat("granted_mp3");
+      if (!downgradeTold.mp3) { downgradeTold.mp3 = true; note("Qobuz is only streaming MP3 for this track, not lossless"); }
+    } else if (other.length && fid && fid < 27) {
+      dstat("granted_restricted");
+      if (!downgradeTold.restricted) {
+        downgradeTold.restricted = true;
+        note("Playing " + (fid === 6 ? "CD quality" : (m.bitDepth || "") + "-bit") + ": Qobuz limited this stream (" + other.join(", ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() + ")");
+      }
+    }
+  }
   else if (m.type === "directfail") {
     // Clear the measured terms like every OTHER give-up path does (:467, :482). Without this the badge kept
     // reporting the last successful track's rate while the audible path is the browser mixer, i.e. it claimed
     // bit-perfect over converted audio.
-    dstat("fail_" + (m.reason || "unknown")); directFailed = true; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
+    dstat("fail_" + (m.reason || "unknown")); directFailed = true; directFailReason = m.reason || null; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
+    // A preview-only answer is not "unavailable right now": say what it is, once.
+    if (m.reason === "sample" && !directToldOnce) { directToldOnce = true; note("Only a preview of this track can stream on this account - playing it normally"); }
     if (!directToldOnce) { directToldOnce = true; toast(m.reason === "restricted" ? "This track has no direct stream - playing normally" : "Direct stream unavailable right now - playing normally"); }
   }
   // The sidecar is gone for good. Unmuting once is NOT enough: syncTick re-mutes every 300ms while
@@ -770,6 +843,9 @@ var offBP = BP.on(function (m) {
       bpLive = false; bpStalled = true; setBpEnabled(false); setOn(false); syncSettingsButton();
       mode = "off"; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
       if (!stallToldOnce) { stallToldOnce = true; toast("Bit-perfect unavailable - playing normally"); }
+    } else if (m.what === "load" && directReload("load error")) {
+      // DIRECT: a load error mid-track is usually the signed URL (expired / refused on a Range re-request
+      // after a long pause or a seek past the cache). A fresh signature at the same position recovers it.
     } else { // "load": this track failed, fall back for it rather than killing the feature
       // Clear the measured state too: the browser is about to play this track through the shared mixer,
       // and a bpTrue/curRate left over from the previous track would keep the badge claiming bit-perfect.
@@ -826,7 +902,7 @@ function enable() {
   lastSentVol = null; // re-arm the one-shot adopt in the hwvol handler
   // Prime mpv with the current track's header (non-destructive). Segments still being appended flow through
   // the tap and bit-perfect engages within a segment; a fully-buffered track quietly waits for the next one.
-  directFailed = false; directToldOnce = false; lastMpvMs = null; _lastDirectId = null;
+  directFailed = false; directToldOnce = false; lastMpvMs = null; _lastDirectId = null; directRetries = 0; directFailReason = null;
   // Direct mode loads the current track's signed URL immediately (no waiting for the next segment); the tap
   // path primes mpv with the captured header and engages within a segment, or waits for the next track.
   var primed = G.direct ? !!curTrack() : ((curTrack() && isPlaying()) ? forceRefeed() : false);
@@ -864,6 +940,16 @@ var offChange = Q.player.onChange ? Q.player.onChange(function () {
   var tr = curTrack(), id = tr && tr.id != null ? String(tr.id) : null;
   if (!onNewTrack(id)) loadCurrent();
 }) : null;
+
+// Back online after a direct resolve failed for lack of network: that track is playing through the browser
+// now, so retry the direct stream once for it instead of waiting for the next track. Bounded by the same
+// per-track budget as every other re-sign.
+function onOnline() {
+  if (disposed || !enabled || !G.direct || !directFailed || directFailReason !== "network") return;
+  directFailed = false; directFailReason = null;
+  if (!directReload("back online")) directFailed = true;
+}
+try { window.addEventListener("online", onOnline); } catch (e) {}
 
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
@@ -1000,6 +1086,7 @@ return function cleanup() {
   if (syncTimer) clearInterval(syncTimer);
   if (offChange) offChange();
   if (modeWaitT) { clearTimeout(modeWaitT); modeWaitT = null; }
+  try { window.removeEventListener("online", onOnline); } catch (e) {}
   try { if (offBP) offBP(); } catch (e) {} // release the preload's single event slot for the next instance
   try { var vb = document.querySelector(".player__settings-volume-slider.qz-bp-fixedvol"); if (vb) vb.classList.remove("qz-bp-fixedvol"); } catch (e) {}
   try { if (enabled) { BP.send({ type: "disable" }); muteWeb(false); } } catch (e) {}
