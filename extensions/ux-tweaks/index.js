@@ -74,17 +74,16 @@ function applyHideHires() {
 function injectSettingsToggle() {
   var panel = document.querySelector('.qz-panel[data-panel="settings"]');
   if (!panel || panel.querySelector("#qz-ux-hidehires-row")) return;
-  var on = hideHiresOn();
   var row = document.createElement("div");
   row.className = "qz-set-row"; row.id = "qz-ux-hidehires-row";
-  row.innerHTML = '<div><div class="qz-set-label">Hide Hi-Res badges</div><div class="qz-set-sub">Remove the Hi-Res quality tags from albums and track lists (the player bar keeps showing quality).</div></div>' +
-    '<button class="qz-switch ' + (on ? "qz-switch--on" : "") + '" data-qz-ux="hidehires"><span></span></button>';
+  row.innerHTML = '<div class="qz-set-text"><div class="qz-set-label">Hide Hi-Res badges</div><div class="qz-set-sub">Remove the Hi-Res quality tags from albums and track lists (the player bar keeps showing quality).</div></div>';
+  var sw = Q.ui.switch({ checked: hideHiresOn(), label: "Hide Hi-Res badges", onChange: function (on) {
+    Q.storage.set("ux:hidehires", on ? "1" : "0"); applyHideHires();
+  } });
+  sw.setAttribute("data-qz-ux", "hidehires");
+  row.appendChild(sw);
   var about = panel.querySelector(".qz-set-about");
   if (about) panel.insertBefore(row, about); else panel.appendChild(row);
-  row.querySelector('[data-qz-ux="hidehires"]').addEventListener("click", function () {
-    var nowOn = !hideHiresOn(); Q.storage.set("ux:hidehires", nowOn ? "1" : "0");
-    this.classList.toggle("qz-switch--on", nowOn); applyHideHires();
-  });
 }
 
 // --- boot ---
