@@ -30,7 +30,7 @@ function loadTrackIds(c) {
   if (c.kind === "album") return Q.api("album/get?album_id=" + c.id).then(function (j) { return ((j.tracks && j.tracks.items) || []).map(function (t) { return String(t.id); }); }).catch(function () { return []; });
   var all = [];
   function page(off) {
-    return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
+    return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off, { timeout: 45000 }).then(function (j) {
       var t = (j.tracks && j.tracks.items) || [];
       all = all.concat(t.map(function (x) { return String(x.id); }));
       var total = (j.tracks && j.tracks.total) || all.length;
@@ -137,7 +137,7 @@ function removeCurrentFromPlaylist() {
   // page through the whole playlist until the track turns up - a single limit=500 fetch made removal
   // dead for any track past position 500 while the pill happily reported "1250 of 2000".
   function findEntry(off) {
-    return Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500&offset=" + off).then(function (j) {
+    return Q.api("playlist/get?playlist_id=" + pid + "&extra=tracks&limit=500&offset=" + off, { timeout: 45000 }).then(function (j) {
       var items = (j.tracks && j.tracks.items) || [];
       for (var i = 0; i < items.length; i++) { if (String(items[i].id) === id) return items[i]; }
       var total = (j.tracks && j.tracks.total) || 0;

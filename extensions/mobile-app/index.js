@@ -86,8 +86,9 @@ var IC = {
 
 // ------------------------------------------------------------------ Qobuz API (cached read calls)
 var apiCache = {};
-function api(path) {
-  if (!apiCache[path]) apiCache[path] = Q.api(path).catch(function (e) { delete apiCache[path]; throw e; });
+// opts goes to Q.api (e.g. { timeout } for the 500-item pages, which outlast its 15s default on a slow phone link)
+function api(path, opts) {
+  if (!apiCache[path]) apiCache[path] = Q.api(path, opts).catch(function (e) { delete apiCache[path]; throw e; });
   return apiCache[path];
 }
 // drop cached GETs whose path starts with prefix - so a mutation (favourite/subscribe) forces a fresh list next read
@@ -105,13 +106,14 @@ function favorites(type, limit) { return api("favorite/getUserFavorites?type=" +
 // offsets until the API stops returning rows. Capped like the desktop extension: past a few thousand a
 // shuffle is a fair sample of your library either way, and the queue has to end somewhere.
 var SHUFFLE_CAP = 5000, FAV_PAGE = 500;
+var BIG_PAGE = { timeout: 45000 }; // 500-item pages: longer than Q.api's 15s default
 // Every favorite track, same paging, for the Library Songs tab. It used to ask for the first 200 only (all a
 // list could afford to draw), so a bigger library simply ended there; the list is windowed now, so the whole
 // thing costs no more to show than 200 did. Same pages and URLs as the id walk below, so they share the cache.
 function allFavoriteTracks() {
   var out = [];
   function page(offset) {
-    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset)
+    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset, BIG_PAGE)
       .then(function (j) {
         var items = (j.tracks && j.tracks.items) || [];
         out = out.concat(items);
@@ -125,7 +127,7 @@ function allFavoriteTracks() {
 function allFavoriteTrackIds() {
   var ids = [];
   function page(offset) {
-    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset)
+    return api("favorite/getUserFavorites?type=tracks&limit=" + FAV_PAGE + "&offset=" + offset, BIG_PAGE)
       .then(function (j) {
         var items = (j.tracks && j.tracks.items) || [];
         items.forEach(function (t) { if (t && t.id != null) ids.push(t.id); });
@@ -139,11 +141,11 @@ function allFavoriteTrackIds() {
 }
 function userPlaylists() { return api("playlist/getUserPlaylists?limit=200").then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function albumGet(id) { return api("album/get?album_id=" + id); }   // album/get returns its tracks by default; &extra=tracks 400s
-function playlistGet(id) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500"); }
+function playlistGet(id) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=500", BIG_PAGE); }
 // playlist/get pages at 500 tracks, and everything past the first page used to be silently missing: a 512-track
 // playlist showed 500, and a longer one simply ended "a few hundred songs in" (user report, 2026-09-28).
 var PL_PAGE = 500, PL_MAX = 10000;
-function playlistPage(id, offset) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset); }
+function playlistPage(id, offset) { return api("playlist/get?playlist_id=" + id + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset, BIG_PAGE); }
 function artistGet(id) { return api("artist/get?artist_id=" + id + "&extra=albums,playlists,tracks&limit=40"); }
 // artist/get&extra=tracks is NOT a popularity list. It returns the artist's newest release first and repeats
 // it once per album variant, so "Top tracks" came out as ten rows of the same new single. artist/page is the

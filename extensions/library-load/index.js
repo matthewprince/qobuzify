@@ -156,7 +156,7 @@ function hydrateMeta(type, fpv) {
 function ensureIds(force) {
   if (mem.ids && !force) return Promise.resolve(mem.ids);
   if (mem.idsPromise && !force) return mem.idsPromise;
-  mem.idsPromise = Q.api("favorite/getUserFavoriteIds").then(function (j) {
+  mem.idsPromise = Q.api("favorite/getUserFavoriteIds", { timeout: 45000 }).then(function (j) {
     j = j || {};
     var ids = { tracks: {}, albums: {}, artists: {} };
     idList(j.tracks).forEach(function (id) { ids.tracks[id] = 1; });
@@ -182,7 +182,7 @@ function pageAll(type, fpv) {
   function step() {
     // realApi, never Q.api: our own wrap (below) serves cached id-only stubs for favorites calls, and
     // paging through it would persist a metadata cache of empty records under a valid fingerprint.
-    return realApi.call(Q, "favorite/getUserFavorites?type=" + type + "&limit=" + PAGE + "&offset=" + offset).then(function (j) {
+    return realApi.call(Q, "favorite/getUserFavorites?type=" + type + "&limit=" + PAGE + "&offset=" + offset, { timeout: 45000 }).then(function (j) {
       var node = j && j[type], items = (node && node.items) || [];
       if (apiTotal == null && node && typeof node.total === "number") apiTotal = node.total;
       if (total == null) total = apiTotal || (mem.ids && Object.keys(mem.ids[type] || {}).length) || items.length;

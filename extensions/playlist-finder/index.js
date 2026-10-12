@@ -77,7 +77,7 @@ function generatedIds() {
   return out;
 }
 function myPlaylists() {
-  return Q.api("playlist/getUserPlaylists?limit=500").then(function (j) { return (j.playlists && j.playlists.items) || []; });
+  return Q.api("playlist/getUserPlaylists?limit=500", { timeout: 45000 }).then(function (j) { return (j.playlists && j.playlists.items) || []; });
 }
 // id:count per playlist. Changes whenever a playlist gains or loses a track, which is exactly when the
 // index is stale; renaming or reordering does not move it, which is exactly when a rebuild would be waste.
@@ -99,7 +99,7 @@ var PL_PAGE = 500, PL_MAX_PAGES = 40;
 function playlistTrackIds(pid) {
   var ids = [];
   function page(offset, n) {
-    return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset)
+    return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&extra=tracks&limit=" + PL_PAGE + "&offset=" + offset, { timeout: 45000 })
       .then(function (j) {
         var tr = (j && j.tracks) || {}, items = tr.items || [];
         items.forEach(function (t) { if (t && t.id != null) ids.push(t.id); });

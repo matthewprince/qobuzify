@@ -40,7 +40,7 @@ function loadMap(c) {
   if (c.kind === "album") p = Q.api("album/get?album_id=" + c.id).then(function (j) { return (j.tracks && j.tracks.items) || []; });
   else {
     var all = [];
-    var page = function (off) { return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off).then(function (j) { var t = (j.tracks && j.tracks.items) || []; all = all.concat(t); var total = (j.tracks && j.tracks.total) || all.length; if (all.length < total && t.length) return page(all.length); return all; }); };
+    var page = function (off) { return Q.api("playlist/get?playlist_id=" + c.id + "&extra=tracks&limit=500&offset=" + off, { timeout: 45000 }).then(function (j) { var t = (j.tracks && j.tracks.items) || []; all = all.concat(t); var total = (j.tracks && j.tracks.total) || all.length; if (all.length < total && t.length) return page(all.length); return all; }); };
     p = page(0);
   }
   return p.then(function (tracks) {
