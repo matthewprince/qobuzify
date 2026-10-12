@@ -45,12 +45,15 @@ try {
   function getJSON(path) {
     return _fetch(LFM_API + path).then(function (r) { return r.json(); });
   }
+  // A rejection that never reached the worker (offline, DNS) is tagged e.net, so the retry queue can tell
+  // "try again later" apart from an answer that keeps failing.
   function postJSON(path, obj) {
     return _fetch(LFM_API + path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(obj)
-    }).then(function (r) { return r.json(); });
+    }).catch(function (e) { e = e || new Error("network"); try { e.net = true; } catch (_) {} throw e; })
+      .then(function (r) { return r.json(); });
   }
   function randNonce() {
     var a = new Uint8Array(16);
@@ -65,14 +68,29 @@ try {
   // ---------------------------------------------------------------------------
   var authPoll = null, authTries = 0, pendingAuth = null; // pendingAuth = { nonce, apiKey, url }
   function openExternal(url) { try { window.open(url, "_blank", "noopener,noreferrer"); } catch (e) {} }
+  // When live scrobbling began for an account. History import only sends plays from BEFORE this, since
+  // everything after it was already scrobbled live (Last.fm doesn't dedupe: the timestamps differ). Kept per
+  // username and never moved later, so a disconnect + reconnect doesn't reopen the window it already covered.
+  var DAY_MS = 86400000;
+  function connectedAtKey(u) { return "lastfm:connectedAt:" + (u || ""); }
+  function connectedAt(u) { var v = Number(Q.storage.get(connectedAtKey(u), "")); return isFinite(v) && v > 0 ? v : 0; }
+  function stampConnectedAt(u, ms) { var cur = connectedAt(u); if (!cur || ms < cur) Q.storage.set(connectedAtKey(u), String(ms)); }
+  // Import high-water mark (seconds): the newest play timestamp an import already delivered for this account.
+  function importHWKey(u) { return "lastfm:importHW:" + (u || ""); }
+  function importHW(u) { var v = Number(Q.storage.get(importHWKey(u), "")); return isFinite(v) && v > 0 ? v : 0; }
+  function setImportHW(u, ts) { if (ts > importHW(u)) Q.storage.set(importHWKey(u), String(ts)); }
   function pickupSession(j) {
     if (j && j.ok && j.sk) {
       sessionKey = j.sk; username = j.user || "";
       Q.storage.set("lastfm:sk", sessionKey); Q.storage.set("lastfm:user", username);
+      stampConnectedAt(username, Date.now());
       return true;
     }
     return false; // { ok:false, pending:true } -> keep polling
   }
+  // A session from before connectedAt existed: we can't know when live scrobbling started, so assume ~2 weeks
+  // ago. Last.fm rejects scrobbles older than that anyway, so this can only skip plays, never send one twice.
+  if (sessionKey && !connectedAt(username)) stampConnectedAt(username, Date.now() - 14 * DAY_MS);
   function pollSession(nonce) {
     return getJSON("/session?n=" + encodeURIComponent(nonce)).catch(function () { return null; });
   }
@@ -118,23 +136,28 @@ try {
   function acceptedCount(resp) { try { return parseInt(resp.scrobbles["@attr"].accepted, 10) || 0; } catch (e) { return 0; } }
 
   // Authoritative artist/track/album per id from track/get (the player-bar scrape can hand back a
-  // torn snapshot mid-change, and its first /artist/ link isn't always the main performer). Falls
-  // back to the flat player track on any failure.
+  // torn snapshot mid-change, and its first /artist/ link isn't always the main performer). Only a real
+  // track/get answer is cached. On failure the caller's fallback is returned uncached, and that fallback is
+  // only ever built from the SETTLED track Q.player.onChange delivers (fbFrom), never from a getTrack()
+  // taken mid-change, which paired the new id with the previous track's title.
   var metaCache = {};
+  function fbFrom(t) { return t && t.id != null ? { artist: t.artist || (t.artists || [])[0] || "", track: t.title || "", album: t.album || "", durationMs: t.durationMs || 0 } : null; }
   function resolveMeta(id, fallback) {
     if (id == null) return Promise.resolve(fallback);
     if (metaCache[id]) return Promise.resolve(metaCache[id]);
-    if (!Q.api) { metaCache[id] = fallback; return Promise.resolve(fallback); }
+    if (!Q.api) return Promise.resolve(fallback);
     return Q.api("track/get?track_id=" + id).then(function (j) {
       var perf = (j && (j.performer || (j.album && j.album.artist))) || null;
+      fallback = fallback || {};
       var m = {
-        artist: (perf && perf.name) || fallback.artist,
-        track: (j && j.title) || fallback.track,
-        album: (j && j.album && j.album.title) || fallback.album,
-        durationMs: fallback.durationMs
+        artist: (perf && perf.name) || fallback.artist || "",
+        track: (j && j.title) || fallback.track || "",
+        album: (j && j.album && j.album.title) || fallback.album || "",
+        durationMs: fallback.durationMs || (j && j.duration ? j.duration * 1000 : 0)
       };
-      metaCache[id] = m; return m;
-    }).catch(function () { metaCache[id] = fallback; return fallback; });
+      if (m.artist && m.track) metaCache[id] = m;
+      return m;
+    }).catch(function () { return fallback; });
   }
 
   function sendNowPlaying(m) {
@@ -158,22 +181,49 @@ try {
     return postJSON("/scrobble", { sk: sessionKey, scrobbles: scrobbles });
   }
 
-  // offline retry queue (network failures only; permanent rejections aren't retried)
+  // Retry queue for scrobbles that didn't land. Each item is tagged with the Last.fm username it was played
+  // under (item.user) and only ever flushes into that account: items for another account are held until it
+  // reconnects. Untagged items from before tagging are adopted by whoever is connected. An answer that isn't
+  // a success counts against the item (item.tries) and it is dropped after QUEUE_MAX_TRIES, so one permanent
+  // error can't wedge the head of the queue forever; going offline (e.net) doesn't count. Items past Last.fm's
+  // ~2 week window are dropped too, since it would ignore them.
   var QKEY = "lastfm:queue";
+  var QUEUE_MAX_TRIES = 6;
   function loadQueue() { try { var q = JSON.parse(Q.storage.get(QKEY, "[]")); return Array.isArray(q) ? q : []; } catch (e) { return []; } }
   function saveQueue(q) { try { Q.storage.set(QKEY, JSON.stringify(q.slice(-500))); } catch (e) {} }
-  function enqueue(item) { var q = loadQueue(); q.push(item); saveQueue(q); }
+  function enqueue(item) { item.user = username; var q = loadQueue(); q.push(item); saveQueue(q); }
+  function qKey(it) { return (it && (it.user || "")) + "|" + (it && it.timestamp) + "|" + (it && it.artist) + "|" + (it && it.track); }
   var flushing = false;
   function flushQueue() {
     if (flushing || !connected() || !enabled()) return;
-    var q = loadQueue(); if (!q.length) return;
+    var minTs = Math.floor((Date.now() - 14 * DAY_MS) / 1000);
+    var q = loadQueue(), changed = false;
+    q = q.filter(function (it) {
+      if (!it || !it.artist || !it.track || !it.timestamp || it.timestamp < minTs) { changed = true; return false; }
+      if (it.user == null) { it.user = username; changed = true; }
+      return true;
+    });
+    if (changed) saveQueue(q);
+    var batch = q.filter(function (it) { return it.user === username; }).slice(0, 50);
+    if (!batch.length) return;
     flushing = true;
-    var batch = q.slice(0, 50);
+    var keys = batch.map(qKey);
+    // remove (or charge a try to) exactly this batch's items in the CURRENT stored queue, which may have grown
+    function settle(charge) {
+      var want = {}; keys.forEach(function (k) { want[k] = (want[k] || 0) + 1; });
+      saveQueue(loadQueue().filter(function (it) {
+        var k = qKey(it); if (!want[k]) return true;
+        want[k]--;
+        if (!charge) return false;
+        it.tries = (it.tries || 0) + 1;
+        return it.tries < QUEUE_MAX_TRIES;
+      }));
+    }
     scrobbleBatch(batch).then(function (resp) {
-      if (resp && resp.error === 9) { flushing = false; disconnect(); return; } // invalid session key
-      if (resp && resp.scrobbles) { saveQueue(loadQueue().slice(batch.length)); } // processed (accepted or too-old-ignored); drop it
+      if (resp && resp.error === 9) { flushing = false; disconnect(); return; } // invalid session key; items stay held for that account
+      settle(!(resp && resp.scrobbles)); // processed (accepted or too-old-ignored) -> drop; any other answer -> charge a try
       flushing = false;
-    }).catch(function () { flushing = false; }); // network still down; keep the queue
+    }).catch(function (e) { if (!(e && e.net)) settle(true); flushing = false; }); // offline keeps the queue untouched
   }
 
   // live logger: one snapshot object per track, accumulating real listened time
@@ -183,9 +233,9 @@ try {
       var t = safeTrack();
       if (!t || t.id == null) { scr = null; return; }
       if (!scr || scr.id !== t.id) {
-        scr = { id: t.id, startTs: Date.now(), listenedMs: 0, lastPos: safePos(), durationMs: t.durationMs || 0, scrobbled: false };
-        var fb = { artist: t.artist || (t.artists || [])[0] || "", track: t.title || "", album: t.album || "", durationMs: t.durationMs || 0 };
-        resolveMeta(t.id, fb).then(function (m) { if (scr && scr.id === t.id) sendNowPlaying(m); });
+        // only the id (store-side, never torn) and duration are taken here; names come from onSettled()
+        scr = { id: t.id, startTs: Date.now(), listenedMs: 0, lastPos: safePos(), durationMs: t.durationMs || 0, scrobbled: false, fb: null };
+        if (settledFb && settledFb.id === t.id) attachSettled(settledFb.fb);
         return;
       }
       if (safePlaying()) {
@@ -195,7 +245,7 @@ try {
           // same id, position wrapped back to ~0: repeat-one (or a manual replay) restarted the
           // track. Re-arm so the new play scrobbles under the normal 50%/4min rule.
           scr.startTs = Date.now(); scr.listenedMs = 0; scr.scrobbled = false;
-          var mc = metaCache[scr.id]; if (mc) sendNowPlaying(mc); // cached only - best-effort, like every nowplaying
+          var mc = metaCache[scr.id] || scr.fb; if (mc) sendNowPlaying(mc); // cached/settled only - best-effort, like every nowplaying
         }
         if (!scr.scrobbled && scr.durationMs >= 30000 && scr.listenedMs >= threshold(scr.durationMs)) {
           scr.scrobbled = true;
@@ -204,18 +254,35 @@ try {
       } else { scr.lastPos = safePos(); }
     } catch (e) {}
   }
+  // The settled track for the newest change, from Q.player.onChange (title stable across reads, so it's
+  // the new track's own). This is the ONLY source for a fallback when track/get fails.
+  var settledFb = null; // { id, fb }
+  function attachSettled(fb) {
+    if (!scr || !fb) return;
+    scr.fb = fb;
+    var id = scr.id;
+    resolveMeta(id, fb).then(function (m) { if (scr && scr.id === id) sendNowPlaying(m); });
+  }
+  function onSettled(t) {
+    var fb = fbFrom(t);
+    settledFb = fb ? { id: t.id, fb: fb } : null;
+    tick(); // makes scr for this id if the 1s tick hasn't yet (and attaches the settled names)
+    if (fb && scr && scr.id === t.id && scr.fb !== fb) attachSettled(fb);
+  }
   function doScrobble(s) {
     if (!connected() || !enabled()) return;
-    var m = metaCache[s.id] || null;
-    var item = m ? { artist: m.artist, track: m.track, album: m.album } : null;
-    if (!item) { var t = safeTrack(); if (t && t.id === s.id) item = { artist: t.artist || (t.artists || [])[0] || "", track: t.title || "", album: t.album || "" }; }
-    if (!item || !item.artist || !item.track) return;
-    item.timestamp = Math.floor(s.startTs / 1000);
-    if (s.durationMs) item.duration = Math.round(s.durationMs / 1000);
-    scrobbleBatch([item]).then(function (resp) {
-      if (resp && resp.error === 9) { disconnect(); return; }
-      if (!resp || !resp.scrobbles) enqueue(item); // unexpected/transient body -> retry later
-    }).catch(function () { enqueue(item); }); // network failure -> retry later
+    var id = s.id, startTs = s.startTs, durationMs = s.durationMs, fb = s.fb;
+    // retry track/get at scrobble time if it failed at the change; fall back to the settled names only
+    resolveMeta(id, fb).then(function (m) {
+      if (!m || !m.artist || !m.track || !connected() || !enabled()) return;
+      var item = { artist: m.artist, track: m.track, album: m.album || "" };
+      item.timestamp = Math.floor(startTs / 1000);
+      if (durationMs) item.duration = Math.round(durationMs / 1000);
+      scrobbleBatch([item]).then(function (resp) {
+        if (resp && resp.error === 9) { disconnect(); return; }
+        if (!resp || !resp.scrobbles) enqueue(item); // unexpected/transient body -> retry later
+      }).catch(function () { enqueue(item); }); // network failure -> retry later
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -259,16 +326,28 @@ try {
       .then(function (p) { return p.length ? p : statsDB(); })
       .then(function (p) { return p.length ? p : cloudPlays(); });
   }
-  var importRunning = false;
+  // Only plays from before live scrobbling began for this account (connectedAt) and newer than what an
+  // import already delivered (the high-water mark) are sent, so repeated clicks never send a play twice.
+  // The running flag lives on window, not in this closure: a disabled-then-re-enabled extension is a new
+  // closure and would otherwise start a second import beside the first. A disabled instance stops at its
+  // next batch boundary (disposed) and only then releases the flag.
+  var disposed = false;
+  function importBusy() { return !!window.__qzLfmImport; }
   function runImport() {
-    if (importRunning) return;
+    if (importBusy()) { setStatus("An import is already running."); return; }
     if (!connected()) { setStatus("Connect Last.fm first."); return; }
+    var user = username, cutoff = connectedAt(user), hw = importHW(user);
+    if (!cutoff) { setStatus("Couldn't tell when scrobbling started for this account. Reconnect Last.fm and try again."); return; }
+    var token = {}; window.__qzLfmImport = token; // claim before the async read so a second click can't slip in
+    function release() { if (window.__qzLfmImport === token) window.__qzLfmImport = null; }
     setStatus("Reading your recorded play history...");
     readHistory().then(function (plays) {
-      var seen = {}, items = [];
+      if (disposed || username !== user) { release(); return; }
+      var seen = {}, items = [], cutoffTs = Math.floor(cutoff / 1000);
       (plays || []).forEach(function (p) {
         var artist = p.artist || "", track = p.title || "", ts = Math.floor((p.ts || 0) / 1000);
         if (!artist || !track || !ts) return;
+        if (ts >= cutoffTs || ts <= hw) return; // scrobbled live already, or sent by an earlier import
         var key = artist + "|" + track + "|" + ts;
         if (seen[key]) return; seen[key] = 1;
         var it = { artist: artist, track: track, timestamp: ts };
@@ -277,27 +356,31 @@ try {
         items.push(it);
       });
       items.sort(function (a, b) { return a.timestamp - b.timestamp; });
-      if (!items.length) { setStatus("No recorded plays found. The Listening Stats extension logs these as you listen; import once you have some history."); return; }
-      batchImport(items);
-    }).catch(function () { setStatus("Couldn't read your play history."); });
+      if (!items.length) { release(); setStatus(hw ? "Nothing new to import. Plays since you connected were scrobbled live, and earlier ones were already imported." : "No recorded plays from before you connected. The Listening Stats extension logs plays as you listen; everything since you connected was scrobbled live."); return; }
+      batchImport(items, user, token, release);
+    }).catch(function () { release(); setStatus("Couldn't read your play history."); });
   }
-  function batchImport(items) {
+  function batchImport(items, user, token, release) {
     var total = items.length, sent = 0, accepted = 0, idx = 0;
-    importRunning = true;
     setStatus("Importing 0 / " + total + " ...");
     function next() {
+      if (disposed || window.__qzLfmImport !== token) { release(); return; }
+      if (username !== user || !connected()) { release(); setStatus("Account changed; import stopped at " + sent + " / " + total + "."); return; }
       if (idx >= items.length) {
-        importRunning = false;
+        release();
         setStatus("Done. Sent " + sent + " of " + total + " plays; Last.fm accepted " + accepted + ". (It rejects scrobbles older than ~2 weeks, so older plays bounce.)");
         return;
       }
       var batch = items.slice(idx, idx + 50); idx += batch.length;
       scrobbleBatch(batch).then(function (resp) {
-        if (resp && resp.error === 9) { importRunning = false; disconnect(); setStatus("Session expired. Reconnect Last.fm and try again."); return; }
+        if (resp && resp.error === 9) { release(); disconnect(); setStatus("Session expired. Reconnect Last.fm and try again."); return; }
+        if (!resp || !resp.scrobbles) { release(); setStatus("Last.fm didn't take the batch at " + sent + " / " + total + ". Try the import again later."); return; }
+        // delivered (accepted or ignored as too old): never send these again
+        setImportHW(user, batch[batch.length - 1].timestamp);
         sent += batch.length; accepted += acceptedCount(resp);
         setStatus("Importing " + Math.min(idx, total) + " / " + total + " (" + accepted + " accepted) ...");
         setTimeout(next, 500); // stay polite to the API between batches
-      }).catch(function () { importRunning = false; setStatus("Network error at " + sent + " / " + total + ". Reopen and retry to continue."); });
+      }).catch(function () { release(); setStatus("Network error at " + sent + " / " + total + ". Reopen and retry to continue."); });
     }
     next();
   }
@@ -406,10 +489,15 @@ try {
   var iv = setInterval(tick, 1000);
   var flushIv = setInterval(flushQueue, 90000);
   var offChange = null;
-  try { offChange = Q.player.onChange(function () { tick(); }); } catch (e) {} // prompt Now Playing on user-driven changes
+  try { offChange = Q.player.onChange(onSettled); } catch (e) {} // settled names + prompt Now Playing on every change
+  // Enabled mid-track: onChange won't fire for the track already playing, and there is no settled snapshot to
+  // fall back on, so Now Playing (and later the scrobble) rely on track/get alone for this one track.
+  tick();
+  if (scr && !scr.fb) { var bootId = scr.id; resolveMeta(bootId, null).then(function (m) { if (scr && scr.id === bootId) sendNowPlaying(m); }); }
   if (connected()) setTimeout(flushQueue, 4000); // retry anything the last session couldn't send
 
   return function cleanup() {
+    disposed = true; // a running import stops at its next batch and releases window.__qzLfmImport
     try { clearInterval(iv); } catch (e) {}
     try { clearInterval(flushIv); } catch (e) {}
     stopAuthPoll();
