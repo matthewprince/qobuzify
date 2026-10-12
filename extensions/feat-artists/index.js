@@ -126,7 +126,7 @@ function augmentPlayerBar() {
 }
 
 Q.css(CSS_ID, [
-  ".qz-fa-feat{color:#8b94a3;font-weight:600;}",
+  ".qz-fa-feat{color:color-mix(in srgb,currentColor 65%,transparent);font-weight:600;}",
   ".ListItem__artist--isClickable + .qz-fa-feat,.ListItem__artist + .qz-fa-feat{margin-left:2px;}",
   // in the player bar, blend with the artist text (its own muted colour) rather than the row grey
   ".player__track-album .qz-fa-feat{color:inherit;opacity:.72;font-weight:inherit;margin-left:3px;}"
