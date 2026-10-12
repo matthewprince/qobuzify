@@ -214,5 +214,5 @@ if ($node -eq "node") {
 } else {
   Write-Host ("(or directly:  & `"" + $node + "`" `"" + (Join-Path $dir 'bin\qobuzify.js') + "`" restore)") -ForegroundColor DarkGray
 }
-Write-Host "Heads up: a Qobuz app update removes Qobuzify. Re-run this installer to restore it (your settings survive)." -ForegroundColor DarkGray
+Write-Host "Qobuz app updates are re-patched automatically (checked every 15 minutes). Turn that off with: qobuzify autopatch off" -ForegroundColor DarkGray
 Write-Host ""
