@@ -75,6 +75,11 @@ function tick() {
     if (Q.player.isPlaying()) {
       var pos = Q.player.getPositionMs(), delta = pos - cur.lastPos; cur.lastPos = pos;
       if (delta > 0 && delta < 4000) cur.listenedMs += delta;
+      else if (delta < -5000 && pos < 3000) {
+        // same id, position wrapped back to ~0: repeat-one (or a manual replay) restarted the track. Re-arm so
+        // the new play counts under the normal threshold (same rule as last-fm's scrobbler).
+        cur.listenedMs = 0; cur.counted = false;
+      }
       if (!cur.counted && cur.listenedMs >= threshold(t.durationMs)) { cur.counted = true; cur.artistId = cur.artistId || playerArtistId(); record(cur); }
     } else { cur.lastPos = Q.player.getPositionMs(); }
   } catch (e) {}
@@ -215,10 +220,15 @@ function getSyncId() {
   return id;
 }
 function setSyncId(id) { id = (id || "").trim(); if (/^[A-Za-z0-9-]{16,64}$/.test(id)) { try { localStorage.setItem(LS_SYNCID, id); localStorage.setItem(LS_LASTPULL, "0"); } catch (e) {} return true; } return false; }
-function pushPlays(plays) {
+// pushPlaysStrict rejects when the push didn't land (offline, non-2xx, unreadable answer); pushPlays keeps
+// the old swallow-to-0 contract for the bulk callers (pushAll re-sends everything anyway).
+function pushPlaysStrict(plays) {
   if (!plays.length) return Promise.resolve(0);
-  return fetch(SYNC_API + "/push?qz=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId(), plays: plays }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.inserted) || 0; }).catch(function () { return 0; });
+  return fetch(SYNC_API + "/push?qz=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId(), plays: plays }) })
+    .then(function (r) { if (!r.ok) throw new Error("stats push " + r.status); return r.json(); })
+    .then(function (j) { return (j && j.inserted) || 0; });
 }
+function pushPlays(plays) { return pushPlaysStrict(plays).catch(function () { return 0; }); }
 function pushAll() { return allPlays().then(function (p) { var chunks = []; for (var i = 0; i < p.length; i += 500) chunks.push(p.slice(i, i + 500)); return chunks.reduce(function (pr, c) { return pr.then(function (acc) { return pushPlays(c).then(function (n) { return acc + n; }); }); }, Promise.resolve(0)); }); }
 function pullMerge() {
   var since = 0; try { since = parseInt(localStorage.getItem(LS_LASTPULL) || "0", 10) || 0; } catch (e) {}
@@ -228,11 +238,37 @@ function pullMerge() {
     return putMany(plays).then(function () { var mx = plays.reduce(function (m, p) { return Math.max(m, p.ts); }, since); try { localStorage.setItem(LS_LASTPULL, String(mx)); } catch (e) {} return plays.length; });
   }).catch(function () { return 0; });
 }
-function queuePush(play) { if (!cloudOn()) return; pushQueue.push(play); clearTimeout(pushT); pushT = setTimeout(function () { var q = pushQueue.slice(); pushQueue = []; pushPlays(q); }, 5000); }
+// Live plays upload in a 5s-debounced batch. A batch that fails goes back on the queue and is retried with
+// backoff, and the queue (plus any batch in flight) is mirrored to localStorage so a quit or a disable
+// mid-retry doesn't drop it: it is picked up again at the next boot. Cleanup flushes instead of cancelling.
+var LS_PUSHQ = "qz-stats-pushq", PUSHQ_CAP = 500; // the plays are in IndexedDB too; "Sync now" re-sends everything
+var pushInflight = [], pushFails = 0, pushDisposed = false;
+function savePushQ() {
+  try {
+    var all = pushInflight.concat(pushQueue).slice(-PUSHQ_CAP);
+    if (all.length) localStorage.setItem(LS_PUSHQ, JSON.stringify(all)); else localStorage.removeItem(LS_PUSHQ);
+  } catch (e) {}
+}
+function loadPushQ() { try { var a = JSON.parse(localStorage.getItem(LS_PUSHQ) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function schedulePush(ms) { clearTimeout(pushT); pushT = setTimeout(flushPush, ms); }
+function flushPush() {
+  clearTimeout(pushT); pushT = null;
+  if (!cloudOn() || pushInflight.length || !pushQueue.length) return;
+  var q = pushQueue.slice(0, 500); pushQueue = pushQueue.slice(q.length); pushInflight = q;
+  pushPlaysStrict(q).then(function () {
+    pushInflight = []; pushFails = 0; savePushQ();
+    if (pushQueue.length && !pushDisposed) schedulePush(1000);
+  }, function () {
+    pushQueue = q.concat(pushQueue).slice(-PUSHQ_CAP); pushInflight = []; savePushQ();
+    pushFails++;
+    if (!pushDisposed) schedulePush(Math.min(300000, 15000 * Math.pow(2, pushFails - 1))); // 15s, 30s, 1m ... 5m
+  });
+}
+function queuePush(play) { if (!cloudOn()) return; pushQueue.push(play); savePushQ(); if (!pushInflight.length) schedulePush(5000); }
 function startPull() { if (pullTimer) return; pullMerge(); pullTimer = setInterval(pullMerge, 300000); }
 function stopPull() { if (pullTimer) { clearInterval(pullTimer); pullTimer = null; } }
 function enableCloud() { try { localStorage.setItem(LS_CLOUD, "1"); } catch (e) {} return pushAll().then(function (n) { startPull(); return n; }); }
-function disableCloud() { try { localStorage.setItem(LS_CLOUD, "0"); } catch (e) {} stopPull(); }
+function disableCloud() { try { localStorage.setItem(LS_CLOUD, "0"); } catch (e) {} stopPull(); clearTimeout(pushT); pushT = null; pushQueue = []; savePushQ(); } // sync off: nothing more goes up
 function wipeCloud() { return fetch(SYNC_API + "/wipe?qz=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ syncId: getSyncId() }) }).then(function (r) { return r.json(); }).then(function (j) { return (j && j.deleted) || 0; }).catch(function () { return 0; }); }
 
 var IC_CLOUD = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19a4.5 4.5 0 0 0 .4-8.98A6 6 0 0 0 6.2 9.5 4 4 0 0 0 7 17.9"/><path d="M7 17.9h10.5"/></svg>';
@@ -383,6 +419,9 @@ Q.css(CSS_ID, STATS_CSS);
 injectNav();
 reassertObs = Q.observe(function () { injectNav(); }, { debounce: 400 });
 if (cloudOn()) startPull();
+// plays a previous session couldn't upload (failed push, or quit/disabled mid-retry)
+if (cloudOn()) { pushQueue = loadPushQ().concat(pushQueue).slice(-PUSHQ_CAP); if (pushQueue.length) schedulePush(5000); }
+else { try { localStorage.removeItem(LS_PUSHQ); } catch (e) {} }
 
 window.__QZ_STATS = {
   all: allPlays, range: rangePlays, put: putPlay, clear: clearAll, seed: seed, seedReal: seedReal, aggregate: aggregate, fromTsFor: fromTsFor,
@@ -394,7 +433,8 @@ window.__QZ_STATS = {
 
 return function cleanup() {
   clearInterval(iv);
-  stopPull(); closeCloud(); clearTimeout(pushT);
+  stopPull(); closeCloud();
+  pushDisposed = true; flushPush(); // send what's pending now; a failure stays in localStorage for the next boot
   if (reassertObs) reassertObs();
   closePage(); var pg = document.getElementById(PAGE_ID); if (pg) pg.remove();
   var nav = document.querySelector('[data-qz-nav="' + NAV_ID + '"]'); if (nav) nav.remove();
