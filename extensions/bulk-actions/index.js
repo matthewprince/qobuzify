@@ -149,11 +149,17 @@ function blockedFilter(ids) {
 }
 
 // --- toast ---
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, curBad = false, toastT = null;
 function toast(msg, bad) {
-  var t = document.createElement("div"); t.className = "qz-ba-toast" + (bad ? " qz-ba-toast--bad" : ""); t.textContent = msg;
-  document.body.appendChild(t); requestAnimationFrame(function () { t.classList.add("qz-ba-toast--in"); });
-  setTimeout(function () { t.classList.remove("qz-ba-toast--in"); setTimeout(function () { t.remove(); }, 250); }, 2400);
+  clearTimeout(toastT);
+  if (curToast && curBad !== !!bad) curToast.close();
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, tone: bad ? "error" : undefined, onClose: function () { if (curToast === t) curToast = null; } }); curBad = !!bad; }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 2400);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 // --- add-to-playlist picker ---
 function closePicker() { var p = document.getElementById("qz-ba-pop"); if (p) p.remove(); document.removeEventListener("mousedown", pickerOutside, true); }
@@ -161,6 +167,7 @@ function pickerOutside(e) { var p = document.getElementById("qz-ba-pop"); if (p 
 function openPicker(anchor, c) {
   if (document.getElementById("qz-ba-pop")) { closePicker(); return; }
   var pop = document.createElement("div"); pop.id = "qz-ba-pop"; pop.className = "qz-ba-pop";
+  Q.ui.follow(pop);
   pop.innerHTML = '<div class="qz-ba-poptitle">Add all tracks to…</div><div class="qz-ba-new"><input class="qz-ba-newinput" placeholder="New playlist name…" maxlength="80"><button class="qz-ba-newbtn">Create</button></div><div class="qz-ba-list"><div class="qz-ba-loading">Loading playlists…</div></div>';
   document.body.appendChild(pop);
   var r = anchor.getBoundingClientRect();
@@ -376,7 +383,7 @@ function inject() {
   // library surface is shuffle-only: favouriting your favourites is a no-op, and "add all" is untested there
   wrap.innerHTML = '<button class="qz-ba-btn qz-ba-btn--accent" id="qz-ba-shuf" title="Shuffle these tracks and play">' + SHUF + '<span>Shuffle</span></button>' +
     (lib ? '' :
-    '<button class="qz-ba-btn" id="qz-ba-fav" title="Favourite all tracks">' + HEART + '<span>All</span></button>' +
+    '<button class="qz-ba-btn" id="qz-ba-fav" title="Favourite all tracks" aria-label="Favourite all tracks">' + HEART + '<span>All</span></button>' +
     '<button class="qz-ba-btn" id="qz-ba-add" title="Add all tracks to a playlist">' + PLUS + '<span>Add all</span></button>');
   wrap.querySelector("#qz-ba-shuf").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); shufflePlay(this, c); });
   var fv = wrap.querySelector("#qz-ba-fav"); if (fv) fv.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); favouriteAll(this, c); });
@@ -388,31 +395,28 @@ function inject() {
 // --- styles ---
 Q.css(CSS_ID, [
   ".qz-ba-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:6px;}",
-  ".qz-ba-btn{display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border:1px solid rgba(255,255,255,.18);border-radius:20px;background:transparent;color:#e7ecf3;font:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:all .14s;}",
-  ".qz-ba-btn:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;background:rgba(61,168,254,.1);}",
+  ".qz-ba-btn{display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:20px;background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:all .14s;}",
+  ".qz-ba-btn:hover{border-color:var(--qz-accent,#3DA8FE);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 10%,transparent);}",
   ".qz-ba-btn--accent{border-color:var(--qz-accent,#3DA8FE);color:var(--qz-accent,#3DA8FE);}",
   ".qz-ba-btn--accent:hover{background:var(--qz-accent,#3DA8FE);color:#06090a;}",
   ".qz-ba-btn svg{width:17px;height:17px;}",
   ".qz-ba-btn.qz-ba-busy{opacity:.55;cursor:default;}",
   "#qz-ba-fav:hover svg{color:#ff5c6c;}",
-  // picker popover (ephemeral, dismissed on outside click - fine at high z)
-  ".qz-ba-pop{position:fixed;z-index:2147483400;width:300px;max-height:60vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#0e131c,#0a0e15);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 24px 60px -16px rgba(0,0,0,.8);overflow:hidden;color:#eef2f7;font-family:inherit;-webkit-app-region:no-drag;}",
-  ".qz-ba-poptitle{font-size:12px;font-weight:750;letter-spacing:.4px;text-transform:uppercase;color:#8b94a3;padding:13px 15px 9px;}",
-  ".qz-ba-new{display:flex;gap:7px;padding:0 12px 11px;border-bottom:1px solid rgba(255,255,255,.07);}",
-  ".qz-ba-newinput{flex:1;min-width:0;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:9px;color:#e7ecf3;font:inherit;font-size:13px;padding:8px 10px;}",
+  // picker popover (ephemeral, dismissed on outside click - fine at high z). Appended to <body> and following
+  // Qobuz's appearance (Q.ui.follow), so the kit's tokens apply.
+  ".qz-ba-pop{position:fixed;z-index:2147483400;width:300px;max-height:60vh;display:flex;flex-direction:column;box-sizing:border-box;background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);overflow:hidden;color:var(--qzu-fg);font-family:inherit;-webkit-app-region:no-drag;}",
+  ".qz-ba-poptitle{font-size:13px;font-weight:600;color:var(--qzu-fg2);padding:13px 15px 9px;}",
+  ".qz-ba-new{display:flex;gap:7px;padding:0 12px 11px;border-bottom:1px solid var(--qzu-line);}",
+  ".qz-ba-newinput{flex:1;min-width:0;background:var(--qzu-fill);border:1px solid var(--qzu-line);border-radius:9px;color:inherit;font:inherit;font-size:13px;padding:8px 10px;}",
   ".qz-ba-newinput:focus{outline:none;border-color:var(--qz-accent,#3DA8FE);}",
-  ".qz-ba-newbtn{flex:0 0 auto;border:0;border-radius:9px;background:var(--qz-accent,#3DA8FE);color:#06090a;font:inherit;font-size:12.5px;font-weight:800;padding:0 14px;cursor:pointer;}",
+  ".qz-ba-newbtn{flex:0 0 auto;border:0;border-radius:9px;background:var(--qz-accent,#3DA8FE);color:#06090a;font:inherit;font-size:12.5px;font-weight:700;padding:0 14px;cursor:pointer;}",
   ".qz-ba-newbtn:hover{filter:brightness(1.08);}",
   ".qz-ba-list{overflow:auto;padding:6px;}",
-  ".qz-ba-loading{padding:16px 12px;color:#8b94a3;font-size:13px;text-align:center;}",
+  ".qz-ba-loading{padding:16px 12px;color:var(--qzu-fg2);font-size:13px;text-align:center;}",
   ".qz-ba-item{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;cursor:pointer;transition:background .12s;}",
-  ".qz-ba-item:hover{background:rgba(255,255,255,.06);}",
-  ".qz-ba-itemname{flex:1;min-width:0;font-size:13.5px;font-weight:600;color:#e7ecf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-ba-itemn{flex:0 0 auto;font-size:11.5px;color:#8b94a3;}",
-  // toast
-  ".qz-ba-toast{position:fixed;left:50%;bottom:96px;transform:translate(-50%,16px);z-index:2147483500;background:#06090d;border:1px solid var(--qz-accent,#3DA8FE);color:#fff;font-size:13px;font-weight:700;padding:10px 20px;border-radius:22px;opacity:0;pointer-events:none;transition:all .22s;box-shadow:0 12px 34px rgba(0,0,0,.55);}",
-  ".qz-ba-toast--in{opacity:1;transform:translate(-50%,0);}",
-  ".qz-ba-toast--bad{border-color:#ff5c6c;}"
+  ".qz-ba-item:hover{background:var(--qzu-fill-hover);}",
+  ".qz-ba-itemname{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-ba-itemn{flex:0 0 auto;font-size:11.5px;color:var(--qzu-fg2);}"
 ].join(""));
 
 // --- boot ---
@@ -425,6 +429,7 @@ return function cleanup() {
   if (obs) obs();
   clearInterval(extendIv); clearTimeout(reassertT);
   closePicker();
+  closeToast();
   var w = document.getElementById(WRAP_ID); if (w) w.remove();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
