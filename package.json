@@ -1,6 +1,6 @@
 {
   "name": "qobuzify",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Spicetify, but for Qobuz. Theme (and soon extend) the Qobuz desktop app.",
   "bin": {
     "qobuzify": "bin/qobuzify.js"

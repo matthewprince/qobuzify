@@ -76,9 +76,10 @@ function installRuntime(def, seed, opts = {}) {
   return catalog.find((t) => t.slug === (def || DEFAULT_THEME));
 }
 
-// Install/refresh the auto-reapply task unless the user turned it off with `qobuzify autopatch off`.
+// Refresh the auto-reapply task, but only for users who opted in with `qobuzify autopatch on`.
+// Opt-in until it has been proven on real Windows machines.
 function ensureAutopatch() {
-  if (process.platform !== "win32" || readState().autopatch === false) return;
+  if (process.platform !== "win32" || readState().autopatch !== true) return;
   const r = autopatch.enable(ROOT);
   if (r.ok) console.log("Qobuz updates are re-patched automatically (turn off with: qobuzify autopatch off).");
   else console.error("Could not set up automatic re-patching after Qobuz updates (" + r.reason + "). Run qobuzify update after a Qobuz update.");
