@@ -4300,6 +4300,9 @@ html.qz-has-track .qz-mini{ display:flex; }
 .qz-np__like, .qz-np__more{ flex:0 0 auto; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--qz-c1); }
 .qz-np__like svg{ width:26px; height:26px; } .qz-np__more svg{ width:24px; height:24px; }
 .qz-np__like.is-on{ color:var(--qz-brand); } .qz-np__like:active, .qz-np__more:active{ opacity:.6; }
+/* 48px touch targets without changing the 34px layout box or the glyph: an invisible hit area 7px past each edge */
+.qz-np__like, .qz-np__more, #qz-app-root .qz-trow__more{ position:relative; }
+.qz-np__like::before, .qz-np__more::before, .qz-trow__more::before{ content:""; position:absolute; inset:-7px; }
 
 /* progress bar */
 .qz-np__bar{ position:relative; width:100%; height:5px; border-radius:3px; background:var(--qz-track); margin-top:22px; overflow:visible; touch-action:none; cursor:pointer; }
