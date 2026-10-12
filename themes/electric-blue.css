@@ -1,0 +1,23 @@
+/* Electric Blue: deep blue pages with a soft blue glow on Qobuzify's own screens (dark appearance only).
+   Light appearance keeps Qobuz's light greys. */
+#qz-foryou-page:not([data-theme=light]),
+#qz-genre-page:not([data-theme=light]) {
+  background: radial-gradient(120% 80% at 80% -10%, rgba(61,168,254,.10), transparent 60%), linear-gradient(180deg, #0a0e17, #080b12 55%) !important;
+}
+#qz-search-panel:not([data-theme=light]) {
+  background: radial-gradient(120% 90% at 82% -8%, rgba(61,168,254,.10), transparent 60%), linear-gradient(180deg, #0a0e17, #060a12 60%) !important;
+}
+#qz-hrf-panel:not([data-theme=light]),
+#qz-plf-panel:not([data-theme=light]) {
+  background: linear-gradient(180deg, #0a0e17, #060a12 60%) !important;
+}
+.qz-stats-page:not([data-theme=light]) {
+  --qzst-bg: #0a0d14;
+  background: radial-gradient(120% 80% at 80% -10%, rgba(61,168,254,.08), transparent 60%), radial-gradient(120% 100% at 50% 0%, #10131a 0%, #0a0c11 62%, #07090d 100%) !important;
+}
+.qz-stats-page:not([data-theme=light]) .qz-stats-scard {
+  background: linear-gradient(180deg, rgba(61,168,254,.11), rgba(255,255,255,.025)) !important;
+}
+.qz-overlay:not([data-theme=light]) .qz-modal {
+  background: radial-gradient(120% 90% at 82% -8%, rgba(61,168,254,.10), transparent 60%), linear-gradient(180deg, rgba(20,23,31,.97), rgba(12,14,20,.98)) !important;
+}

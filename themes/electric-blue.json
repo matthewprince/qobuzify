@@ -1,8 +1,13 @@
 {
   "name": "Electric Blue",
   "author": "matthewprince",
-  "description": "Qobuz gold swapped for Electric Blue (#3DA8FE).",
-  "preview": { "bg": "#121212", "surface": "#181818", "accent": "#3DA8FE", "text": "#f3f3f3" },
+  "description": "Electric Blue (#3DA8FE) accent, with deep blue pages and a soft blue glow.",
+  "preview": {
+    "bg": "#0a0e17",
+    "surface": "#111827",
+    "accent": "#3DA8FE",
+    "text": "#eef2f7"
+  },
   "tokens": {
     "--color-brand-100": "#3DA8FE",
     "--color-brand-80": "#62B8FF",
@@ -17,5 +22,6 @@
     "#dea442": "#3DA8FE",
     "#ffcb74": "#62B8FF",
     "#ffb12f": "#3DA8FE"
-  }
+  },
+  "cssFile": "electric-blue.css"
 }
