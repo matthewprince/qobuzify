@@ -3106,6 +3106,14 @@ function openQMenu() {
   requestAnimationFrame(function () { if (qMenuEl) qMenuEl.classList.add("is-open"); });
 }
 function closeQMenu() { if (qMenuEl) { qMenuEl.remove(); qMenuEl = null; } }
+// Tell the native PlaybackService whether audio is really playing (on change only), so it can drop the wake
+// lock and foreground status after a long pause and take them back on play. Not the media card's state: the
+// Lockscreen toggle sends that as "paused" while music plays. Older APKs have no setAudible; skip quietly.
+var _natAudible = null;
+function natAudible(p) {
+  p = !!p; if (p === _natAudible) return;
+  try { var AB = window.QZAndroidMedia; if (AB && AB.setAudible) { AB.setAudible(p); _natAudible = p; } } catch (e) {}
+}
 function renderTransport(force) {
   if (!mounted) return;
   var p = isPlaying();
@@ -3141,6 +3149,7 @@ function tickProgress() {
     }
   }
   renderTransport(false);
+  natAudible(isPlaying());
   syncQueue();                        // refresh shuffle/repeat + queue panel when the store moves
   if (!hasTrack()) return;
   var pos = 0; try { pos = Q.player.getPositionMs(); } catch (e) {}
@@ -3424,7 +3433,7 @@ function resolveQueueMeta(id, cb) {
   if (id == null) return; id = String(id);
   if (queueMetaCache[id] !== undefined) { cb(queueMetaCache[id]); return; }
   api("track/get?track_id=" + id).then(function (tr) {
-    var m = { title: (tr && tr.title) || "", artist: artistName(tr), cover: cover(tr) };
+    var m = { title: (tr && tr.title) || "", artist: artistName(tr), cover: cover(tr), album: (tr && tr.album && tr.album.title) || "" };
     queueMetaCache[id] = m; cb(m);
   }).catch(function () { queueMetaCache[id] = null; cb(null); });
 }
@@ -3481,7 +3490,7 @@ function qRender() {
 function queueJumpTo(targetIndex) {
   var pq = qPlayqueue(); if (!pq) return;
   var delta = targetIndex - qIndex(pq);
-  if (delta <= 0) return;                 // list only exposes upcoming rows, so delta is always >= 1
+  if (delta <= 0) return;                 // the panel and the native queue both start at the current track (see pushQueueToNative)
   var n = delta, i = 0;
   (function fire() { if (i++ >= n) return; clickEl(".pct-player-next, .player__action-next"); setTimeout(fire, 70); })();
 }
@@ -3514,19 +3523,57 @@ function syncQueue() {
 // Hand the queue to the native MediaSession. Capped: a session queue is for glancing at and skipping
 // within, and the whole thing crosses a JS<->native bridge as one string on every queue change.
 var QUEUE_CAP = 50;
+// Published from the CURRENT track forward, not with a few tracks of history. A tap on a row over there comes
+// back as queueJumpTo(orderIndex), which can only go forward by pressing Next N times: going back would need
+// Previous N times, and Qobuz's Previous restarts the current track once it is a few seconds in, so the count
+// lands one short depending on the playhead. History rows were therefore dead taps. Starting at the current
+// track also matches how Android Auto and the lockscreen draw a queue: the playing item on top, then up next.
 function pushQueueToNative(pq) {
   try {
     var AB = window.QZAndroidMedia;
     if (!AB || !AB.updateQueue) return;
     var order = qOrder(pq) || [], ci = qIndex(pq);
-    var out = [], start = Math.max(0, ci - 5);          // a little history, then what is coming
-    for (var i = start; i < order.length && out.length < QUEUE_CAP; i++) {
+    var out = [], missing = [];
+    for (var i = ci; i < order.length && out.length < QUEUE_CAP; i++) {
       var it = order[i], id = it && it.trackId; if (id == null) continue;
-      var m = queueMetaCache[String(id)] || {};
+      var m = queueMetaCache[String(id)];
+      if (m === undefined) missing.push(String(id));
+      m = m || {};
       out.push({ i: i, t: m.title || "", a: m.artist || "", al: m.album || "" });
     }
     AB.updateQueue(JSON.stringify({ items: out, index: ci }));
+    // Titles come from queueMetaCache, which only the in-app queue panel used to fill, so the car, lockscreen
+    // and Bluetooth saw blank rows unless that panel had been opened. Resolve what's missing here and re-push.
+    if (missing.length) natNeedMeta(missing);
   } catch (e) {}
+}
+// Resolve queue metadata for the native session: at most 4 track/get calls in flight, and the re-push is
+// throttled (one per 400ms while results arrive), so a 50-row queue doesn't cross the bridge 50 times.
+// resolveQueueMeta caches failures as null, so a row that can't be resolved is not retried in a loop.
+var _natFill = { pending: {}, list: [], active: 0, timer: null };
+function natNeedMeta(ids) {
+  ids.forEach(function (id) {
+    if (queueMetaCache[id] === undefined && !_natFill.pending[id]) { _natFill.pending[id] = 1; _natFill.list.push(id); }
+  });
+  natPump();
+}
+function natPump() {
+  while (_natFill.active < 4 && _natFill.list.length) {
+    var id = _natFill.list.shift();
+    _natFill.active++;
+    resolveQueueMeta(id, (function (rid) { return function () {
+      delete _natFill.pending[rid]; _natFill.active--;
+      natResync(); natPump();
+    }; })(id));
+  }
+}
+function natResync() {
+  if (_natFill.timer) return;
+  _natFill.timer = setTimeout(function () {
+    _natFill.timer = null;
+    qState.natSig = "";               // force syncQueue to push again, now with the titles filled in
+    try { syncQueue(); } catch (e) {}
+  }, 400);
 }
 // M1 FIX: queue tap-to-jump is now bound inside buildShell() on each mount (see qBody binding there), so a fresh
 // qBody after an unmount->remount always gets the delegated tap handler. (Was a one-shot IIFE that never rebound.)
@@ -4835,5 +4882,9 @@ return function cleanup() {
   if (obs) { obs(); obs = null; }
   try { if (window.__qzBack === qzHandleBack) delete window.__qzBack; } catch (e) {}
   try { delete window.__qzQueueJump; } catch (e) {}   // don't leave a global closing over torn-down state
+  clearTimeout(_natFill.timer); _natFill.timer = null;
+  // Nobody reports audibility once we're gone, so leave the native side holding its wake lock (its old
+  // always-on behaviour) rather than parked in a "paused" state it would never leave.
+  natAudible(true);
   unmount();
 };
