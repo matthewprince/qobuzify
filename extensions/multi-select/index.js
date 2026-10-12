@@ -20,7 +20,6 @@
 var Q = Qobuzify;
 var CSS_ID = "qz-ms-css";
 var BAR_ID = "qz-ms-bar";
-var TOAST_ID = "qz-ms-toast";
 var TMP_KEY = "ms:tmp"; // storage key: the rotating throwaway "Play" playlist id
 
 var PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
@@ -147,13 +146,17 @@ function genDelete(raw) {
 }
 
 // ---- toast ----
-var toastT = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, curBad = false, toastT = null;
 function toast(msg, bad) {
-  var t = document.getElementById(TOAST_ID);
-  if (!t) { t = document.createElement("div"); t.id = TOAST_ID; document.body.appendChild(t); }
-  t.textContent = msg; t.className = bad ? "qz-bad" : ""; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 2400);
+  clearTimeout(toastT);
+  if (curToast && curBad !== !!bad) curToast.close();
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, tone: bad ? "error" : undefined, onClose: function () { if (curToast === t) curToast = null; } }); curBad = !!bad; }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 2400);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 // ---- play a specific entity: navigate, then click the VISIBLE header Play (docs/player-control.md) ----
 function headerPlayBtn() {
@@ -236,6 +239,7 @@ function openPicker(anchorEl) {
   if (document.getElementById("qz-ms-pop")) { closePicker(); return; }
   if (!count()) return;
   var pop = document.createElement("div"); pop.id = "qz-ms-pop"; pop.className = "qz-ms-pop";
+  Q.ui.follow(pop);
   pop.innerHTML = '<div class="qz-ms-poptitle">Add selected to…</div><div class="qz-ms-new"><input class="qz-ms-newinput" placeholder="New playlist name…" maxlength="80"><button class="qz-ms-newbtn">Create</button></div><div class="qz-ms-list"><div class="qz-ms-loading">Loading playlists…</div></div>';
   document.body.appendChild(pop);
   var r = anchorEl.getBoundingClientRect();
@@ -280,6 +284,7 @@ function renderBar() {
   var bar = document.getElementById(BAR_ID);
   if (!bar) {
     bar = document.createElement("div"); bar.id = BAR_ID;
+    Q.ui.follow(bar);
     bar.innerHTML =
       '<span class="qz-ms-count"></span>' +
       '<span class="qz-ms-sep"></span>' +
@@ -287,7 +292,7 @@ function renderBar() {
       '<button class="qz-ms-btn" id="qz-ms-queue" title="Add the selected tracks to the queue">' + QUEUE + '<span>Queue</span></button>' +
       '<button class="qz-ms-btn" id="qz-ms-add" title="Add the selected tracks to a playlist">' + PLUS + '<span>Playlist</span></button>' +
       '<button class="qz-ms-btn qz-ms-fav" id="qz-ms-fav" title="Favourite the selected tracks">' + HEART + '<span>Favourite</span></button>' +
-      '<button class="qz-ms-clear" id="qz-ms-clear" title="Clear selection (Esc)">&#215;</button>';
+      '<button class="qz-ms-clear" id="qz-ms-clear" title="Clear selection (Esc)" aria-label="Clear selection">&#215;</button>';
     document.body.appendChild(bar);
     bar.querySelector("#qz-ms-play").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); doPlay(); });
     bar.querySelector("#qz-ms-queue").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); doQueue(); });
@@ -337,37 +342,34 @@ function onKey(e) { if (e.key === "Escape" && count()) { e.stopPropagation(); cl
 Q.css(CSS_ID, [
   // selected row: accent tint + an inset accent bar down the left edge (dark, never white)
   ".ListItem.qz-ms-sel,.ui-module-track-row.qz-ms-sel{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 15%,transparent)!important;box-shadow:inset 3px 0 0 var(--qz-accent,#3DA8FE);}",
-  // floating action bar (above content + player, below the picker/toast; parked above the transport)
-  "#qz-ms-bar{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:2147483200;display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:16px;background:linear-gradient(180deg,#121722,#0b0f16);border:1px solid rgba(255,255,255,.12);box-shadow:0 20px 60px -12px rgba(0,0,0,.75);color:#e7ecf3;font-family:inherit;-webkit-app-region:no-drag;}",
-  "#qz-ms-bar .qz-ms-count{font-size:12.5px;font-weight:800;color:#aeb7c4;padding:0 2px 0 6px;white-space:nowrap;}",
-  "#qz-ms-bar .qz-ms-sep{width:1px;height:22px;background:rgba(255,255,255,.12);flex:0 0 auto;}",
-  "#qz-ms-bar .qz-ms-btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 13px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:transparent;color:#e7ecf3;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .14s;}",
-  "#qz-ms-bar .qz-ms-btn:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;background:rgba(61,168,254,.12);}",
+  // floating action bar (above content + player, below the picker/toast; parked above the transport). The bar
+  // and the picker are appended to <body> and follow Qobuz's appearance (Q.ui.follow), so the kit's tokens apply.
+  "#qz-ms-bar{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:2147483200;display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:16px;background:var(--qzu-surface);border:1px solid var(--qzu-line);box-shadow:0 12px 32px rgba(0,0,0,.35);color:var(--qzu-fg);font-family:inherit;-webkit-app-region:no-drag;}",
+  "#qz-ms-bar .qz-ms-count{font-size:12.5px;font-weight:700;color:var(--qzu-fg2);padding:0 2px 0 6px;white-space:nowrap;}",
+  "#qz-ms-bar .qz-ms-sep{width:1px;height:22px;background:var(--qzu-line);flex:0 0 auto;}",
+  "#qz-ms-bar .qz-ms-btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 13px;border:1px solid var(--qzu-line);border-radius:18px;background:transparent;color:inherit;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .14s;}",
+  "#qz-ms-bar .qz-ms-btn:hover{border-color:var(--qz-accent,#3DA8FE);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
   "#qz-ms-bar .qz-ms-btn svg{width:16px;height:16px;flex:0 0 auto;}",
   "#qz-ms-bar .qz-ms-btn--accent{border-color:var(--qz-accent,#3DA8FE);color:var(--qz-accent,#3DA8FE);}",
   "#qz-ms-bar .qz-ms-btn--accent:hover{background:var(--qz-accent,#3DA8FE);color:#06090a;}",
   "#qz-ms-bar .qz-ms-fav:hover svg{color:#ff5c6c;}",
   "#qz-ms-bar .qz-ms-btn.qz-ms-busy{opacity:.55;cursor:default;}",
-  "#qz-ms-bar .qz-ms-clear{appearance:none;border:0;background:transparent;color:#8b94a3;font-size:20px;line-height:1;cursor:pointer;padding:0 4px 0 2px;}",
-  "#qz-ms-bar .qz-ms-clear:hover{color:#fff;}",
+  "#qz-ms-bar .qz-ms-clear{appearance:none;border:0;background:transparent;color:var(--qzu-fg2);font-size:20px;line-height:1;cursor:pointer;padding:0 4px 0 2px;}",
+  "#qz-ms-bar .qz-ms-clear:hover{color:var(--qzu-fg);}",
   // add-to-playlist picker popover (opens upward from the bar)
-  ".qz-ms-pop{position:fixed;z-index:2147483400;width:300px;max-height:56vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#0e131c,#0a0e15);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 24px 60px -16px rgba(0,0,0,.8);overflow:hidden;color:#eef2f7;font-family:inherit;-webkit-app-region:no-drag;}",
-  ".qz-ms-poptitle{font-size:12px;font-weight:750;letter-spacing:.4px;text-transform:uppercase;color:#8b94a3;padding:13px 15px 9px;}",
-  ".qz-ms-new{display:flex;gap:7px;padding:0 12px 11px;border-bottom:1px solid rgba(255,255,255,.07);}",
-  ".qz-ms-newinput{flex:1;min-width:0;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);border-radius:9px;color:#e7ecf3;font:inherit;font-size:13px;padding:8px 10px;}",
+  ".qz-ms-pop{position:fixed;z-index:2147483400;width:300px;max-height:56vh;display:flex;flex-direction:column;box-sizing:border-box;background:var(--qzu-surface);border:1px solid var(--qzu-line);border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);overflow:hidden;color:var(--qzu-fg);font-family:inherit;-webkit-app-region:no-drag;}",
+  ".qz-ms-poptitle{font-size:13px;font-weight:600;color:var(--qzu-fg2);padding:13px 15px 9px;}",
+  ".qz-ms-new{display:flex;gap:7px;padding:0 12px 11px;border-bottom:1px solid var(--qzu-line);}",
+  ".qz-ms-newinput{flex:1;min-width:0;background:var(--qzu-fill);border:1px solid var(--qzu-line);border-radius:9px;color:inherit;font:inherit;font-size:13px;padding:8px 10px;}",
   ".qz-ms-newinput:focus{outline:none;border-color:var(--qz-accent,#3DA8FE);}",
-  ".qz-ms-newbtn{flex:0 0 auto;border:0;border-radius:9px;background:var(--qz-accent,#3DA8FE);color:#06090a;font:inherit;font-size:12.5px;font-weight:800;padding:0 14px;cursor:pointer;}",
+  ".qz-ms-newbtn{flex:0 0 auto;border:0;border-radius:9px;background:var(--qz-accent,#3DA8FE);color:#06090a;font:inherit;font-size:12.5px;font-weight:700;padding:0 14px;cursor:pointer;}",
   ".qz-ms-newbtn:hover{filter:brightness(1.08);}",
   ".qz-ms-list{overflow:auto;padding:6px;}",
-  ".qz-ms-loading{padding:16px 12px;color:#8b94a3;font-size:13px;text-align:center;}",
+  ".qz-ms-loading{padding:16px 12px;color:var(--qzu-fg2);font-size:13px;text-align:center;}",
   ".qz-ms-item{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;cursor:pointer;transition:background .12s;}",
-  ".qz-ms-item:hover{background:rgba(255,255,255,.06);}",
-  ".qz-ms-itemname{flex:1;min-width:0;font-size:13.5px;font-weight:600;color:#e7ecf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-ms-itemn{flex:0 0 auto;font-size:11.5px;color:#8b94a3;}",
-  // toast
-  "#qz-ms-toast{position:fixed;left:50%;bottom:150px;transform:translate(-50%,14px);z-index:2147483500;background:#06090d;border:1px solid var(--qz-accent,#3DA8FE);color:#fff;font-size:13px;font-weight:700;padding:10px 20px;border-radius:22px;opacity:0;pointer-events:none;transition:all .22s;box-shadow:0 12px 34px rgba(0,0,0,.55);}",
-  "#qz-ms-toast.qz-show{opacity:1;transform:translate(-50%,0);}",
-  "#qz-ms-toast.qz-bad{border-color:#ff5c6c;}"
+  ".qz-ms-item:hover{background:var(--qzu-fill-hover);}",
+  ".qz-ms-itemname{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+  ".qz-ms-itemn{flex:0 0 auto;font-size:11.5px;color:var(--qzu-fg2);}"
 ].join(""));
 
 // ---- boot ----
@@ -384,6 +386,6 @@ return function cleanup() {
   closePicker();
   removeBar();
   [].slice.call(document.querySelectorAll(".qz-ms-sel")).forEach(function (n) { n.classList.remove("qz-ms-sel"); });
-  var t = document.getElementById(TOAST_ID); if (t) t.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
