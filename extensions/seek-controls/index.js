@@ -89,12 +89,16 @@ Q.css(CSS_ID, [
   ".qz-ab-btn.qz-ab-loop{color:#06090a;background:var(--qz-accent,#3DA8FE);border-color:var(--qz-accent,#3DA8FE);}",
 ].join(""));
 
-// one toast at a time: a new message replaces the last one
-var curToast = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, toastT = null;
 function toast(msg) {
-  if (curToast) curToast.close();
-  curToast = Q.ui.toast(msg, { timeout: 1800 });
+  clearTimeout(toastT);
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, onClose: function () { if (curToast === t) curToast = null; } }); }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 1800);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 // rewind / forward -> RIGHT zone (the settings cluster, with lyrics + fullscreen)
 var seekG = document.createElement("span");
@@ -122,6 +126,6 @@ return function cleanup() {
   if (offTrack) offTrack();
   if (loopIv) clearInterval(loopIv);
   loopA = null; loopB = null; loopIv = null;
-  if (curToast) curToast.close();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
