@@ -120,6 +120,7 @@ function menuOutside(ev) { var m = document.getElementById("qz-ctx-menu"); if (m
 function openMenu(e) {
   closeMenu();
   var m = document.createElement("div"); m.className = "qz-ctx-menu"; m.id = "qz-ctx-menu";
+  Q.ui.follow(m);
   var canRemove = context.kind === "playlist";
   m.innerHTML = '<div class="qz-ctx-mi" data-act="go">Go to ' + esc(context.name) + '</div>' + (canRemove ? '<div class="qz-ctx-mi qz-ctx-mi--danger" data-act="remove">Remove this track from the playlist</div>' : '');
   document.body.appendChild(m);
@@ -155,37 +156,38 @@ function removeCurrentFromPlaylist() {
 }
 
 // --- toast ---
-var toastT = null;
+// one toast at a time, as before: a new message updates the open one and restarts its timer
+var curToast = null, curBad = false, toastT = null;
 function toast(msg, bad) {
-  var t = document.getElementById("qz-ctx-toast");
-  if (!t) { t = document.createElement("div"); t.id = "qz-ctx-toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.className = bad ? "qz-bad" : ""; t.classList.add("qz-show");
-  clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("qz-show"); }, 2600);
+  clearTimeout(toastT);
+  if (curToast && curBad !== !!bad) curToast.close();
+  if (curToast) curToast.update(msg);
+  else { var t = curToast = Q.ui.toast(msg, { timeout: 0, tone: bad ? "error" : undefined, onClose: function () { if (curToast === t) curToast = null; } }); curBad = !!bad; }
+  var mine = curToast;
+  toastT = setTimeout(function () { mine.close(); }, 2600);
 }
+function closeToast() { clearTimeout(toastT); if (curToast) curToast.close(); }
 
 Q.css(CSS_ID, [
   ".qz-ctx-chip{display:inline-flex;align-items:center;gap:7px;max-width:200px;height:32px;padding:0 11px;border-radius:18px;",
     // flex:0 1 auto + min-width:0 so the chip is what gives when the player bar's fixed-width track column
     // runs out of room, instead of the native duration readout being pushed off the end and cut off. The
     // name below already ellipsizes, and the full "Playing from X · track N" stays on the chip's tooltip.
-    "border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#c2cad6;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 1 auto;min-width:0;}",
-  ".qz-ctx-chip:hover{border-color:var(--qz-accent,#3DA8FE);color:#fff;background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
+    "border:1px solid color-mix(in srgb,currentColor 14%,transparent);background:color-mix(in srgb,currentColor 4%,transparent);color:inherit;font:inherit;font-size:12px;cursor:pointer;transition:all .14s;flex:0 1 auto;min-width:0;}",
+  ".qz-ctx-chip:hover{border-color:var(--qz-accent,#3DA8FE);background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 12%,transparent);}",
   ".qz-ctx-chip svg{width:15px;height:15px;flex:0 0 auto;color:var(--qz-accent,#3DA8FE);}",
   ".qz-ctx-txt{display:flex;flex-direction:column;min-width:0;line-height:1.15;text-align:left;}",
   ".qz-ctx-name{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}",
-  ".qz-ctx-pos{font-size:10px;color:#8b94a3;}",
-  ".qz-ctx-menu{position:fixed;z-index:2147483600;min-width:220px;padding:6px;background:linear-gradient(180deg,#0e131c,#0a0e15);",
-    "border:1px solid rgba(255,255,255,.12);border-radius:12px;box-shadow:0 24px 60px -16px rgba(0,0,0,.8);color:#eef2f7;font-size:13px;}",
+  ".qz-ctx-pos{font-size:10px;opacity:.65;}",
+  // the menu is appended to <body> and follows Qobuz's appearance (Q.ui.follow)
+  ".qz-ctx-menu{position:fixed;z-index:2147483600;min-width:220px;padding:6px;box-sizing:border-box;background:var(--qzu-surface);",
+    "border:1px solid var(--qzu-line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.35);color:var(--qzu-fg);font-size:13px;}",
   ".qz-ctx-mi{padding:9px 11px;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-  ".qz-ctx-mi:hover{background:rgba(255,255,255,.06);}",
-  ".qz-ctx-mi--danger{color:#ff6b78;}",
-  ".qz-ctx-mi--danger:hover{background:rgba(255,90,100,.12);}",
+  ".qz-ctx-mi:hover{background:var(--qzu-fill-hover);}",
+  ".qz-ctx-mi--danger{color:var(--qzu-error);}",
+  ".qz-ctx-mi--danger:hover{background:color-mix(in srgb,var(--qzu-error) 12%,transparent);}",
   ".qz-ctx-flash{animation:qz-ctx-flash 2.2s ease;}",
-  "@keyframes qz-ctx-flash{0%,100%{background:transparent;}18%{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 30%,transparent);}}",
-  "#qz-ctx-toast{position:fixed;left:50%;bottom:96px;transform:translate(-50%,14px);z-index:2147483500;background:#06090d;",
-    "border:1px solid var(--qz-accent,#3DA8FE);color:#fff;font-size:13px;font-weight:650;padding:10px 18px;border-radius:22px;opacity:0;pointer-events:none;transition:all .22s;box-shadow:0 12px 34px rgba(0,0,0,.55);}",
-  "#qz-ctx-toast.qz-show{opacity:1;transform:translate(-50%,0);}",
-  "#qz-ctx-toast.qz-bad{border-color:#ff5c6c;}"
+  "@keyframes qz-ctx-flash{0%,100%{background:transparent;}18%{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 30%,transparent);}}"
 ].join(""));
 
 // --- boot ---
@@ -200,6 +202,6 @@ return function cleanup() {
   if (offRoute) offRoute();
   closeMenu();
   if (slot) slot.remove();
-  var t = document.getElementById("qz-ctx-toast"); if (t) t.remove();
+  closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
