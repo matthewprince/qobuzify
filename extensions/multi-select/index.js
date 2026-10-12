@@ -103,6 +103,49 @@ function addTracks(pid, ids) { return chunk(ids, 50).reduce(function (p, c) { re
 function userPlaylists() { return Q.api("playlist/getUserPlaylists?limit=200").then(function (j) { return (j.playlists && j.playlists.items) || []; }).catch(function () { return []; }); }
 function createPlaylist(name) { return Q.api("playlist/create?name=" + encodeURIComponent(name) + "&is_public=false").then(function (c) { return String(c.id); }); }
 
+// --- generated-playlist guard (identical copy in smart-playback, recommended, bulk-actions, multi-select) ---
+// A playlist we generated is only ever deleted while it is still exactly what we made. genCapture() runs right
+// after the create + fill and records Qobuz's own view of it (name, description, track count), falling back to
+// what we sent if that read fails. genDelete() re-reads the playlist and deletes it only on a full match. A
+// rename, an edited description, added or removed tracks, or a record without that fingerprint (an older
+// version stored only the id) all mean the user may have kept it: the id is forgotten and the playlist stays.
+// genDelete resolves "deleted" | "kept" | "gone" and rejects only on a transient failure (network, 5xx), so a
+// caller with a retry list knows to try again later.
+// genStore/genLoad keep the id key itself a bare playlist id (playlist-finder reads those keys to exclude our
+// playlists) and put the fingerprint beside it under "gen:<key>". genLoad returns null unless both agree.
+function genStore(key, rec) { Q.storage.set("gen:" + key, JSON.stringify(rec)); Q.storage.set(key, String(rec.pid)); }
+function genLoad(key) {
+  var pid = Q.storage.get(key, null), rec = genParse(Q.storage.get("gen:" + key, null));
+  return pid != null && rec && rec.pid === String(pid) ? rec : null;
+}
+function genCapture(pid, name, desc, count) {
+  var fb = { pid: String(pid), name: String(name || ""), desc: String(desc || ""), count: count };
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== String(pid)) return fb;
+    var n = Number(p.tracks_count);
+    return { pid: String(pid), name: String(p.name || ""), desc: String(p.description || ""), count: isFinite(n) ? n : count };
+  }, function () { return fb; });
+}
+function genParse(raw) {
+  try {
+    var r = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (r && r.pid != null && typeof r.name === "string" && typeof r.desc === "string" && typeof r.count === "number") return { pid: String(r.pid), name: r.name, desc: r.desc, count: r.count };
+  } catch (e) {}
+  return null;
+}
+function genDelete(raw) {
+  var rec = genParse(raw);
+  if (!rec) return Promise.resolve("kept");
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(rec.pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== rec.pid) return "gone";
+    if (String(p.name || "") !== rec.name || String(p.description || "") !== rec.desc || Number(p.tracks_count) !== rec.count) return "kept";
+    return Q.api("playlist/delete?playlist_id=" + encodeURIComponent(rec.pid)).then(function () { return "deleted"; });
+  }, function (e) {
+    if (/-> (400|403|404)$/.test(String(e && e.message))) return "gone";
+    throw e;
+  });
+}
+
 // ---- toast ----
 var toastT = null;
 function toast(msg, bad) {
@@ -135,10 +178,11 @@ function doPlay() {
   toast("Starting playback…");
   var name = "Selection · " + ids.length + " track" + (ids.length > 1 ? "s" : ""); // plain prefix - an emoji makes Qobuz save an empty name
   createPlaylist(name).then(function (pid) {
-    return addTracks(pid, ids).then(function () {
-      var old = Q.storage.get(TMP_KEY, null); Q.storage.set(TMP_KEY, pid);
-      // keep exactly one throwaway playlist: delete the previous one shortly after (never the one now playing)
-      if (old && old !== pid) setTimeout(function () { Q.api("playlist/delete?playlist_id=" + old).catch(function () {}); }, 8000);
+    return addTracks(pid, ids).then(function () { return genCapture(pid, name, "", ids.length); }).then(function (rec) {
+      var old = genLoad(TMP_KEY); genStore(TMP_KEY, rec);
+      // keep exactly one throwaway playlist: delete the previous one shortly after (never the one now playing),
+      // and only if it is still untouched
+      if (old && old.pid !== String(pid)) setTimeout(function () { genDelete(old).catch(function () {}); }, 8000);
       clearSel();
       playEntity("/playlist/" + pid);
     });
@@ -153,7 +197,10 @@ function addToQueueStore(ids) {
     var pq = Q.getState().playqueue;
     if (!pq || !Array.isArray(pq.items) || !pq.items.length) return false; // nothing playing -> nothing to queue onto
     var ci = pq.currentIndex || 0;
-    var tmpl = pq.items[ci] || pq.items[0] || {};
+    // currentIndex indexes the PLAY ORDER: shuffledItems while shuffled, items otherwise. Take the template
+    // (its contextUuid) from that array, or a shuffled queue borrows an unrelated item's context.
+    var gov = (pq.shuffled && Array.isArray(pq.shuffledItems) && pq.shuffledItems.length) ? pq.shuffledItems : pq.items;
+    var tmpl = gov[ci] || gov[0] || {};
     var ctxUuid = tmpl.contextUuid;
     var maxN = 0;
     function scanMax(arr) { (arr || []).forEach(function (it) { if (it && typeof it.queueItemId === "string") { var n = Number(it.queueItemId.slice(1)); if (!isNaN(n) && n > maxN) maxN = n; } }); }
