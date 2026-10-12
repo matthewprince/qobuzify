@@ -103,18 +103,102 @@ function buildRadio(seed, leadTrackId) {
   });
 }
 
+// --- generated-playlist guard (identical copy in smart-playback, recommended, bulk-actions, multi-select) ---
+// A playlist we generated is only ever deleted while it is still exactly what we made. genCapture() runs right
+// after the create + fill and records Qobuz's own view of it (name, description, track count), falling back to
+// what we sent if that read fails. genDelete() re-reads the playlist and deletes it only on a full match. A
+// rename, an edited description, added or removed tracks, or a record without that fingerprint (an older
+// version stored only the id) all mean the user may have kept it: the id is forgotten and the playlist stays.
+// genDelete resolves "deleted" | "kept" | "gone" and rejects only on a transient failure (network, 5xx), so a
+// caller with a retry list knows to try again later.
+// genStore/genLoad keep the id key itself a bare playlist id (playlist-finder reads those keys to exclude our
+// playlists) and put the fingerprint beside it under "gen:<key>". genLoad returns null unless both agree.
+function genStore(key, rec) { Q.storage.set("gen:" + key, JSON.stringify(rec)); Q.storage.set(key, String(rec.pid)); }
+function genLoad(key) {
+  var pid = Q.storage.get(key, null), rec = genParse(Q.storage.get("gen:" + key, null));
+  return pid != null && rec && rec.pid === String(pid) ? rec : null;
+}
+function genCapture(pid, name, desc, count) {
+  var fb = { pid: String(pid), name: String(name || ""), desc: String(desc || ""), count: count };
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== String(pid)) return fb;
+    var n = Number(p.tracks_count);
+    return { pid: String(pid), name: String(p.name || ""), desc: String(p.description || ""), count: isFinite(n) ? n : count };
+  }, function () { return fb; });
+}
+function genParse(raw) {
+  try {
+    var r = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (r && r.pid != null && typeof r.name === "string" && typeof r.desc === "string" && typeof r.count === "number") return { pid: String(r.pid), name: r.name, desc: r.desc, count: r.count };
+  } catch (e) {}
+  return null;
+}
+function genDelete(raw) {
+  var rec = genParse(raw);
+  if (!rec) return Promise.resolve("kept");
+  return Q.api("playlist/get?playlist_id=" + encodeURIComponent(rec.pid) + "&limit=0").then(function (p) {
+    if (!p || String(p.id) !== rec.pid) return "gone";
+    if (String(p.name || "") !== rec.name || String(p.description || "") !== rec.desc || Number(p.tracks_count) !== rec.count) return "kept";
+    return Q.api("playlist/delete?playlist_id=" + encodeURIComponent(rec.pid)).then(function () { return "deleted"; });
+  }, function (e) {
+    if (/-> (400|403|404)$/.test(String(e && e.message))) return "gone";
+    throw e;
+  });
+}
+
 // --- playlist plumbing (fresh playlist each run) ---
-function createPlaylist(desc) { return api("playlist/create?name=" + encodeURIComponent(PLAYLIST_NAME) + "&is_public=false&description=" + encodeURIComponent(desc || "Qobuzify Smart Radio")).then(function (c) { return String(c.id); }); }
+// LS_PID holds the id of the radio in use (its genCapture record sits under "gen:smart:pid"). Older radios go
+// through LS_PENDING, a persisted delete queue drained a few seconds after each run and again at boot, so
+// quitting inside that delay (or a failed delete) can't orphan one. LS_PID only moves on once the old record
+// is safely in that queue.
+var LS_PENDING = "smart:pendingDel";
+var PENDING_MAX_TRIES = 5;
+var pendingT = null, draining = false;
+function createPlaylist(desc) { return api("playlist/create?name=" + encodeURIComponent(PLAYLIST_NAME) + "&is_public=false&description=" + encodeURIComponent(desc)).then(function (c) { return String(c.id); }); }
 function fillPlaylist(pid, ids) { return api("playlist/addTracks?playlist_id=" + pid + "&track_ids=" + ids.join(",")); }
-function deletePlaylist(pid) { return api("playlist/delete?playlist_id=" + pid).catch(function () {}); }
+function readPending() { try { var a = JSON.parse(Q.storage.get(LS_PENDING, "[]")); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function writePending(a) { try { Q.storage.set(LS_PENDING, JSON.stringify(a)); } catch (e) {} }
+function queueDelete(raw) {
+  var rec = genParse(raw); if (!rec) return;
+  var a = readPending();
+  if (!a.some(function (x) { return x && String(x.pid) === rec.pid; })) { a.push(rec); writePending(a); }
+}
+function drainPending() {
+  if (draining) return Promise.resolve();
+  try { if (!Q.getState().user.token) return Promise.resolve(); } catch (e) { return Promise.resolve(); }
+  var list = readPending(); if (!list.length) return Promise.resolve();
+  draining = true;
+  var curPid = Q.storage.get(LS_PID, null);
+  return list.reduce(function (p, item) {
+    return p.then(function () {
+      var pid = item && item.pid != null ? String(item.pid) : null;
+      function drop() { writePending(readPending().filter(function (x) { return !(x && String(x.pid) === pid); })); }
+      var rec = genParse(item);
+      if (!rec || (curPid != null && String(curPid) === rec.pid)) { drop(); return; }   // malformed, or the radio in use
+      return genDelete(rec).then(drop, function () {
+        // transient failure: keep it for the next drain, but give up after a few so a dead entry can't live forever
+        var a = readPending();
+        a.forEach(function (x) { if (x && String(x.pid) === pid) x.tries = (x.tries || 0) + 1; });
+        writePending(a.filter(function (x) { return !(x && String(x.pid) === pid && x.tries >= PENDING_MAX_TRIES); }));
+      });
+    });
+  }, Promise.resolve()).then(function () { draining = false; }, function () { draining = false; });
+}
+// Same visibility-checked header Play as better-search's headerPlayBtn(): a loose first-.ButtonRoundPrimary
+// match can be a hidden For You card's button or the previous page's header mid-transition.
+function headerPlayBtn() {
+  var cands = document.querySelectorAll("[class*='PageHeader'] button[aria-label='Play'], button[aria-label='Play'].ButtonRoundPrimary--large");
+  for (var i = 0; i < cands.length; i++) { var r = cands[i].getBoundingClientRect(); if (cands[i].offsetParent && r.width > 4 && r.height > 4) return cands[i]; }
+  return null;
+}
 function playPlaylist(pid) {
   Q.navigate("/playlist/" + pid);
   var tries = 0;
   var iv = setInterval(function () {
     tries++;
     var onPage = (Q.getState().router.location.pathname || "").indexOf("/playlist/" + pid) >= 0;
-    var btn = document.querySelector(".PageHeader .ButtonRoundPrimary, .ButtonRoundPrimary");
-    if (onPage && btn) { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); }
+    var btn = onPage ? headerPlayBtn() : null;
+    if (btn) { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); clearInterval(iv); }
     else if (tries > 50) clearInterval(iv);
   }, 140);
 }
@@ -134,18 +218,27 @@ function smartRadio(opts) {
     toast("Building a radio from " + what + "…");
     return buildRadio(seed, seedTrack).then(function (ids) {
       if (!ids.length) { toast("Couldn't build a radio for this track"); throw "empty"; }
-      return createPlaylist((seedTrack ? "Song radio - tracks like " : "Smart Radio - tracks like ") + what).then(function (pid) {
-        return fillPlaylist(pid, ids).then(function () { return { pid: pid, count: ids.length, name: what }; });
+      var desc = (seedTrack ? "Song radio - tracks like " : "Smart Radio - tracks like ") + what;
+      return createPlaylist(desc).then(function (pid) {
+        return fillPlaylist(pid, ids).then(function () {
+          return genCapture(pid, PLAYLIST_NAME, desc, ids.length);
+        }, function (err) {
+          // the fill failed: don't leave an empty (or half-filled) radio behind. Record what is there now and
+          // delete it through the queue, so a failed delete is retried at the next boot.
+          return genCapture(pid, PLAYLIST_NAME, desc, 0).then(function (rec) { queueDelete(rec); drainPending(); throw err; });
+        }).then(function (rec) { return { rec: rec, pid: pid, count: ids.length, name: what }; });
       });
     });
   }).then(function (r) {
-    var oldPid = Q.storage.get(LS_PID, null);
-    Q.storage.set(LS_PID, r.pid);
+    // hand the previous radio to the persisted delete queue BEFORE smart:pid moves on, so the library keeps
+    // exactly one "Qobuzify Radio" even if the app quits inside the delay below
+    var old = genLoad(LS_PID);
+    if (old && old.pid !== String(r.pid)) queueDelete(old);
+    genStore(LS_PID, r.rec);
     toast("▶ " + (seedTrack ? "Song radio" : "Smart Radio") + " - " + r.count + " tracks like " + r.name);
     playPlaylist(r.pid);
-    // delete the previous radio playlist once the new one is playing, so the
-    // library keeps exactly one "Qobuzify Radio"
-    if (oldPid && oldPid !== r.pid) setTimeout(function () { deletePlaylist(oldPid); }, 7000);
+    // delete the previous radio once the new one is playing (genDelete skips it if the user changed it)
+    clearTimeout(pendingT); pendingT = setTimeout(drainPending, 7000);
   }).catch(function (e) { if (e !== "no-seed" && e !== "empty") toast("Smart Radio failed - try again"); })
     .then(function () { building = false; setBusy(false); });
 }
@@ -340,7 +433,12 @@ document.addEventListener("contextmenu", onRadioContext, false);
 // songRadio + seedFromEvent are what copy-share reads to put "Start song radio" in the menu it already owns.
 window.__qzSmartRadio = { buildRadio: buildRadio, run: smartRadio, seedFromCurrent: currentSeed, songRadio: songRadio, seedFromEvent: songSeedFromEvent };
 
+// retry any radio deletes left over from a previous session (quit inside the delay, or a failed delete)
+var bootDrainT = setTimeout(drainPending, 8000);
+
 return function cleanup() {
+  // pending deletes stay persisted for the next boot
+  clearTimeout(bootDrainT); clearTimeout(pendingT);
   try { if (window.__qzSmartRadio && window.__qzSmartRadio.run === smartRadio) delete window.__qzSmartRadio; } catch (e) {}
   document.removeEventListener("contextmenu", onRadioContext, false);
   removeRadioMenu();
