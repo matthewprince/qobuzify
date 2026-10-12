@@ -188,6 +188,7 @@ function coverUrl(it) { var im = it.album && it.album.image; return (im && (im.s
 function openPanel(anchor, info) {
   closePanel();
   var p = document.createElement("div"); p.id = "qz-fav-panel"; p.className = "qz-fav-panel";
+  Q.ui.follow(p);
   p.innerHTML =
     '<div class="qz-fav-head"><span class="qz-fav-h-title">Available versions</span><span class="qz-fav-h-sub"></span></div>' +
     '<div class="qz-fav-body"><div class="qz-fav-msg">Searching the catalog…</div></div>';
@@ -242,6 +243,7 @@ var ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="
 function makeBtn(row) {
   var b = document.createElement("button");
   b.className = BTN; b.type = "button"; b.title = "Find a playable version of this track";
+  b.setAttribute("aria-label", "Find a playable version of this track");
   b.innerHTML = ICON;
   b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); openPanel(b, rowInfo(row)); });
   return b;
@@ -326,26 +328,27 @@ Q.css(CSS_ID, [
   // web-player library button: pinned at body level (fixed), positioned over the album-art corner by JS so
   // it escapes the row's z-index:0 stacking trap and the .qz-fy-inner overlay, staying clickable.
   ".qz-fav-pinned{position:fixed!important;right:auto;transform:translateY(-50%);width:24px;height:24px;z-index:2147483000;",
-  "background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 34%,rgba(6,9,10,.82));box-shadow:0 1px 7px rgba(0,0,0,.55);}",
+  "background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 34%,rgba(6,9,10,.82));box-shadow:0 1px 4px rgba(0,0,0,.4);}",
   ".qz-fav-pinned:hover{transform:translateY(-50%) scale(1.1);}",
 
-  ".qz-fav-panel{position:fixed;z-index:2147483600;width:344px;max-height:340px;overflow:hidden;display:flex;flex-direction:column;",
-  "background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(13,15,21,.99));border:1px solid rgba(255,255,255,.12);",
-  "border-radius:14px;box-shadow:0 26px 74px rgba(0,0,0,.62),0 0 46px -22px var(--qz-accent,#3DA8FE);}",
-  ".qz-fav-head{padding:12px 14px 9px;border-bottom:1px solid rgba(255,255,255,.08);}",
-  ".qz-fav-h-title{display:block;font-size:13px;font-weight:750;color:#fff;letter-spacing:-.2px;}",
-  ".qz-fav-h-sub{display:block;font-size:11.5px;color:#9aa3b2;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  // the panel is appended to <body> and follows Qobuz's appearance (Q.ui.follow), so the kit's tokens apply
+  ".qz-fav-panel{position:fixed;z-index:2147483600;width:344px;max-height:340px;overflow:hidden;display:flex;flex-direction:column;box-sizing:border-box;",
+  "background:var(--qzu-surface);color:var(--qzu-fg);border:1px solid var(--qzu-line);",
+  "border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.35);}",
+  ".qz-fav-head{padding:12px 14px 9px;border-bottom:1px solid var(--qzu-line);}",
+  ".qz-fav-h-title{display:block;font-size:13px;font-weight:700;}",
+  ".qz-fav-h-sub{display:block;font-size:11.5px;color:var(--qzu-fg2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
   ".qz-fav-body{overflow-y:auto;padding:6px;}",
-  ".qz-fav-msg{padding:20px 12px;text-align:center;font-size:12.5px;color:#9aa3b2;}",
+  ".qz-fav-msg{padding:20px 12px;text-align:center;font-size:12.5px;color:var(--qzu-fg2);}",
   ".qz-fav-res{display:flex;align-items:center;gap:10px;width:100%;text-align:left;appearance:none;border:0;background:transparent;",
-  "color:#e7ecf3;font:inherit;padding:7px 8px;border-radius:9px;cursor:pointer;transition:background .12s;}",
+  "color:inherit;font:inherit;padding:7px 8px;border-radius:9px;cursor:pointer;transition:background .12s;}",
   ".qz-fav-res:hover{background:color-mix(in srgb,var(--qz-accent,#3DA8FE) 14%,transparent);}",
-  ".qz-fav-cov{width:38px;height:38px;border-radius:6px;object-fit:cover;flex:0 0 auto;background:rgba(255,255,255,.06);}",
+  ".qz-fav-cov{width:38px;height:38px;border-radius:6px;object-fit:cover;flex:0 0 auto;background:var(--qzu-fill-hover);}",
   ".qz-fav-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}",
-  ".qz-fav-t{font-size:13px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-fav-ver{color:#9aa3b2;font-weight:500;}",
-  ".qz-fav-a{font-size:11.5px;color:#9aa3b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
-  ".qz-fav-q{flex:0 0 auto;font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--qz-accent,#3DA8FE);",
+  ".qz-fav-t{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".qz-fav-ver{color:var(--qzu-fg2);font-weight:500;}",
+  ".qz-fav-a{font-size:11.5px;color:var(--qzu-fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ".qz-fav-q{flex:0 0 auto;font-size:10px;font-weight:700;color:var(--qz-accent,#3DA8FE);",
   "border:1px solid color-mix(in srgb,var(--qz-accent,#3DA8FE) 45%,transparent);border-radius:5px;padding:2px 5px;}",
   ".qz-fav-go{flex:0 0 auto;color:var(--qz-accent,#3DA8FE);opacity:0;transition:opacity .12s;}",
   ".qz-fav-res:hover .qz-fav-go{opacity:1;}"
