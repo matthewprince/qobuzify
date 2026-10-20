@@ -35,90 +35,10 @@ if (G.lastInit === undefined) G.lastInit = null; // most recent init segment ('f
 function bpEnabled() { try { return enabled || !!G.enabled; } catch (e) { return enabled; } }
 function setBpEnabled(v) { enabled = !!v; try { G.enabled = !!v; } catch (e) {} }
 
-// DIRECT STREAM (experimental). Instead of tapping decrypted MSE bytes and feeding them to mpv, the main
-// process signs track/getFileUrl and hands mpv a plain FLAC CDN URL (see wrapper/[removed].js). mpv then
-// owns the stream: real Range seeking, no starvation, no ftyp-as-track-boundary guessing. The web element
-// still plays muted for its clock / scrobble / queue, and we drive mpv one-directionally off real events.
-// Flag lives on G (the tap dispatches globally and must see the same value across a re-init).
-// --- direct-mode outcome counter (local only, no network) ------------------------------------------
-// Direct stream is opt-in ("experimental") and the question blocking a default flip is simply: how often
-// does getFileUrl fail to produce a playable URL, and why. `directfail` already degrades gracefully (that
-// track plays through the muted web element, the next one retries), but nothing counted it, so the answer
-// was a guess. Keep a denominator (direct loads attempted) beside the reasons; read it with
-// JSON.parse(localStorage["qz-bitperfect:directstats"]). Bounded, swallowed, and never on the audio path.
-var LS_DSTATS = "qz-bitperfect:directstats";
-function dstat(field) {
-  try {
-    var o = {};
-    try { o = JSON.parse(localStorage.getItem(LS_DSTATS) || "{}") || {}; } catch (e) { o = {}; }
-    if (typeof o !== "object") o = {};
-    o[field] = (o[field] || 0) + 1;
-    o.since = o.since || new Date().toISOString().slice(0, 10);
-    localStorage.setItem(LS_DSTATS, JSON.stringify(o));
-  } catch (e) {}
-}
-var LS_DIRECT = "qz-bitperfect:direct";
-function directOn() { try { return localStorage.getItem(LS_DIRECT) === "1"; } catch (e) { return false; } }
-G.direct = directOn();
-function setDirect(v) { try { localStorage.setItem(LS_DIRECT, v ? "1" : "0"); } catch (e) {} G.direct = !!v; }
-var BP_APPID = "798273057"; // the web player's app id (the wrapper host is always play.qobuz.com)
-var _bundleUrl = null;
-function bundleUrl() { if (!_bundleUrl) { try { var s = document.querySelector('script[src*="/bundle.js"]'); _bundleUrl = s ? s.src : null; } catch (e) {} } return _bundleUrl; }
-function bpToken() { try { return (Q.getState().user && Q.getState().user.token) || ""; } catch (e) { return ""; } }
-var lastMpvMs = null, lastMpvAt = 0; // most recent mpv position report, for the direct-mode drift net
-
-// THE position of the audio the user can actually HEAR, in ms, or null when we are not the one making sound.
-// In direct mode mpv plays the FLAC while the web <audio> element runs MUTED purely as a clock - and those two
-// diverge (the muted element shares bandwidth with mpv's own fetch, so it starves and its clock falls behind).
-// Anything that must line up with the SOUND - the lyrics view above all - has to read this, not the element:
-// syncTick's drift net deliberately tolerates up to 1.5s of divergence, which is inaudible for the transport
-// but is 2-3 words of visible lag in word-by-word karaoke. Returns null (caller falls back to the web clock)
-// unless direct mode is genuinely producing audio and mpv reported recently, so a stale value can never be
-// mistaken for the truth. Assigned unconditionally so the LIVE instance always owns it after a re-init.
-window.__QZBP_AUDIOPOS__ = function () {
-  try {
-    if (disposed || !enabled || !G.direct || bpStalled || directFailed || !bpLive) return null;
-    if (lastMpvMs == null) return null;
-    // PAUSED: report mpv's last position WITHOUT extrapolating. Adding wall-clock elapsed while stopped made
-    // the lyric clock keep advancing after a pause - the highlight crawled on for ~2s (until the report aged
-    // out below) and only then froze, which reads as "it lags for a second, then pauses".
-    if (!isPlaying()) return lastMpvMs;
-    var age = Date.now() - lastMpvAt;
-    if (age < 0 || age > 2000) return null;   // mpv went quiet (stalled/respawning) - not authoritative
-    return lastMpvMs + age;                   // extrapolate between mpv's coarse reports
-  } catch (e) { return null; }
-};
-var directFailed = false, directToldOnce = false, _lastDirectId = null;
-// Direct-stream recovery. A signed URL can die under mpv mid-track: it expires (measured with a fault-
-// injecting server: a reconnect that gets 403 makes mpv report a plain early EOF, no error event), or the
-// connection dies for good. Seeking the same URL again cannot help, so re-sign a fresh one at the current
-// position instead. Bounded per track so a track that truly cannot stream falls back instead of looping.
-var directRetries = 0, DIRECT_RETRY_MAX = 2;
-var directFailReason = null;      // last directfail reason for THIS track ("network" is retried on 'online')
-var downgradeTold = {};           // one calm note per kind per session, never one per track
 // New user-facing notes go through the shared kit; the local toast stays the fallback for an older runtime.
 function note(msg) {
   try { if (Q.ui && Q.ui.toast) { Q.ui.toast(msg); return; } } catch (e) {}
   toast(msg);
-}
-// Re-sign the current track's URL and reload it at the web clock's position. Returns false once the
-// per-track budget is spent (or when not in direct mode), so the caller can fall back.
-function directReload(why) {
-  if (disposed || !enabled || !G.direct || directFailed) return false;
-  if (directRetries >= DIRECT_RETRY_MAX) return false;
-  directRetries++;
-  bpLog("direct: re-signing the stream (" + why + ", attempt " + directRetries + "/" + DIRECT_RETRY_MAX + ") at " + posMs() + "ms");
-  lastMpvMs = null; _lastDirectId = null; justLoaded = true;
-  loadCurrent();
-  return true;
-}
-// Give up on the direct stream for the rest of this track: stop mpv (it is parked at a dead EOF) and let
-// the browser play it, which is what every other give-up path does. The next track tries direct again.
-function directGiveUp(msg) {
-  directFailed = true; curRate = 0; bpTrue = false;
-  try { BP.send({ type: "stop" }); } catch (e) {}
-  muteWeb(false); renderBadge();
-  if (!directToldOnce) { directToldOnce = true; note(msg); }
 }
 var mode = "off", curRate = 0, curFmt = "";
 var hwRate = 0;      // rate the DAC is actually clocked at, straight from the kernel
@@ -135,18 +55,6 @@ var reassert = 0;   // tick counter for the periodic transport re-send (see sync
 // Shared cooldown for BOTH seek sites in syncTick. MUST init to 0, never undefined: `now - undefined` is NaN,
 // every comparison against it is false, and the resync would be silently disabled forever.
 var lastSeekAt = 0;
-// Age of the Qobuz store's position anchor. Diagnostic only (logged beside a resync), never a gate: during a
-// starve the anchor stops being refreshed while playingState stays "play", which is what lets posMs() run away.
-function anchorAgeMs() {
-  try { var p = Q.getState().player.position; return p && p.timestamp ? (Date.now() - p.timestamp) : -1; } catch (e) { return -1; }
-}
-// Set on a track change, cleared once the resulting play-transition is handled. In DIRECT mode the
-// "directtrack" handler already positions mpv (main.js: loadfile, then seek only when startMs > 250), so the
-// seek that normally rides along with a play-transition would re-seek a file mpv has only just started - and
-// an absolute seek on a fresh HTTP stream is a Range RE-REQUEST, which audibly drops the audio and restarts
-// it ~300ms into every song (and burns a second fetch, starving the muted web element into a buffering
-// spinner). Suppress just that one redundant seek; real scrubs are still caught by the jump detector below.
-var justLoaded = false;
 var sourceBuffers = [];   // live audio SourceBuffers, for forcing a re-feed on mid-track enable
 var lastFeedId = null;    // store track id the current mpv feed belongs to; guards spurious mid-track re-inits
 var endedLatch = false;   // one early-EOF resync per track, so a healthy auto-advance can never loop on it
@@ -154,7 +62,6 @@ var endfeedSent = false;  // tap mode: the feed's clean EOF is announced once pe
 var lastLoadAt = 0;       // when mpv was last handed a file; gates the 'ended' handler off fresh loads
 var modeWaitT = null;     // tap-mode output-change fallback timer (unmute if the replayed feed never goes live)
 var lastSentMute = false; // fixed-output DACs: mirror slider-at-zero onto mpv's stream mute
-var lastAheadLog = 0;     // throttle for the drift net's "mpv ahead" diagnostic
 
 function on() { try { return localStorage.getItem(LS_ON) === "1"; } catch (e) { return false; } }
 function setOn(v) { try { localStorage.setItem(LS_ON, v ? "1" : "0"); } catch (e) { } }
@@ -174,9 +81,6 @@ function isInit(u8) { return u8.length > 8 && u8[4] === 0x66 && u8[5] === 0x74 &
 // and re-init simply re-points it.
 function onSegment(u8) {
   var en = bpEnabled();
-  // Direct mode drives mpv from a signed URL, not this feed. Still record the init so a switch back to the
-  // tap mid-track has the header, but never feed bytes - mpv is already streaming the CDN copy.
-  if (en && G.direct) { if (isInit(u8)) G.lastInit = u8.slice(0); return; }
   if (isInit(u8)) {
     G.lastInit = u8.slice(0);
     // Carry the transport state. The main process used to assume a new track meant "playing", but this
@@ -371,19 +275,6 @@ function posMs() { try { return Q.player.getPositionMs ? Q.player.getPositionMs(
 function loadCurrent() {
   var tr = curTrack(); if (!tr || tr.id == null) return;
   if (!enabled) return;
-  if (G.direct) {
-    var tok = bpToken();
-    if (tok) {
-      // loadCurrent fires from both syncTick and Q.player.onChange on a track change; dedupe so we sign
-      // getFileUrl once per track, not twice. A directfail keeps the id latched, so a dead track is not
-      // retried in a storm; a real track change (or a re-enable, which clears it) sends again.
-      if (String(tr.id) === _lastDirectId) return;
-      _lastDirectId = String(tr.id);
-      lastLoadAt = Date.now();
-      dstat("attempts"); BP.send({ type: "directtrack", trackId: tr.id, token: tok, appId: BP_APPID, bundleUrl: bundleUrl(), playing: isPlaying(), startMs: posMs() }); return;
-    }
-    // no token (not logged in yet) - fall through to plain transport; the next track change retries.
-  }
   BP.send(isPlaying() ? { type: "play" } : { type: "pause" });
 }
 
@@ -391,15 +282,14 @@ function loadCurrent() {
 // it to force a re-run). A track change is seen by two paths: syncTick's 300ms poll and the
 // runtime's settled Q.player.onChange, which usually fires FIRST (~150ms). loadCurrent used to write
 // lastTrackId itself, so when onChange won, syncTick saw no change and this whole reset was skipped: a
-// directFailed/bpStalled latch from the previous track left the web element unmuted over mpv (the track
-// played twice), justLoaded stayed false so the play edge re-seeked a fresh direct stream (the start-of-
-// track drop), and the previous track's mpv position and spent EOF latch carried over. Whichever path
-// sees the new id first runs this; the other finds the key already current and does nothing extra.
+// bpStalled latch from the previous track left the web element unmuted over mpv (the track played twice),
+// and the previous track's spent EOF latch carried over. Whichever path sees the new id first runs
+// this; the other finds the key already current and does nothing extra.
 function onNewTrack(id) {
   if (!id || id === lastTrackId) return false;
   lastTrackId = id;
-  bpStalled = false; directFailed = false; lastMpvMs = null; lastSeekAt = 0; justLoaded = true;
-  endedLatch = false; endfeedSent = false; directRetries = 0; directFailReason = null;
+  bpStalled = false; lastSeekAt = 0;
+  endedLatch = false; endfeedSent = false;
   loadCurrent();
   lastPlaying = null; lastWebMs = posMs(); lastWall = Date.now();
   return true;
@@ -446,7 +336,7 @@ function syncVolUi() {
   try {
     var box = document.querySelector(".player__settings-volume-slider");
     if (!box) return;
-    var fixed = !disposed && enabled && !hwVol.supported && !bpStalled && !directFailed;
+    var fixed = !disposed && enabled && !hwVol.supported && !bpStalled;
     box.classList.toggle("qz-bp-fixedvol", fixed);
     if (fixed) {
       box.title = "Volume is fixed while bit-perfect is on: this DAC has no volume control Qobuzify can drive. Use the DAC or amp's own knob. Dragging to zero still mutes.";
@@ -470,15 +360,11 @@ function syncTick() {
   reassert = (reassert + 1) % 10;                       // ~3s at the 300ms tick
   if (playing !== lastPlaying || reassert === 0) {
     BP.send(playing ? { type: "play" } : { type: "pause" });
-    // Direct mode right after a load: mpv is already at the right spot (see justLoaded) - re-seeking it here
-    // is what caused the start-of-song audio drop. Tap mode still seeks, since there a seek means "re-feed
-    // from here" rather than an HTTP Range re-request.
-    if (playing && playing !== lastPlaying && !(justLoaded && G.direct)) BP.send({ type: "seek", ms: posMs() });
-    if (playing) justLoaded = false;
+    if (playing && playing !== lastPlaying) BP.send({ type: "seek", ms: posMs() });
     lastPlaying = playing;
   }
   // seek detection: a position jump not explained by wall-clock elapsed => user scrubbed. The web clock is
-  // the truth in both modes, so mpv follows it (tap: re-feed target; direct: mpv Range-seeks the URL).
+  // the truth, so mpv follows it (a seek here means "re-feed from this point").
   //
   // WHY THE GUARDS BELOW EXIST. posMs() is NOT the element's currentTime - it is a wall-clock extrapolation off
   // the Qobuz store's position anchor (base = position.value, plus Date.now()-position.timestamp while
@@ -544,34 +430,11 @@ function syncTick() {
         BP.send({ type: "play" });
       } else bpLog("seek SUPPRESSED jump pm=" + pm + " dur=" + durMs + " sane=" + sane);
     }
-    // Direct-mode drift net: a scrub is caught above, but a network rebuffer can leave mpv trailing the web
-    // clock with no web-side jump to notice it. ONE-DIRECTIONAL by design (R5): only correct mpv when it
-    // TRAILS the web clock. The other direction - mpv ahead of the web clock - is exactly what a starving
-    // muted element looks like (its anchor freezes while mpv plays on), and seeking mpv backward to match
-    // a lagging clock replays a passage the user already heard. Also gated on anchor freshness (R6): when
-    // the store's position anchor has not been refreshed recently, pm is a wall-clock extrapolation off a
-    // stale anchor - a lying target no seek should chase. Fails open when the anchor age is unreadable.
-    else if (G.direct && lastMpvMs != null && (now - lastMpvAt) < 2500) {
-      var mpvExtrap = lastMpvMs + (now - lastMpvAt);
-      var aAge = anchorAgeMs();
-      var anchorFresh = aAge < 0 || aAge < 2000;
-      if (pm - mpvExtrap > 1500) {
-        if (sane && anchorFresh && now - lastSeekAt > 3000) {
-          bpLog("drift seek pm=" + pm + " mpv=" + mpvExtrap + " dur=" + durMs + " anchorAge=" + aAge);
-          BP.send({ type: "seek", ms: pm }); lastSeekAt = now;
-        } else bpLog("drift SUPPRESSED pm=" + pm + " mpv=" + mpvExtrap + " dur=" + durMs + " sane=" + sane + " anchorFresh=" + anchorFresh + " sinceSeek=" + (now - lastSeekAt));
-      } else if (mpvExtrap - pm > 1500) {
-        if (now - lastAheadLog > 5000) {
-          lastAheadLog = now;
-          bpLog("mpv ahead of web clock by " + (mpvExtrap - pm) + "ms (element lagging/starving) - not seeking, lyrics follow mpv");
-        }
-      }
-    }
     // Tap mode: announce the feed's clean end once the page has appended the whole track, so mpv gets a
     // real EOF instead of blocking forever on the open chunked response. Without this, mpv drains right at
     // the audible end of every track with core-idle=true and stale feed stamps, and a slow next-track init
     // could let the watchdog false-kill bit-perfect at the boundary.
-    if (!G.direct && bpLive && !endfeedSent && durMs && pm > durMs - 2500) {
+    if (bpLive && !endfeedSent && durMs && pm > durMs - 2500) {
       var covered = false;
       try {
         for (var si = 0; si < sourceBuffers.length; si++) {
@@ -583,13 +446,11 @@ function syncTick() {
     }
   } else {
     // PAUSED scrub. The jump detector above only runs while playing, so a scrub made during a pause was
-    // invisible: mpv stayed at the old position, __QZBP_AUDIOPOS__ kept reporting it, lyrics ignored the
-    // scrub, and a lyric click seeked relative to the WRONG offset. While paused the position must not
-    // move on its own, so any real change is a user scrub: seek mpv (it seeks fine while paused), drop
-    // the stale position report so the lyric clock follows the element until mpv answers, and clear
-    // justLoaded - the load position no longer matches, so the resume-edge seek must not be suppressed.
+    // invisible: mpv stayed at the old position, lyrics ignored the scrub, and a lyric click seeked
+    // relative to the WRONG offset. While paused the position must not move on its own, so any real change
+    // is a user scrub: seek mpv (it seeks fine while paused) and drop the stale position report so the
+    // lyric clock follows the element until mpv answers.
     if (Math.abs(pm - lastWebMs) > 900 && sane && now - lastSeekAt > 900) {
-      justLoaded = false;
       lastMpvMs = null;
       BP.send({ type: "seek", ms: pm }); lastSeekAt = now;
       bpLog("paused scrub -> seek " + pm);
@@ -607,9 +468,9 @@ function syncTick() {
     }
   }
   if (reassert === 0) syncVolUi(); // slider element can be recreated; keep the fixed-volume styling on it
-  // Keep it muted while we are still trying or succeeding; once we have given up (stall / direct failure)
+  // Keep it muted while we are still trying or succeeding; once we have given up (stall)
   // we must stop re-muting, or the fallback to normal playback would be silently undone every tick.
-  if (!bpStalled && !directFailed) muteWeb(true); // element can be recreated on track change
+  if (!bpStalled) muteWeb(true); // element can be recreated on track change
 }
 
 // --- indicator (player slot): honest mode + rate, fed by mpv events ---
@@ -718,11 +579,7 @@ var offBP = BP.on(function (m) {
     mode = m.mode;
     if (mode !== "exclusive") { bpTrue = false; }
     // The respawned mpv lost the loaded stream and has to be handed the current track again.
-    // DIRECT: clear the dedupe latch FIRST - with _lastDirectId still equal to the current track,
-    // loadCurrent() returned early and this whole recovery path was dead code, leaving the main-side
-    // replay to restart the song from 0:00.
-    if (G.direct) { lastMpvMs = null; _lastDirectId = null; loadCurrent(); }
-    else if (bpLive) {
+    if (bpLive) {
       bpLive = false;
       // TAP: do NOT start a fresh init-only feed here. The main process replays the retained feed to the
       // respawned mpv on reconnect (and re-emits 'live' when that feed was already live), so re-feeding
@@ -732,7 +589,7 @@ var offBP = BP.on(function (m) {
       if (modeWaitT) clearTimeout(modeWaitT);
       modeWaitT = setTimeout(function () {
         modeWaitT = null;
-        if (disposed || !enabled || G.direct || bpLive) return;
+        if (disposed || !enabled || bpLive) return;
         if (!curTrack() || !isPlaying()) return;
         bpLog("no audio after the output change - playing this track normally");
         bpStalled = true; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
@@ -746,14 +603,14 @@ var offBP = BP.on(function (m) {
   // the real failure: mpv ran out of audio mid-track (starve-accumulated drift, truncated stream) and sat
   // in keep-open pause producing silence while the store said playing - previously unhandled, silent tail.
   else if (m.type === "ended") {
-    if (enabled && !endedLatch && !bpStalled && !directFailed) {
+    if (enabled && !endedLatch && !bpStalled) {
       var etr = curTrack(); var esid = etr && etr.id != null ? String(etr.id) : null;
-      var mpvId = G.direct ? _lastDirectId : lastFeedId;
+      var mpvId = lastFeedId;
       var epm = posMs(); var edur = (etr && etr.durationMs) || 0;
       // JUDGE "ENDED EARLY" BY MPV'S OWN CLOCK, NOT THE WEB CLOCK. epm is the store's anchor, and a
       // starving muted element is exactly when that anchor stops tracking reality - so using it here asks
-      // the broken clock whether the good one is broken. MEASURED 2026-08-23 in direct mode: mpv played a
-      // 2:58 track through to 178.4s (real EOF, speed 1.0, buffer full) while the element crawled to 0:54.
+      // the broken clock whether the good one is broken. MEASURED 2026-08-23: mpv played a 2:58 track
+      // through to 178.4s (real EOF, speed 1.0, buffer full) while the element crawled to 0:54.
       // (edur - epm) was 124s, so this fired, seeked mpv BACK to 54s, and set endedLatch - mpv then raced
       // to EOF again with the latch spent, and sat in keep-open pause producing silence for the rest of
       // the track. mpv had done nothing wrong; it finished the song.
@@ -762,18 +619,10 @@ var offBP = BP.on(function (m) {
       // web-clock test rather than doing nothing, so a real truncated-stream tail is still rescued.
       var reallyEarly = emp != null ? (edur && (edur - emp) > 3000) : (edur && (edur - epm) > 3000);
       if (esid && esid === mpvId && edur && reallyEarly && (Date.now() - lastLoadAt) > 5000) {
-        bpLog("mpv ended early (mpv=" + emp + " web=" + epm + " dur=" + edur + ")" + (G.direct ? "" : " - resyncing to the web clock"));
-        if (G.direct) {
-          // DIRECT: the URL itself is the likely casualty (expired, or the connection died past ffmpeg's
-          // reconnects). The old seek re-requested the SAME dead URL, hit EOF again with the latch spent,
-          // and the rest of the track was silence under a muted browser. Re-sign instead; when the budget
-          // is gone, hand the track to the browser rather than leave it silent.
-          if (!directReload("ended early")) { endedLatch = true; directGiveUp("Lost the direct stream - playing this track normally"); }
-        } else {
-          endedLatch = true;
-          BP.send({ type: "seek", ms: epm });
-          if (isPlaying()) BP.send({ type: "play" });
-        }
+        bpLog("mpv ended early (mpv=" + emp + " web=" + epm + " dur=" + edur + ") - resyncing to the web clock");
+        endedLatch = true;
+        BP.send({ type: "seek", ms: epm });
+        if (isPlaying()) BP.send({ type: "play" });
       } else if (esid && esid === mpvId && edur && emp != null && (edur - emp) <= 3000 && (edur - epm) > 3000) {
         // mpv reached the true end while the element is still far behind. Nothing is going to produce sound
         // until the element gets there, and it is the component that owns the queue - so hand it the end of
@@ -789,40 +638,8 @@ var offBP = BP.on(function (m) {
       }
     }
   }
-  // Direct source: mpv's live position. Feeds the direct-mode drift net in syncTick AND __QZBP_AUDIOPOS__.
+  // mpv's live position. Feeds the zero-anchor guard / ended-early checks in syncTick.
   else if (m.type === "position") { lastMpvMs = m.ms; lastMpvAt = Date.now(); if (!bpLive) bpLive = true; }
-  // Direct source: getFileUrl could not resolve a playable URL for this track (region/format restriction,
-  // or a transient network/auth issue). Fall back to the web element (still playing, just muted) for THIS
-  // track; the next track change resets and retries. Not a fatal - bit-perfect stays on.
-  // What getFileUrl actually granted for the direct stream. Format 27 is always requested, and Qobuz
-  // answering with less is normal for a CD-only release (restriction FormatRestrictedByFormatAvailability).
-  // Anything else - MP3, or a restriction about the account or region - is a quiet downgrade the user
-  // should hear about once, calmly. The badge keeps reporting what mpv measures; this only adds the why.
-  else if (m.type === "directinfo") {
-    var rs = Array.isArray(m.restrictions) ? m.restrictions : [];
-    var other = rs.filter(function (c) { return c && c !== "FormatRestrictedByFormatAvailability"; });
-    var fid = Number(m.formatId) || 0;
-    bpLog("direct: granted format " + fid + " (" + (m.bitDepth || "?") + "-bit/" + (m.rate || "?") + "kHz)" + (rs.length ? " restrictions=" + rs.join(",") : ""));
-    if (fid === 5) {
-      dstat("granted_mp3");
-      if (!downgradeTold.mp3) { downgradeTold.mp3 = true; note("Qobuz is only streaming MP3 for this track, not lossless"); }
-    } else if (other.length && fid && fid < 27) {
-      dstat("granted_restricted");
-      if (!downgradeTold.restricted) {
-        downgradeTold.restricted = true;
-        note("Playing " + (fid === 6 ? "CD quality" : (m.bitDepth || "") + "-bit") + ": Qobuz limited this stream (" + other.join(", ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() + ")");
-      }
-    }
-  }
-  else if (m.type === "directfail") {
-    // Clear the measured terms like every OTHER give-up path does (:467, :482). Without this the badge kept
-    // reporting the last successful track's rate while the audible path is the browser mixer, i.e. it claimed
-    // bit-perfect over converted audio.
-    dstat("fail_" + (m.reason || "unknown")); directFailed = true; directFailReason = m.reason || null; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
-    // A preview-only answer is not "unavailable right now": say what it is, once.
-    if (m.reason === "sample" && !directToldOnce) { directToldOnce = true; note("Only a preview of this track can stream on this account - playing it normally"); }
-    if (!directToldOnce) { directToldOnce = true; toast(m.reason === "restricted" ? "This track has no direct stream - playing normally" : "Direct stream unavailable right now - playing normally"); }
-  }
   // The sidecar is gone for good. Unmuting once is NOT enough: syncTick re-mutes every 300ms while
   // `!bpStalled`, and hookMedia re-mutes any element created later, so the single muteWeb(false) here was
   // undone within one tick and the user was left in permanent silence - with the badge still reading
@@ -843,9 +660,6 @@ var offBP = BP.on(function (m) {
       bpLive = false; bpStalled = true; setBpEnabled(false); setOn(false); syncSettingsButton();
       mode = "off"; curRate = 0; bpTrue = false; muteWeb(false); renderBadge();
       if (!stallToldOnce) { stallToldOnce = true; toast("Bit-perfect unavailable - playing normally"); }
-    } else if (m.what === "load" && directReload("load error")) {
-      // DIRECT: a load error mid-track is usually the signed URL (expired / refused on a Range re-request
-      // after a long pause or a seek past the cache). A fresh signature at the same position recovers it.
     } else { // "load": this track failed, fall back for it rather than killing the feature
       // Clear the measured state too: the browser is about to play this track through the shared mixer,
       // and a bpTrue/curRate left over from the previous track would keep the badge claiming bit-perfect.
@@ -902,10 +716,7 @@ function enable() {
   lastSentVol = null; // re-arm the one-shot adopt in the hwvol handler
   // Prime mpv with the current track's header (non-destructive). Segments still being appended flow through
   // the tap and bit-perfect engages within a segment; a fully-buffered track quietly waits for the next one.
-  directFailed = false; directToldOnce = false; lastMpvMs = null; _lastDirectId = null; directRetries = 0; directFailReason = null;
-  // Direct mode loads the current track's signed URL immediately (no waiting for the next segment); the tap
-  // path primes mpv with the captured header and engages within a segment, or waits for the next track.
-  var primed = G.direct ? !!curTrack() : ((curTrack() && isPlaying()) ? forceRefeed() : false);
+  var primed = (curTrack() && isPlaying()) ? forceRefeed() : false;
   // Per-track reset for the current track (lastTrackId was cleared above, so this always runs when there
   // is a track), which also loads it. Baselining lastWebMs/lastWall here matters: they are frozen from
   // before the disable, and the first tick's jump detector would otherwise read the gap as a scrub and
@@ -913,7 +724,7 @@ function enable() {
   var etr = curTrack();
   if (!onNewTrack(etr && etr.id != null ? String(etr.id) : null)) loadCurrent();
   renderBadge();
-  toast(G.direct ? "Bit-perfect on (direct stream)" : (primed ? "Bit-perfect on" : "Bit-perfect on - starts on the next track"));
+  toast(primed ? "Bit-perfect on" : "Bit-perfect on - starts on the next track");
 }
 function disable() {
   if (!enabled) return; setBpEnabled(false); setOn(false); syncSettingsButton(); stallToldOnce = false; bpLive = false; bpStalled = false;
@@ -933,23 +744,12 @@ hookMedia(); // install before the first play() so no element ever escapes the r
 tapMse();    // and before the first appendBuffer, so we always hold the current track's init segment
 var syncTimer = setInterval(syncTick, 300);
 // Settled track change: route it through the same per-track reset as syncTick. If syncTick already ran it
-// for this id, fall back to the plain loadCurrent this used to do (deduped in direct mode, transport resend
-// in tap mode).
+// for this id, fall back to the plain transport resend.
 var offChange = Q.player.onChange ? Q.player.onChange(function () {
   if (!enabled) return;
   var tr = curTrack(), id = tr && tr.id != null ? String(tr.id) : null;
   if (!onNewTrack(id)) loadCurrent();
 }) : null;
-
-// Back online after a direct resolve failed for lack of network: that track is playing through the browser
-// now, so retry the direct stream once for it instead of waiting for the next track. Bounded by the same
-// per-track budget as every other re-sign.
-function onOnline() {
-  if (disposed || !enabled || !G.direct || !directFailed || directFailReason !== "network") return;
-  directFailed = false; directFailReason = null;
-  if (!directReload("back online")) directFailed = true;
-}
-try { window.addEventListener("online", onOnline); } catch (e) {}
 
 // settings row + a small player-bar click target on the badge
 badge.addEventListener("click", toggle);
@@ -969,26 +769,6 @@ var settingsEntry = {
   button: (on() ? "Turn off" : "Turn on"), onClick: toggle
 };
 var unregSettings = Q.registerSettings ? Q.registerSettings(settingsEntry) : null;
-
-// Direct-stream toggle. When on, mpv streams a signed FLAC URL instead of the decrypted MSE tap - real
-// seeking, no starvation, no track-boundary guessing. Flipping it mid-session reloads the current track
-// through the new source so there is no need to toggle bit-perfect off and on.
-function toggleDirect() {
-  setDirect(!G.direct);
-  syncDirectButton();
-  // Same track, new source: reload it but deliberately NOT through onNewTrack. That would also clear a
-  // bpStalled give-up and re-mute the browser over a source that may not produce audio. lastTrackId stays
-  // as it is (it used to be nulled here and immediately re-set by loadCurrent, net no change).
-  if (enabled) { directFailed = false; directToldOnce = false; lastMpvMs = null; _lastDirectId = null; loadCurrent(); }
-  toast(G.direct ? "Direct stream on" : "Direct stream off (tap)");
-}
-function syncDirectButton() { try { if (directEntry) directEntry.button = G.direct ? "On" : "Off"; } catch (e) {} }
-var directEntry = {
-  label: "Bit-perfect: direct stream (experimental)",
-  sub: "Stream the FLAC file straight to mpv instead of tapping the browser. Fixes seeking, stalls and the odd skip. Uses more data while active (the browser keeps its own stream running for the clock).",
-  button: (G.direct ? "On" : "Off"), onClick: toggleDirect
-};
-var unregDirect = Q.registerSettings ? Q.registerSettings(directEntry) : null;
 
 // one toast at a time, as before: a new message updates the open one and restarts its timer
 var curToast = null, toastT = null;
@@ -1030,7 +810,7 @@ window.__QZBP_DIAG__ = function () {
   var el = null;
   try { el = (G.mediaEls || []).filter(function (x) { return x && !x.paused; })[0] || (G.mediaEls || [])[0] || null; } catch (e) {}
   return {
-    t: now, enabled: enabled, direct: !!G.direct, disposed: disposed,
+    t: now, enabled: enabled, disposed: disposed,
     trackId: tr && tr.id != null ? String(tr.id) : null,
     durMs: (tr && tr.durationMs) || 0,
     webMs: (function () { try { return posMs(); } catch (e) { return null; } })(),
@@ -1042,8 +822,8 @@ window.__QZBP_DIAG__ = function () {
     mpvMs: lastMpvMs, mpvAge: lastMpvMs == null ? null : now - lastMpvAt,
     sinceSeek: lastSeekAt ? now - lastSeekAt : null,
     sinceLoad: lastLoadAt ? now - lastLoadAt : null,
-    endedLatch: endedLatch, bpStalled: bpStalled, directFailed: directFailed,
-    feedId: lastFeedId, directId: _lastDirectId, lastTrackId: lastTrackId, seq: bpSeq,
+    endedLatch: endedLatch, bpStalled: bpStalled,
+    feedId: lastFeedId, lastTrackId: lastTrackId, seq: bpSeq,
     // The element is the third clock: when it disagrees with both the store and mpv, that is the re-init.
     // buffered RANGES, not just the far end. MEASURED 2026-08-30 on a live stall: the element sat frozen
     // at 53.44s with buffered.end() reporting 120.37s, which reads as "two minutes buffered, why is it
@@ -1068,10 +848,9 @@ window.__QZBP_DIAG__ = function () {
         cur: Math.round(cur * 1000), dur: isFinite(el.duration) ? Math.round(el.duration * 1000) : 0,
         paused: !!el.paused, seeking: !!el.seeking, ready: el.readyState, net: el.networkState,
         conn: !!el.isConnected, err: (el.error && el.error.code) || null,
-        // In direct mode mpv is the sink and the web element is supposed to be silent. A rebuild makes a
-        // FRESH element, and a fresh element is not muted until we mute it - so an unmuted element here
-        // means the page is audibly playing the track from 0 over the top of mpv. Cheap to record, and it
-        // is the difference between "the UI restarted" and "you heard it restart".
+        // A rebuild makes a FRESH element, and a fresh element is not muted until we mute it - so an
+        // unmuted element here means the page is audibly playing over the top of mpv. Cheap to record,
+        // and it is the difference between "the UI restarted" and "you heard it restart".
         muted: !!el.muted, vol: el.volume,
         buf: ranges.length ? ranges[ranges.length - 1][1] : 0,
         ranges: ranges, inRange: inRange, gapTo: gapTo
@@ -1086,7 +865,6 @@ return function cleanup() {
   if (syncTimer) clearInterval(syncTimer);
   if (offChange) offChange();
   if (modeWaitT) { clearTimeout(modeWaitT); modeWaitT = null; }
-  try { window.removeEventListener("online", onOnline); } catch (e) {}
   try { if (offBP) offBP(); } catch (e) {} // release the preload's single event slot for the next instance
   try { var vb = document.querySelector(".player__settings-volume-slider.qz-bp-fixedvol"); if (vb) vb.classList.remove("qz-bp-fixedvol"); } catch (e) {}
   try { if (enabled) { BP.send({ type: "disable" }); muteWeb(false); } } catch (e) {}
@@ -1102,7 +880,6 @@ return function cleanup() {
   // would clobber whoever wrapped last. Gated off, they cost a branch per append.
   if (slot) slot.remove();
   if (unregSettings) unregSettings();
-  if (unregDirect) unregDirect();
   closeToast();
   var st = document.getElementById(CSS_ID); if (st) st.remove();
 };
