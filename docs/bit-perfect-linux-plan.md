@@ -123,7 +123,7 @@ Split acceptance: **null-test + hw_params = pipeline proven in CI; one-time hard
 **How to settle it (do this in Phase 0, one live capture):**
 - Log one real `file/url` response in the wrapper on a hi-res track with a Studio/Sublime account. Read the echoed `format_id`/`sampling_rate`/`bit_depth`.
 - If it already returns 27 → capture-and-replay is sufficient. Done.
-- **If capped** (returns 5/6/16-44): do NOT reimplement signing blindly. Two moves, prefer (A): **(A)** steer the app's own quality preference to hi-res (store dispatch / quality selector) so it *natively* fetches format 27, then capture whatever it fetches — no signing needed. **(B)** if the app won't request 27, issue our *own* `getFileUrl` at format_id 27 using Qobuzify's in-app token (`app_id` + MD5 `[redacted]` from the bundled app secret; `Q.api()` already proves the token path works for reads). Fragile — breaks on Qobuz bundle changes — so it's the fallback to the fallback.
+- **If capped** (returns 5/6/16-44): do NOT reimplement signing blindly. Steer the app's own quality preference to hi-res (store dispatch / quality selector) so it *natively* fetches format 27, then capture whatever it fetches — no signing needed.
 
 Bottom line: **bit-perfect is achievable; the only thing that can cap it is the requested format_id, and that is steerable in-app.** Verify with the one live capture before building the pipeline.
 
